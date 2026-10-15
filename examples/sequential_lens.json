@@ -1,0 +1,27 @@
+{
+  "name": "Dispersive silica biconvex lens",
+  "reference_plane": "Launched light in air before the lens",
+  "mode": "sequential",
+  "materials": [
+    { "type": "constant", "n": 1.0 },
+    { "type": "sellmeier", "b": [0.6961663, 0.4079426, 0.8974794],
+      "c_um2": [0.004679148, 0.013512063, 97.9340025], "valid_range_um": [0.4, 0.7] }
+  ],
+  "surfaces": [
+    { "name": "lens_front", "pose": { "translation_mm": [0, 0, 10] },
+      "shape": { "type": "sphere", "radius_mm": 50 }, "aperture": { "type": "circle", "radius_mm": 10 },
+      "interaction": { "type": "dielectric", "minus_medium": 0, "plus_medium": 1 } },
+    { "name": "lens_rear", "pose": { "translation_mm": [0, 0, 15] },
+      "shape": { "type": "sphere", "radius_mm": -50 }, "aperture": { "type": "circle", "radius_mm": 10 },
+      "interaction": { "type": "dielectric", "minus_medium": 1, "plus_medium": 0 } },
+    { "name": "screen", "pose": { "translation_mm": [0, 0, 68.5] }, "shape": { "type": "plane" },
+      "aperture": { "type": "rectangle", "half_width_mm": 0.3, "half_height_mm": 0.3 },
+      "interaction": { "type": "detector", "pixels": [64, 64] } }
+  ],
+  "sources": [
+    { "count": 50000, "origin_mm": [0, 0, 0], "direction": [0, 0, 1], "disk_radius_mm": 4,
+      "wavelength_um": 0.45, "medium": 0, "total_weight": 0.5, "seed": 42 },
+    { "count": 50000, "origin_mm": [0, 0, 0], "direction": [0, 0, 1], "disk_radius_mm": 4,
+      "wavelength_um": 0.635, "medium": 0, "total_weight": 0.5, "seed": 42 }
+  ]
+}

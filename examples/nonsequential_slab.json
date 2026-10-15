@@ -1,0 +1,23 @@
+{
+  "name": "Plate transmission and repeated internal reflections",
+  "reference_plane": "Launched light in air between the rear collector and plate",
+  "mode": "non_sequential",
+  "materials": [{ "type": "constant", "n": 1.0 }, { "type": "constant", "n": 1.5 }],
+  "settings": { "max_depth": 64, "max_events_per_launch": 4096, "min_relative_branch_weight": 1e-12 },
+  "surfaces": [
+    { "name": "transmitted_collector", "pose": { "translation_mm": [0, 0, 15] },
+      "shape": { "type": "plane" }, "aperture": { "type": "rectangle", "half_width_mm": 20, "half_height_mm": 20 },
+      "interaction": { "type": "detector", "pixels": [32, 32] } },
+    { "name": "plate_front", "shape": { "type": "plane" },
+      "aperture": { "type": "rectangle", "half_width_mm": 20, "half_height_mm": 20 },
+      "interaction": { "type": "dielectric", "minus_medium": 0, "plus_medium": 1 } },
+    { "name": "reflected_collector", "pose": { "translation_mm": [0, 0, -10] },
+      "shape": { "type": "plane" }, "aperture": { "type": "rectangle", "half_width_mm": 20, "half_height_mm": 20 },
+      "interaction": { "type": "detector", "pixels": [32, 32] } },
+    { "name": "plate_rear", "pose": { "translation_mm": [0, 0, 3] },
+      "shape": { "type": "plane" }, "aperture": { "type": "rectangle", "half_width_mm": 20, "half_height_mm": 20 },
+      "interaction": { "type": "dielectric", "minus_medium": 1, "plus_medium": 0 } }
+  ],
+  "sources": [{ "count": 10000, "origin_mm": [0, 0, -5], "direction": [0, 0, 1], "disk_radius_mm": 2,
+    "wavelength_um": 0.55, "medium": 0, "total_weight": 1.0, "seed": 42 }]
+}

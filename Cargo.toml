@@ -1,0 +1,28 @@
+[package]
+name = "raytrace-rs"
+version = "0.2.0"
+default-run = "raytrace-rs"
+edition = "2021"
+description = "Experimental sequential and non-sequential geometric optical ray tracing"
+
+[features]
+default = []
+gui = ["dep:eframe", "dep:rfd", "dep:image"]
+
+[dependencies]
+rayon = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+encoding_rs = "0.8"
+eframe = { version = "0.31.1", optional = true, default-features = false, features = ["glow", "default_fonts"] }
+rfd = { version = "0.15", optional = true, default-features = false }
+image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
+
+[[bin]]
+name = "raytrace-gui"
+path = "src/bin/gui.rs"
+required-features = ["gui"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

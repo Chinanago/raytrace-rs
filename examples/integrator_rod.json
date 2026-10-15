@@ -1,0 +1,43 @@
+{
+  "name": "Dispersive square integrator rod with physical side interfaces",
+  "reference_plane": "Launched light in air before the rod entrance",
+  "mode": "non_sequential",
+  "materials": [
+    { "type": "constant", "n": 1 },
+    { "type": "sellmeier", "b": [0.6961663, 0.4079426, 0.8974794],
+      "c_um2": [0.004679148, 0.013512063, 97.9340025], "valid_range_um": [0.4, 0.7] }
+  ],
+  "settings": { "max_depth": 128, "max_events_per_launch": 4096, "min_relative_branch_weight": 1e-10 },
+  "surfaces": [
+    { "name": "entrance", "shape": { "type": "plane" },
+      "aperture": { "type": "rectangle", "half_width_mm": 0.5, "half_height_mm": 0.5 },
+      "interaction": { "type": "dielectric", "minus_medium": 0, "plus_medium": 1 } },
+    { "name": "exit", "pose": { "translation_mm": [0, 0, 30] }, "shape": { "type": "plane" },
+      "aperture": { "type": "rectangle", "half_width_mm": 0.5, "half_height_mm": 0.5 },
+      "interaction": { "type": "dielectric", "minus_medium": 1, "plus_medium": 0 } },
+    { "name": "side_x_plus", "pose": { "translation_mm": [0.5, 0, 15], "rotation_deg": [0, 90, 0] },
+      "shape": { "type": "plane" }, "aperture": { "type": "rectangle", "half_width_mm": 15, "half_height_mm": 0.5 },
+      "interaction": { "type": "dielectric", "minus_medium": 1, "plus_medium": 0 } },
+    { "name": "side_x_minus", "pose": { "translation_mm": [-0.5, 0, 15], "rotation_deg": [0, -90, 0] },
+      "shape": { "type": "plane" }, "aperture": { "type": "rectangle", "half_width_mm": 15, "half_height_mm": 0.5 },
+      "interaction": { "type": "dielectric", "minus_medium": 1, "plus_medium": 0 } },
+    { "name": "side_y_plus", "pose": { "translation_mm": [0, 0.5, 15], "rotation_deg": [-90, 0, 0] },
+      "shape": { "type": "plane" }, "aperture": { "type": "rectangle", "half_width_mm": 0.5, "half_height_mm": 15 },
+      "interaction": { "type": "dielectric", "minus_medium": 1, "plus_medium": 0 } },
+    { "name": "side_y_minus", "pose": { "translation_mm": [0, -0.5, 15], "rotation_deg": [90, 0, 0] },
+      "shape": { "type": "plane" }, "aperture": { "type": "rectangle", "half_width_mm": 0.5, "half_height_mm": 15 },
+      "interaction": { "type": "dielectric", "minus_medium": 1, "plus_medium": 0 } },
+    { "name": "forward_collector", "pose": { "translation_mm": [0, 0, 35] }, "shape": { "type": "plane" },
+      "aperture": { "type": "rectangle", "half_width_mm": 10, "half_height_mm": 10 },
+      "interaction": { "type": "detector", "pixels": [64, 64] } },
+    { "name": "backward_collector", "pose": { "translation_mm": [0, 0, -5] }, "shape": { "type": "plane" },
+      "aperture": { "type": "rectangle", "half_width_mm": 10, "half_height_mm": 10 },
+      "interaction": { "type": "detector", "pixels": [64, 64] } }
+  ],
+  "sources": [
+    { "count": 2000, "origin_mm": [0, 0, -2], "direction": [0, 0, 1], "disk_radius_mm": 0.15,
+      "cone_half_angle_deg": 8, "wavelength_um": 0.45, "medium": 0, "total_weight": 0.5, "seed": 42 },
+    { "count": 2000, "origin_mm": [0, 0, -2], "direction": [0, 0, 1], "disk_radius_mm": 0.15,
+      "cone_half_angle_deg": 8, "wavelength_um": 0.635, "medium": 0, "total_weight": 0.5, "seed": 42 }
+  ]
+}

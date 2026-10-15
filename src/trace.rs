@@ -1,0 +1,449 @@
+use crate::geometry::{dielectric, intersect, Hit, Miss};
+use crate::math::V3;
+use crate::model::{Interaction, Mode, PreparedScene, Ray};
+use rayon::prelude::*;
+use serde::Serialize;
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct Budget {
+    pub launched: f64,
+    pub detected: f64,
+    pub escaped: f64,
+    pub geometric_miss: f64,
+    pub surface_absorbed: f64,
+    pub bulk_absorbed: f64,
+    pub sequential_reflection_not_followed: f64,
+    pub branch_cutoff: f64,
+    pub interaction_limit: f64,
+    pub numerical_failure: f64,
+    pub medium_mismatch: f64,
+}
+impl Budget {
+    pub fn accounted(&self) -> f64 {
+        self.detected
+            + self.escaped
+            + self.geometric_miss
+            + self.surface_absorbed
+            + self.bulk_absorbed
+            + self.sequential_reflection_not_followed
+            + self.branch_cutoff
+            + self.interaction_limit
+            + self.numerical_failure
+            + self.medium_mismatch
+    }
+    pub fn merge(&mut self, b: &Self) {
+        self.launched += b.launched;
+        self.detected += b.detected;
+        self.escaped += b.escaped;
+        self.geometric_miss += b.geometric_miss;
+        self.surface_absorbed += b.surface_absorbed;
+        self.bulk_absorbed += b.bulk_absorbed;
+        self.sequential_reflection_not_followed += b.sequential_reflection_not_followed;
+        self.branch_cutoff += b.branch_cutoff;
+        self.interaction_limit += b.interaction_limit;
+        self.numerical_failure += b.numerical_failure;
+        self.medium_mismatch += b.medium_mismatch;
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SurfaceStats {
+    pub name: String,
+    pub encounters: u64,
+    pub incident_weight: f64,
+    pub transmitted_weight: f64,
+    pub reflected_weight: f64,
+    pub absorbed_weight: f64,
+    pub detected_weight: f64,
+    pub geometric_miss_weight: f64,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct DetectorMap {
+    pub name: String,
+    pub pixels: [usize; 2],
+    pub half_extent_mm: [f64; 2],
+    /// Row-major: row y, column x. Values are integrated pixel power, not density.
+    pub weights: Vec<f64>,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct Terminal {
+    pub ray: Ray,
+    pub reason: &'static str,
+    pub surface: Option<usize>,
+    pub depth: usize,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct PathEvent {
+    pub id: u64,
+    pub depth: usize,
+    pub surface: usize,
+    pub start_mm: V3,
+    pub end_mm: V3,
+    pub incident_weight: f64,
+}
+#[derive(Clone, Debug, Serialize)]
+pub struct Report {
+    pub budget: Budget,
+    pub surfaces: Vec<SurfaceStats>,
+    pub detectors: Vec<DetectorMap>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub terminals: Vec<Terminal>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<PathEvent>,
+    pub surface_intersections: u64,
+    pub total_internal_reflections: u64,
+}
+impl Report {
+    fn new(scene: &PreparedScene) -> Self {
+        Self {
+            budget: Budget::default(),
+            surfaces: scene
+                .surfaces
+                .iter()
+                .map(|s| SurfaceStats {
+                    name: s.spec.name.clone(),
+                    ..SurfaceStats::default()
+                })
+                .collect(),
+            detectors: scene
+                .detector_surfaces
+                .iter()
+                .map(|&i| {
+                    let s = &scene.surfaces[i].spec;
+                    let Interaction::Detector { pixels } = s.interaction else {
+                        unreachable!()
+                    };
+                    let (hx, hy) = s.aperture.bounds();
+                    DetectorMap {
+                        name: s.name.clone(),
+                        pixels,
+                        half_extent_mm: [hx, hy],
+                        weights: vec![0.0; pixels[0] * pixels[1]],
+                    }
+                })
+                .collect(),
+            terminals: Vec::new(),
+            paths: Vec::new(),
+            surface_intersections: 0,
+            total_internal_reflections: 0,
+        }
+    }
+    fn merge(mut self, other: Self) -> Self {
+        self.budget.merge(&other.budget);
+        self.surface_intersections += other.surface_intersections;
+        self.total_internal_reflections += other.total_internal_reflections;
+        for (a, b) in self.surfaces.iter_mut().zip(other.surfaces) {
+            a.encounters += b.encounters;
+            a.incident_weight += b.incident_weight;
+            a.transmitted_weight += b.transmitted_weight;
+            a.reflected_weight += b.reflected_weight;
+            a.absorbed_weight += b.absorbed_weight;
+            a.detected_weight += b.detected_weight;
+            a.geometric_miss_weight += b.geometric_miss_weight;
+        }
+        for (a, b) in self.detectors.iter_mut().zip(other.detectors) {
+            for (wa, wb) in a.weights.iter_mut().zip(b.weights) {
+                *wa += wb;
+            }
+        }
+        self.terminals.extend(other.terminals);
+        self.paths.extend(other.paths);
+        self
+    }
+    fn terminal(
+        &mut self,
+        ray: Ray,
+        reason: &'static str,
+        surface: Option<usize>,
+        depth: usize,
+        keep: bool,
+    ) {
+        if keep {
+            self.terminals.push(Terminal {
+                ray,
+                reason,
+                surface,
+                depth,
+            });
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct TraceOptions {
+    pub keep_terminals: bool,
+    /// Store every segment belonging to the first N launch IDs, including branches.
+    pub path_launch_count: u64,
+}
+
+/// Rays must pass Ray::validate or originate from PreparedScene::generate_rays.
+pub fn trace(scene: &PreparedScene, rays: &[Ray], options: TraceOptions) -> Report {
+    // Fixed indexed chunks give a fixed reduction order independent of worker count.
+    // At most 32 dense detector-map copies exist, including the final reduction.
+    let chunk_size = rays.len().div_ceil(31).max(1);
+    let reports: Vec<_> = rays
+        .par_chunks(chunk_size)
+        .map(|chunk| {
+            let mut report = Report::new(scene);
+            for ray in chunk {
+                trace_one(scene, *ray, &mut report, options);
+            }
+            report
+        })
+        .collect();
+    reports.into_iter().fold(Report::new(scene), Report::merge)
+}
+
+#[derive(Clone, Copy)]
+struct Work {
+    ray: Ray,
+    next_surface: usize,
+    depth: usize,
+}
+
+fn trace_one(scene: &PreparedScene, launch: Ray, report: &mut Report, options: TraceOptions) {
+    // Every branch keeps its launch wavelength; evaluate dispersion and spectral
+    // absorption once per material, rather than on every internal reflection.
+    let optics: Vec<_> = scene
+        .spec
+        .materials
+        .iter()
+        .map(|m| {
+            (
+                m.index(launch.wavelength_um).expect("validated wavelength"),
+                m.absorption_at(launch.wavelength_um)
+                    .expect("validated wavelength"),
+            )
+        })
+        .collect();
+    report.budget.launched += launch.weight;
+    let mut stack = vec![Work {
+        ray: launch,
+        next_surface: 0,
+        depth: 0,
+    }];
+    let mut events = 0;
+    let mut path_events = 0;
+    while let Some(work) = stack.pop() {
+        let Work {
+            mut ray,
+            next_surface,
+            depth,
+        } = work;
+        if ray.weight == 0.0 {
+            continue;
+        }
+        if ray.weight < launch.weight * scene.spec.settings.min_relative_branch_weight {
+            report.budget.branch_cutoff += ray.weight;
+            report.terminal(ray, "branch_cutoff", None, depth, options.keep_terminals);
+            continue;
+        }
+        if depth >= scene.spec.settings.max_depth
+            || events >= scene.spec.settings.max_events_per_launch
+        {
+            report.budget.interaction_limit += ray.weight;
+            report.terminal(
+                ray,
+                "interaction_limit",
+                None,
+                depth,
+                options.keep_terminals,
+            );
+            continue;
+        }
+        let selection: Result<Option<(usize, Hit)>, Miss> = if scene.spec.mode == Mode::Sequential {
+            match scene.surfaces.get(next_surface) {
+                Some(s) => {
+                    intersect(s, ray.position_mm, ray.direction).map(|h| Some((next_surface, h)))
+                }
+                None => Ok(None),
+            }
+        } else {
+            // Linear nearest-hit traversal is deliberate in v0.1. BVH is a future
+            // acceleration layer and does not change interaction semantics.
+            let mut nearest: Option<(usize, Hit)> = None;
+            let mut numerical = false;
+            for (i, s) in scene.surfaces.iter().enumerate() {
+                match intersect(s, ray.position_mm, ray.direction) {
+                    Ok(hit)
+                        if nearest
+                            .as_ref()
+                            .is_none_or(|(_, h)| hit.distance_mm < h.distance_mm) =>
+                    {
+                        nearest = Some((i, hit))
+                    }
+                    Err(Miss::Numerical) => numerical = true,
+                    _ => (),
+                }
+            }
+            if numerical {
+                Err(Miss::Numerical)
+            } else {
+                Ok(nearest)
+            }
+        };
+        let (index, hit) = match selection {
+            Ok(Some(value)) => value,
+            Ok(None) => {
+                report.budget.escaped += ray.weight;
+                report.terminal(ray, "escaped", None, depth, options.keep_terminals);
+                continue;
+            }
+            Err(Miss::Geometry) => {
+                report.budget.geometric_miss += ray.weight;
+                report.surfaces[next_surface].geometric_miss_weight += ray.weight;
+                report.terminal(
+                    ray,
+                    "geometric_miss",
+                    Some(next_surface),
+                    depth,
+                    options.keep_terminals,
+                );
+                continue;
+            }
+            Err(Miss::Numerical) => {
+                report.budget.numerical_failure += ray.weight;
+                report.terminal(
+                    ray,
+                    "numerical_failure",
+                    None,
+                    depth,
+                    options.keep_terminals,
+                );
+                continue;
+            }
+        };
+        events += 1;
+        report.surface_intersections += 1;
+        if launch.id < options.path_launch_count && path_events < 256 {
+            report.paths.push(PathEvent {
+                id: ray.id,
+                depth,
+                surface: index,
+                start_mm: ray.position_mm,
+                end_mm: hit.point,
+                incident_weight: ray.weight,
+            });
+            path_events += 1;
+        }
+        let (n_before, absorption) = optics[ray.medium];
+        let before_bulk = ray.weight;
+        ray.weight *= (-absorption * hit.distance_mm).exp();
+        report.budget.bulk_absorbed += before_bulk - ray.weight;
+        ray.optical_path_mm += n_before * hit.distance_mm;
+        ray.position_mm = hit.point;
+        let surface = &scene.surfaces[index];
+        report.surfaces[index].encounters += 1;
+        report.surfaces[index].incident_weight += ray.weight;
+        match surface.spec.interaction {
+            Interaction::Absorb => {
+                report.budget.surface_absorbed += ray.weight;
+                report.surfaces[index].absorbed_weight += ray.weight;
+                report.terminal(
+                    ray,
+                    "absorbed",
+                    Some(index),
+                    depth + 1,
+                    options.keep_terminals,
+                );
+            }
+            Interaction::Detector { pixels } => {
+                let detector = &mut report.detectors[surface.detector_index.unwrap()];
+                let [hx, hy] = detector.half_extent_mm;
+                let x = (((hit.local_point.0[0] / hx + 1.0) * 0.5 * pixels[0] as f64) as usize)
+                    .min(pixels[0] - 1);
+                let y = (((hit.local_point.0[1] / hy + 1.0) * 0.5 * pixels[1] as f64) as usize)
+                    .min(pixels[1] - 1);
+                detector.weights[y * pixels[0] + x] += ray.weight;
+                report.budget.detected += ray.weight;
+                report.surfaces[index].detected_weight += ray.weight;
+                report.terminal(
+                    ray,
+                    "detected",
+                    Some(index),
+                    depth + 1,
+                    options.keep_terminals,
+                );
+            }
+            Interaction::Mirror { reflectance } => {
+                let absorbed = ray.weight * (1.0 - reflectance);
+                report.budget.surface_absorbed += absorbed;
+                report.surfaces[index].absorbed_weight += absorbed;
+                report.surfaces[index].reflected_weight += ray.weight * reflectance;
+                ray.weight *= reflectance;
+                ray.direction =
+                    (ray.direction - hit.normal * (2.0 * ray.direction.dot(hit.normal))).unit();
+                stack.push(Work {
+                    ray,
+                    next_surface: index + 1,
+                    depth: depth + 1,
+                });
+            }
+            Interaction::Dielectric {
+                minus_medium,
+                plus_medium,
+                reflectance,
+            } => {
+                let (expected, after) = if ray.direction.dot(hit.normal) > 0.0 {
+                    (minus_medium, plus_medium)
+                } else {
+                    (plus_medium, minus_medium)
+                };
+                if ray.medium != expected {
+                    report.budget.medium_mismatch += ray.weight;
+                    report.terminal(
+                        ray,
+                        "medium_mismatch",
+                        Some(index),
+                        depth + 1,
+                        options.keep_terminals,
+                    );
+                    continue;
+                }
+                let n_after = optics[after].0;
+                let result = dielectric(ray.direction, hit.normal, n_before, n_after);
+                let r = if result.transmitted.is_none() {
+                    1.0
+                } else {
+                    reflectance.unwrap_or(result.reflectance)
+                };
+                let reflected_weight = ray.weight * r;
+                let transmitted_weight = ray.weight - reflected_weight;
+                report.surfaces[index].reflected_weight += reflected_weight;
+                report.surfaces[index].transmitted_weight += transmitted_weight;
+                if result.transmitted.is_none() {
+                    report.total_internal_reflections += 1;
+                }
+                if scene.spec.mode == Mode::NonSequential || result.transmitted.is_none() {
+                    if reflected_weight > 0.0 {
+                        stack.push(Work {
+                            ray: Ray {
+                                direction: result.reflected,
+                                weight: reflected_weight,
+                                ..ray
+                            },
+                            next_surface: index + 1,
+                            depth: depth + 1,
+                        });
+                    }
+                } else {
+                    report.budget.sequential_reflection_not_followed += reflected_weight;
+                }
+                if let Some(direction) = result.transmitted {
+                    if transmitted_weight > 0.0 {
+                        stack.push(Work {
+                            ray: Ray {
+                                direction,
+                                medium: after,
+                                weight: transmitted_weight,
+                                ..ray
+                            },
+                            next_surface: index + 1,
+                            depth: depth + 1,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
