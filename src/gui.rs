@@ -171,12 +171,25 @@ impl App {
                 let mut report = pool.install(|| trace(&prepared, &rays, TraceOptions::default()));
                 let seconds = started.elapsed().as_secs_f64();
                 let n = rays.len().min(64);
-                let preview: Vec<_> = (0..n)
-                    .map(|i| Ray {
-                        id: i as u64,
-                        ..rays[i * rays.len() / n]
-                    })
-                    .collect();
+                // Each source contributes a prefix; striding a Sobol sequence destroys its balance.
+                let mut preview = Vec::with_capacity(n);
+                let mut layer = 0;
+                while preview.len() < n {
+                    let mut offset = 0;
+                    for source in &scene.sources {
+                        if layer < source.count {
+                            preview.push(Ray {
+                                id: preview.len() as u64,
+                                ..rays[offset + layer]
+                            });
+                        }
+                        offset += source.count;
+                        if preview.len() == n {
+                            break;
+                        }
+                    }
+                    layer += 1;
+                }
                 report.paths = pool
                     .install(|| {
                         trace(
@@ -210,7 +223,7 @@ impl App {
                     if self.project.monochromatic_override_um.is_some() {
                         p.monochromatic_override_um = self.project.monochromatic_override_um;
                     }
-                    self.preview_limit = p.zemax.as_ref().map(|_| 200);
+                    self.preview_limit = p.zemax.as_ref().map(|_| 256);
                     self.project = *p;
                     self.result = None;
                     self.selected = 0;
@@ -352,10 +365,10 @@ impl App {
                         ui.label(egui::RichText::new("光源").strong());
                         let mut preview = self.preview_limit.is_some();
                         if ui
-                            .checkbox(&mut preview, "プレビュー（各光源 最大200本）")
+                            .checkbox(&mut preview, "プレビュー（各光源 最大256本）")
                             .changed()
                         {
-                            self.preview_limit = preview.then_some(200);
+                            self.preview_limit = preview.then_some(256);
                             self.stale = true;
                         }
                         if !self.project.scene.sources.is_empty() {
@@ -376,6 +389,28 @@ impl App {
                                     }
                                 });
                             let s = &mut self.project.scene.sources[self.source];
+                            ui.label("サンプリング");
+                            egui::ComboBox::from_id_salt("sampling")
+                                .selected_text(match s.sampling {
+                                    Sampling::Sobol => "Sobol（低偏差列）",
+                                    Sampling::Pseudorandom => "疑似乱数",
+                                })
+                                .show_ui(ui, |ui| {
+                                    changed |= ui
+                                        .selectable_value(
+                                            &mut s.sampling,
+                                            Sampling::Sobol,
+                                            "Sobol（低偏差列）",
+                                        )
+                                        .changed();
+                                    changed |= ui
+                                        .selectable_value(
+                                            &mut s.sampling,
+                                            Sampling::Pseudorandom,
+                                            "疑似乱数",
+                                        )
+                                        .changed();
+                                });
                             ui.horizontal(|ui| {
                                 ui.label("光線数");
                                 changed |= ui
@@ -386,6 +421,13 @@ impl App {
                                     )
                                     .changed();
                             });
+                            if s.sampling == Sampling::Sobol && !s.count.is_power_of_two() {
+                                ui.label(
+                                    egui::RichText::new("Sobol推奨本数: 256 / 1024 / 4096…")
+                                        .size(11.0)
+                                        .color(MUTED),
+                                );
+                            }
                             let mut nm = s.wavelength_um * 1000.0;
                             ui.horizontal(|ui| {
                                 ui.label(if self.project.monochromatic_override_um.is_some() {
@@ -416,6 +458,10 @@ impl App {
                                 .size(12.0),
                             );
                             egui::CollapsingHeader::new("位置・分布").show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label("seed");
+                                    changed |= ui.add(egui::DragValue::new(&mut s.seed)).changed();
+                                });
                                 for a in 0..3 {
                                     ui.horizontal(|ui| {
                                         ui.label(["X", "Y", "Z"][a]);
@@ -455,10 +501,12 @@ impl App {
                                     });
                                 }
                             });
-                            if ui.button("この光線数を全光源に適用").clicked() {
+                            if ui.button("光線数・方式を全光源へ").clicked() {
                                 let count = s.count;
+                                let sampling = s.sampling;
                                 for s in &mut self.project.scene.sources {
                                     s.count = count;
+                                    s.sampling = sampling;
                                 }
                                 changed = true;
                             }

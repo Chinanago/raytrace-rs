@@ -19,9 +19,9 @@
       "interaction": { "type": "detector", "pixels": [64, 64] } }
   ],
   "sources": [
-    { "count": 50000, "origin_mm": [0, 0, 0], "direction": [0, 0, 1], "disk_radius_mm": 4,
+    { "count": 32768, "origin_mm": [0, 0, 0], "direction": [0, 0, 1], "disk_radius_mm": 4,
       "wavelength_um": 0.45, "medium": 0, "total_weight": 0.5, "seed": 42 },
-    { "count": 50000, "origin_mm": [0, 0, 0], "direction": [0, 0, 1], "disk_radius_mm": 4,
+    { "count": 32768, "origin_mm": [0, 0, 0], "direction": [0, 0, 1], "disk_radius_mm": 4,
       "wavelength_um": 0.635, "medium": 0, "total_weight": 0.5, "seed": 42 }
   ]
 }

@@ -35,9 +35,9 @@
       "interaction": { "type": "detector", "pixels": [64, 64] } }
   ],
   "sources": [
-    { "count": 2000, "origin_mm": [0, 0, -2], "direction": [0, 0, 1], "disk_radius_mm": 0.15,
+    { "count": 2048, "origin_mm": [0, 0, -2], "direction": [0, 0, 1], "disk_radius_mm": 0.15,
       "cone_half_angle_deg": 8, "wavelength_um": 0.45, "medium": 0, "total_weight": 0.5, "seed": 42 },
-    { "count": 2000, "origin_mm": [0, 0, -2], "direction": [0, 0, 1], "disk_radius_mm": 0.15,
+    { "count": 2048, "origin_mm": [0, 0, -2], "direction": [0, 0, 1], "disk_radius_mm": 0.15,
       "cone_half_angle_deg": 8, "wavelength_um": 0.635, "medium": 0, "total_weight": 0.5, "seed": 42 }
   ]
 }

@@ -552,7 +552,8 @@ fn read_sequential(
         .translation_mm
         .0[2];
     project.scene.sources.push(Source {
-        count: 10000,
+        sampling: Sampling::Sobol,
+        count: 8192,
         origin_mm: V3([0.0, 0.0, first - 1.0]),
         direction: V3([0.0, 0.0, 1.0]),
         disk_radius_mm: pupil.max(0.01),
@@ -638,6 +639,7 @@ fn read_nsc(
                 let waves = parameters(all, "WAVM");
                 let source_wave = *waves.get(&(param(4, 1.0) as usize)).unwrap_or(&wavelength);
                 project.scene.sources.push(Source {
+                    sampling: Sampling::Sobol,
                     count: param(2, 1000.0).max(1.0) as usize,
                     origin_mm: pose.translation_mm,
                     direction: frame.world_vector(V3([0.0, 0.0, 1.0])),

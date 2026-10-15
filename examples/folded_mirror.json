@@ -11,6 +11,6 @@
       "shape": { "type": "plane" }, "aperture": { "type": "rectangle", "half_width_mm": 10, "half_height_mm": 10 },
       "interaction": { "type": "detector", "pixels": [64, 64] } }
   ],
-  "sources": [{ "count": 10000, "origin_mm": [0, 0, -20], "direction": [0, 0, 1], "disk_radius_mm": 2,
+  "sources": [{ "count": 8192, "origin_mm": [0, 0, -20], "direction": [0, 0, 1], "disk_radius_mm": 2,
     "cone_half_angle_deg": 1, "wavelength_um": 0.55, "medium": 0, "total_weight": 1.0, "seed": 42 }]
 }

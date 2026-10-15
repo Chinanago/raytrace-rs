@@ -1,6 +1,6 @@
 [package]
 name = "raytrace-rs"
-version = "0.2.0"
+version = "0.3.0"
 default-run = "raytrace-rs"
 edition = "2021"
 description = "Experimental sequential and non-sequential geometric optical ray tracing"
@@ -14,6 +14,7 @@ rayon = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 encoding_rs = "0.8"
+libm = "0.2"
 eframe = { version = "0.31.1", optional = true, default-features = false, features = ["glow", "default_fonts"] }
 rfd = { version = "0.15", optional = true, default-features = false }
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }

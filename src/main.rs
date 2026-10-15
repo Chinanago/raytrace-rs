@@ -1,5 +1,5 @@
 use raytrace_rs::math::V3;
-use raytrace_rs::model::{Mode, PreparedScene, Ray, Scene};
+use raytrace_rs::model::{Mode, PreparedScene, Ray, Sampling, Scene};
 use raytrace_rs::trace::{trace, TraceOptions};
 use raytrace_rs::{project::Project, zemax};
 use serde::Serialize;
@@ -10,7 +10,7 @@ const HELP: &str =
     [--mode sequential|non_sequential] [--threads N] [--repeat N]\n\
     [--terminals] [--paths FIRST_N_LAUNCH_IDS]\n\
     [--inspect] [--export-zmx COPY.zmx] [--ignore-coatings]\n\
-    [--wavelength-um VALUE] [--rays-per-source N]\n\
+    [--wavelength-um VALUE] [--rays-per-source N] [--sampling sobol|pseudorandom]\n\
 Ray CSV header: id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium\n\
 Units: mm, um, arbitrary power weights. Launch-weight sum is the 100% reference.\n\
 Sequential follows transmission, explicit mirrors and TIR. Non-sequential splits R/T.\n\
@@ -82,6 +82,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut ignore_coatings = false;
     let mut wavelength = None;
     let mut rays_per_source = None;
+    let mut sampling = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -101,11 +102,18 @@ fn run() -> Result<(), Box<dyn Error>> {
                 continue;
             }
             "--output" | "--rays-csv" | "--threads" | "--repeat" | "--mode" | "--paths"
-            | "--export-zmx" | "--wavelength-um" | "--rays-per-source" => (),
+            | "--export-zmx" | "--wavelength-um" | "--rays-per-source" | "--sampling" => (),
             option => return Err(format!("Unknown option: {option}").into()),
         }
         let value = args.get(i + 1).ok_or("Missing option value")?;
         match args[i].as_str() {
+            "--sampling" => {
+                sampling = Some(match value.as_str() {
+                    "sobol" => Sampling::Sobol,
+                    "pseudorandom" => Sampling::Pseudorandom,
+                    _ => return Err("Sampling must be sobol or pseudorandom".into()),
+                })
+            }
             "--rays-per-source" => rays_per_source = Some(value.parse::<usize>()?),
             "--export-zmx" => export_zmx = Some(PathBuf::from(value)),
             "--wavelength-um" => wavelength = Some(value.parse::<f64>()?),
@@ -170,6 +178,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let mut spec: Scene = project.trace_scene()?;
+    if let Some(sampling) = sampling {
+        for source in &mut spec.sources {
+            source.sampling = sampling;
+        }
+    }
     if let Some(count) = rays_per_source {
         for source in &mut spec.sources {
             source.count = count;

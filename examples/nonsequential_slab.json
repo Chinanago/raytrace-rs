@@ -18,6 +18,6 @@
       "shape": { "type": "plane" }, "aperture": { "type": "rectangle", "half_width_mm": 20, "half_height_mm": 20 },
       "interaction": { "type": "dielectric", "minus_medium": 1, "plus_medium": 0 } }
   ],
-  "sources": [{ "count": 10000, "origin_mm": [0, 0, -5], "direction": [0, 0, 1], "disk_radius_mm": 2,
+  "sources": [{ "count": 8192, "origin_mm": [0, 0, -5], "direction": [0, 0, 1], "disk_radius_mm": 2,
     "wavelength_um": 0.55, "medium": 0, "total_weight": 1.0, "seed": 42 }]
 }

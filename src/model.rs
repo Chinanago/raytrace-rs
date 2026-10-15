@@ -1,4 +1,6 @@
 use crate::math::{Frame, Pose, V3};
+pub use crate::sampling::Sampling;
+use crate::sampling::{gaussian_quantile, uniform, Sobol};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -262,6 +264,8 @@ impl Default for Settings {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Source {
+    #[serde(default)]
+    pub sampling: Sampling,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diode: Option<Diode>,
     pub count: usize,
@@ -577,18 +581,14 @@ impl Scene {
     }
 }
 
-fn uniform(state: &mut u64) -> f64 {
-    *state = state.wrapping_add(0x9e3779b97f4a7c15);
-    let mut z = *state;
-    z = (z ^ (z >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94d049bb133111eb);
-    (((z ^ (z >> 31)) >> 11) as f64) * (1.0 / ((1u64 << 53) as f64))
-}
-
 impl PreparedScene {
     pub fn generate_rays(&self) -> Result<Vec<Ray>, String> {
         let mut rays = Vec::new();
         for source in &self.spec.sources {
+            if source.count as u128 > (1u128 << 52) {
+                return Err("Sobol supports at most 2^52 rays per source".into());
+            }
+            let mut sobol = (source.sampling == Sampling::Sobol).then(|| Sobol::new(source.seed));
             let w = source.direction.unit();
             let helper = if w.0[2].abs() < 0.9 {
                 V3([0.0, 0.0, 1.0])
@@ -605,12 +605,23 @@ impl PreparedScene {
                 let mut state = source
                     .seed
                     .wrapping_add((j as u64).wrapping_mul(0xd1342543de82ef95));
-                let radius = source.disk_radius_mm * uniform(&mut state).sqrt();
-                let phi = std::f64::consts::TAU * uniform(&mut state);
-                let cos_theta = 1.0
-                    - uniform(&mut state) * (1.0 - source.cone_half_angle_deg.to_radians().cos());
+                let sample = match &mut sobol {
+                    Some(s) => s.next(),
+                    None => [
+                        uniform(&mut state),
+                        uniform(&mut state),
+                        uniform(&mut state),
+                        uniform(&mut state),
+                        0.0,
+                        0.0,
+                    ],
+                };
+                let radius = source.disk_radius_mm * sample[0].sqrt();
+                let phi = std::f64::consts::TAU * sample[1];
+                let cos_theta =
+                    1.0 - sample[2] * (1.0 - source.cone_half_angle_deg.to_radians().cos());
                 let sin_theta = (1.0 - cos_theta * cos_theta).max(0.0).sqrt();
-                let angle = std::f64::consts::TAU * uniform(&mut state);
+                let angle = std::f64::consts::TAU * sample[3];
                 let mut ray = Ray {
                     id: rays.len() as u64,
                     position_mm: source.origin_mm
@@ -632,20 +643,38 @@ impl PreparedScene {
                     let mut xy = [0.0; 2];
                     let mut angle = [0.0; 2];
                     for axis in 0..2 {
-                        let index = (uniform(&mut state) * diode.array[axis] as f64) as usize;
+                        let index = ((if sobol.is_some() {
+                            sample[4 + axis]
+                        } else {
+                            uniform(&mut state)
+                        }) * diode.array[axis] as f64) as usize;
                         xy[axis] = (index as f64 - (diode.array[axis] - 1) as f64 / 2.0)
-                            * diode.spacing_mm[axis]
-                            + truncated_normal(
+                            * diode.spacing_mm[axis];
+                        if sobol.is_some() {
+                            xy[axis] += gaussian_quantile(
+                                sample[axis],
+                                diode.gaussian_width_mm[axis] / 2.0,
+                                diode.half_width_mm[axis],
+                            );
+                            angle[axis] = gaussian_quantile(
+                                sample[2 + axis],
+                                diode.divergence_deg[axis] / 2.0,
+                                89.999999,
+                            )
+                            .to_radians();
+                        } else {
+                            xy[axis] += truncated_normal(
                                 &mut state,
                                 diode.gaussian_width_mm[axis] / 2.0,
                                 diode.half_width_mm[axis],
                             );
-                        angle[axis] = truncated_normal(
-                            &mut state,
-                            diode.divergence_deg[axis] / 2.0,
-                            89.999999,
-                        )
-                        .to_radians();
+                            angle[axis] = truncated_normal(
+                                &mut state,
+                                diode.divergence_deg[axis] / 2.0,
+                                89.999999,
+                            )
+                            .to_radians();
+                        }
                     }
                     ray.position_mm = frame.world_point(V3([xy[0], xy[1], 0.0]));
                     ray.direction = frame

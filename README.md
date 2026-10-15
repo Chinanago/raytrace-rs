@@ -1,202 +1,157 @@
-# Rust 光線追跡アプリ
+# raytrace-rs
 
-シーケンシャルと非シーケンシャルを同じ面交差・屈折・反射処理で計算する、Rust製のGUIとライブラリです。レンズ、ミラー、インテグレータロッド、複数の検出器を扱います。v0.2ではZMX/AGFの直接読込と、元のZMX定義を保持する保存を追加しました。2026年10月15日時点の試作です。
+Rust製の幾何光学シミュレーターです。シーケンシャル／非シーケンシャル光線追跡、波長依存の屈折・反射・吸収を扱います。日本語GUIとコマンドラインから、レンズ・ミラー・インテグレータロッドの光路と検出器分布を確認できます。
 
-## 公開するファイルとローカルデータ
+## ビルドと起動
 
-このリポジトリにはソースコード、手書きの一般形状サンプル、合成データを使ったテスト、文書を収録します。Zemaxの実ファイル、AGFなどの材料カタログ、参照CAD・スペクトル、検証画像・光線データ・ログはローカルで管理します。ZMX全文を含む保存プロジェクトやCAD由来のメッシュJSONも公開対象から除外します。
-
-手元の入力データは `local_data/`、出力は `results/` に置いてください。`.gitignore` でこれらのフォルダーと関連形式を除外し、JSONは同梱の4つの手書きサンプルだけを登録対象にしています。テスト内の最小ZMX/AGFレコードは、入出力処理を確認するために作成したものです。
-
-コミットする前に `python scripts/check_publish.py` でステージ済みのファイルを確認できます。この検査は公開ファイルの許可リストと、サンプルJSONへの元プロジェクト混入を確認します。機密情報を含む実データはGit管理外に保ってください。
-
-## GUIを起動する
-
-Windowsで次のようにビルドし、`Raytraceを起動.cmd` または `target/release/raytrace-gui.exe` をダブルクリックします。初回ビルドは依存ライブラリの取得にネット接続が必要です。
+WindowsとRust（Cargo）が必要です。初回ビルド時に依存ライブラリを取得します。
 
 ```powershell
 cargo build --release --locked --features gui --bins
+./target/release/raytrace-gui.exe
 ```
 
-日本語のネイティブ画面で、光源・面の配置・波長・材料・追跡方式を編集し、光路と検出器分布を確認できます。ウィンドウへのファイルのドラッグ＆ドロップにも対応します。
+ビルド後は `Raytraceを起動.cmd` からも起動できます。GUIはレンズのサンプルで開きます。「開く…」またはドラッグ＆ドロップで `.zmx` やJSONプロジェクトを読み込み、「計算する」で追跡します。
 
-1. 「開く…」から `.zmx` または保存済みのプロジェクトを選ぶ。
-2. 読込レポートで材料や参照ファイルを確認する。
-3. 「計算する」で追跡する。ZMXのプレビューは各光源200本を上限にする。チェックを外すと定義の光線数を使う。
-4. 「保存…」で元のZMX全文を含むJSONプロジェクトを保存する。「ZMX書出し…」は対応範囲の編集をZemaxへ戻す際に使う。
+光源の本数・波長・サンプリング、面の位置・傾き・曲率・材料を編集できます。光路図はZ–X／Z–Y／X–Y投影、検出器は画素ごとの積算光量を表示します。設定を変えると再計算が必要です。
 
-左側の「定義の波長」は元の光源設定です。「単色の波長を明示する」が有効な場合は、その波長を計算に使います。材料欄には計算波長での屈折率を表示します。設定変更後は「再計算で更新」と表示し、光路図には最後に計算したモデルを使います。
+## コマンドライン
 
-画面表示と追跡は別のスレッドで実行します。起動用EXEは約6 MBで、GUIは必要なときに描画します。レンズだけの追跡ではPython・Zemaxの起動は不要です。
-
-## ZMXを直接扱う範囲
-
-| ZMX内の定義 | v0.2の扱い |
-|---|---|
-| シーケンシャル Standard | 平面・球面・円錐面、面間隔、材料、円形/矩形口径を読込 |
-| Even Asphere | 曲率、円錐定数、A4～A18を読込。A4はPARM 2に対応 |
-| NSC Source Diode | 位置・回転、光量、波長番号、X/Y発散、発光領域、Gaussian幅、ダイオード配列を読込 |
-| NSC Detector Rectangle | 位置・回転、寸法、ピクセル数を読込 |
-| NSC CAD Import | 参照STEPの閉じたソリッドを読込。三角形BVHで交差を探索 |
-| AGF材料 | GCATで指定したカタログのSchott式1・Sellmeier 1式2、LD波長範囲、IT内部透過率を読込 |
-| 未対応定義 | 元のレコードを保持し、影響がある項目は追跡前に通知 |
-
-Source DiodeはGaussian係数Gx/Gy/Hx/Hyが1、非点収差0の範囲を実装しています。通常の配列配置を扱い、参照オブジェクトやNSOOの追加オフセットは未対応です。光源の乱数列はRust側で生成し、Zemaxと光線ごとの乱数一致は仮定しません。
-
-シーケンシャルZMXは形状と材料を直接読み、初期照射には主波長の軸上平行光を設定します。視野・瞳・有限距離物体の再現には照射条件の追加が必要です。ZMXの全レコードを物理モデルに対応させた段階ではないため、読込レポートに対応範囲を表示します。
-
-STEPの初回読込にはFreeCADのPythonを使います。`RAYTRACE_FREECAD_PYTHON` で実行ファイルを指定できます。Windowsの既定値は `%LOCALAPPDATA%/Programs/FreeCAD 1.1/bin/python.exe` です。変換処理はEXEに埋め込み、ビルド元フォルダーの `results/cad_cache` に0.02 mm設定のメッシュを保存します。追跡はRustで実行し、2回目以降はキャッシュを使います。メッシュ上の交点と頂点法線補間を使うため、分割を細かくしたときの収束が精度検証の対象です。
-
-コーティングは名前を保持します。未コートFresnelでの計算はGUIの明示設定が必要です。SPCDスペクトルが欠けている場合も通知し、単色の波長を明示するまで追跡を開始しません。ブラックボックスZBB、未対応の面型・光源型・分散式は追跡対象として利用できません。
-
-## 編集とZemaxへの返却
-
-元の光学定義を変更していないZMXは、元の文字コード・レコードを保って書き出します。JSONプロジェクトにも元のZMX全文、材料レコード、読込レポートを保存します。
-
-- 逐次ZMX：軸上の面形状・間隔・口径・材料の対応する編集を反映。元のCOAT、コメント、メリット関数などの追加レコードを保持。
-- NSC ZMX：既存オブジェクトの位置・回転と、Source Diodeの光線数・光量・発散・配列・発光領域を反映。
-- STEP・ローカルAGFなどの依存ファイル：保存先へ同梱。同名で内容の異なる既存ファイルがある場合は上書きを止める。
-
-NSCの新しいオブジェクト追加、形状・材料・波長表の変更、逐次の座標ブレークを伴う編集は、現在はJSONプロジェクトで保存します。新規の軸上レンズ系はZMXとAGFを書き出せます。独自AGFをOpticStudioで使う際は、[材料カタログのフォルダーへ登録する手順](https://optics.ansys.com/hc/ja/articles/42661706968211-OpticStudio-%E3%81%A7%E6%96%B0%E3%81%97%E3%81%84%E6%9D%90%E6%96%99%E3%81%A8%E3%82%AC%E3%83%A9%E3%82%B9%E3%82%92%E8%BF%BD%E5%8A%A0%E3%81%99%E3%82%8B%E6%96%B9%E6%B3%95)が必要です。Zemaxの標準カタログを書き換える処理は行いません。
-
-## 実装した範囲
-
-| 項目 | 動作 |
-|---|---|
-| シーケンシャル | 指定順の面を追跡。通常の屈折面では主透過光、ミラーと全反射では反射光を次の指定面へ進める |
-| 非シーケンシャル | 前方で最も近い面を選び、Fresnel反射光と透過光を重みで分岐して追跡 |
-| 面 | 有限口径の平面、球面キャップ、円錐定数とA4～A18で記述する偶数次非球面、閉じたCADメッシュ |
-| 配置 | 各面の3次元平行移動と回転。回転の適用順はRx→Ry→Rz |
-| 材料 | 一定屈折率、Sellmeier式、Schott式、波長別表データの線形補間、AGFのITによる波長別内部吸収 |
-| 波長 | 光線ごとに真空波長を保持。波長別の屈折率を屈折、全反射、Fresnel反射率、光学距離に適用 |
-| 光源 | 一様円板・一様立体角の円錐・GaussianのSource Diode。複数光源・複数波長、保存光線CSV入力 |
-| 検出器 | 複数の平面検出器、矩形/円形口径、ピクセル別積算重み |
-| 光量 | 指定した発射基準面を100%とするバジェット。幾何学的な外れ、反射、吸収、打切りを別項目に記録 |
-| 実行 | CPU並列化、1スレッド実行、同じseedによる光源生成、スレッド数に依存しない集計順序 |
-
-演算はf64です。長さはmm、波長はµm、光線の重みは任意の共通光量単位を使います。光学距離は各媒質内の `n(λ) × 幾何学的距離` の積算です。波動伝搬と干渉は対象外です。
-
-## すぐ試す
-
-このフォルダーで実行します。初回は `cargo fetch --locked` で依存ライブラリを取得し、その後は以下の手順をオフラインで実行できます。検証環境はWindows、Rust 1.98.1です。
+GUIなしで使う場合は `cargo build --release --locked` でビルドします。
 
 ```powershell
-cargo build --release --offline
-./target/release/raytrace-rs.exe examples/sequential_lens.json --threads 4 --repeat 21 --output results/sequential_lens.json
-./target/release/raytrace-rs.exe examples/nonsequential_slab.json --threads 4 --output results/nonsequential_slab.json
-./target/release/raytrace-rs.exe examples/integrator_rod.json --threads 4 --output results/integrator_rod.json
-./target/release/raytrace-rs.exe examples/folded_mirror.json --threads 4 --output results/folded_mirror.json
+./target/release/raytrace-rs.exe examples/sequential_lens.json --threads 4 --output results/lens.json
+./target/release/raytrace-rs.exe examples/integrator_rod.json --threads 4 --output results/rod.json
+./target/release/raytrace-rs.exe lens.zmx --inspect --output results/lens.raytrace.json
+./target/release/raytrace-rs.exe source.zmx --wavelength-um 0.465 --rays-per-source 4096 --sampling sobol --output results/source.json
 ```
 
-`cargo fetch` は依存ライブラリの初回取得に使います。GUIもビルドする場合は次を実行します。
-
-```powershell
-cargo build --release --offline --features gui --bins
-```
-
-ZMXを直接読み込むコマンドラインの例です。`--inspect` は定義を読んでプロジェクトに保存し、追跡を実行しません。
-
-```powershell
-./target/release/raytrace-rs.exe local_data/lens.zmx --inspect --output results/lens.raytrace.json
-./target/release/raytrace-rs.exe local_data/source.zmx --wavelength-um 0.465 --rays-per-source 200 --threads 4 --output results/source.json
-```
-
-`--mode sequential` / `--mode non_sequential` で方式を上書きできます。シーケンシャルの面順は物理的な光路順に指定します。非シーケンシャルの例は面を意図的に順不同で登録しています。
-
-`--terminals` は終端光線の位置・方向・重み・波長・光学距離を保存します。`--paths 8` は発射IDが8未満の光線について、分岐を含む光路の線分を保存します。光路表示用の記録は1発射につき256線分までです。
-
-JSON出力には元のscene、基準面の重み、基準面に対する光量割合、面ごとの集計、検出器マップ、処理時間が含まれます。マップはy行/x列の順で、値はピクセル内の積算光量です。照度密度が必要な場合は各ピクセル面積で割ります。
-
-## 材料と波長
-
-各光線の `wavelength_um` を材料の分散式に渡します。レンズとロッドにはそれぞれの材料を割り当てます。同じ光路を450 nmと635 nmで計算する例は `examples/sequential_lens.json` と `examples/integrator_rod.json` にあります。
-
-Sellmeier式は `n² = 1 + Σ Bi λ²/(λ²−Ci)`、Schott式は `n² = A0 + A1 λ² + A2/λ² + A3/λ⁴ + A4/λ⁶ + A5/λ⁸` です。SellmeierのCはµm²、Schottの係数はλをµmで入力したときの値を指定します。表データは `[wavelength_um, n]` を波長の昇順に並べます。
-
-分散式には `valid_range_um` を必須とし、表データは両端の波長を有効範囲にします。範囲外の波長は実行前のエラーになります。現状はscene中の全材料について、発射光線の波長を評価できることを検査します。複数波長の合計光量は各光源の `total_weight` の和で定義し、波長ごとの重みを指定できます。
-
-シリカの例には固定したSellmeier係数をJSONへ記述し、受け付ける範囲は0.4～0.7 µmに絞っています。実際の設計では、ガラス銘柄・係数・適用波長・基準温度をメーカー資料で確認して登録します。AGFのITは厚みd、内部透過率Tから吸収係数 `α = −ln(T)/d` を求め、波長の間をαで線形補間します。吸収データ範囲外も実行前の確認対象です。温度依存は未実装です。
-
-## ロッドと面の向き
-
-`integrator_rod.json` は1 mm角、長さ30 mmのシリカロッドを6面で定義します。側面の法線と材料の組合せから、入射角と波長ごとに全反射を判定します。出口へ進む光と入口へ戻る光をそれぞれ別の検出器で集計します。
-
-屈折面の `minus_medium` は局所法線の負側、`plus_medium` は正側の媒質番号です。法線は局所面の `(-∂sag/∂x, -∂sag/∂y, 1)` の向きです。媒質番号は `materials` 配列の添字に対応します。光線の現在媒質が境界条件と一致しない場合、その光量を `medium_mismatch` に記録します。閉じたレンズやロッドを非シーケンシャルで扱う際は、側面を含む境界を用意します。
-
-## 光量バジェット
-
-基準面はsceneの `reference_plane` に明記し、その面で発射した光線重みの合計を100%とします。各サンプルJSONにも照射を開始する基準面を記述しています。
-
-| 終端・減少項目 | 意味 |
+| オプション | 用途 |
 |---|---|
-| detected | 全検出器に届いた合計光量。各検出器の割合は `detector_percent_of_reference` に別記 |
-| escaped | 追跡対象の面を抜けた光。レンズ出口でsceneを終えた場合は、この項目がレンズの出力になる |
-| geometric_miss | シーケンシャルで次の指定面・口径を通過できなかった光 |
-| surface_absorbed / bulk_absorbed | 吸収面・ミラーでの吸収と、媒質内部での吸収 |
-| sequential_reflection_not_followed | シーケンシャルの主透過光路から分かれた通常の界面反射光 |
-| branch_cutoff | 発射時の1光線重みを分母に、指定した閾値より小さくなった分岐光 |
-| interaction_limit | 深さまたは1発射あたりの相互作用数の上限に達した光 |
-| numerical_failure / medium_mismatch | 面交差の未解決光と、媒質境界の不整合があった光 |
+| `--mode sequential` / `non_sequential` | 追跡方式を上書き |
+| `--sampling sobol` / `pseudorandom` | 全光源のサンプリング方式を上書き |
+| `--rays-per-source N` | 各光源の本数を上書き |
+| `--rays-csv INPUT.csv` | 発射位置・方向・重み・波長を指定した光線を入力 |
+| `--terminals` / `--paths N` | 終端光線／発射IDがN未満の光路を保存 |
+| `--repeat N` | 同じ光線をN回追跡し、処理時間の中央値を出力 |
+| `--inspect` | ZMXを読み込み、追跡せずにプロジェクトへ保存 |
 
-これらの和を発射光量と照合します。打切りと数値計算の未解決分を吸収と区別するため、光量収支が閉じていても、これらの値を確認します。非シーケンシャルの面別値は、同じ面に何度も入射した光を積算するため、100%を超える場合があります。例のロッドには前後両方の検出器があり、`detected` 合計100%には戻り光も含まれます。
+処理時間は追跡と集計を含みます。光源生成、ファイル入出力、描画、ウォームアップは計測から除きます。詳細は `--help` で確認できます。
+
+## サンプル
+
+| ファイル | 内容 |
+|---|---|
+| [sequential_lens.json](examples/sequential_lens.json) | 450 nmと635 nmの光を両凸レンズへ入射 |
+| [nonsequential_slab.json](examples/nonsequential_slab.json) | 平行平板の透過と多重反射 |
+| [integrator_rod.json](examples/integrator_rod.json) | 1 mm角・長さ30 mmのロッドと全反射 |
+| [folded_mirror.json](examples/folded_mirror.json) | ミラーで光路を90°曲げる系 |
+
+## 光源サンプリング
+
+既定は、領域内の偏りを抑える低偏差列の **Sobol列** です。seedで決まる線形行列スクランブルとデジタルシフトを加え、発光位置・出射方向・ダイオード配列の選択に別々の次元を使います。同じ設定とseedなら、同じ光線を生成します。
+
+一様円板は面積、一様円錐は立体角に対して一様になるよう変換します。GaussianのSource Diodeには逆累積分布関数を使い、発光領域の端で切ったGaussian分布を保ちます。
+
+光源ごとの本数を **256、1024、4096など2のべき乗** にすると、Sobol列の均等性を保てます。任意の本数も指定できますが、同じ均等性の保証はありません。GUIのプレビューは各光源256本が上限です。光路表示は全光源で合計64本を上限とし、各光源の列の先頭から順番に選びます。[Sobol列の性質](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.qmc.Sobol.html)
+
+各 `sources` 要素で方式とseedを指定できます。
+
+```json
+{
+  "count": 4096,
+  "sampling": "sobol",
+  "seed": 42,
+  "origin_mm": [0, 0, 0],
+  "direction": [0, 0, 1],
+  "disk_radius_mm": 1,
+  "wavelength_um": 0.55,
+  "medium": 0,
+  "total_weight": 1
+}
+```
+
+`"sampling": "pseudorandom"` で従来の疑似乱数方式に切り替えられます。v0.3以降は省略時にもSobolを使うため、以前の生成光線を再現する場合は `pseudorandom` を指定します。CSV入力の光線にはサンプリング設定を適用しません。
+
+## 対応する光学モデル
+
+| 項目 | 対応範囲 |
+|---|---|
+| シーケンシャル | 指定順の面を追跡。屈折面は主透過光、ミラーと全反射は反射光を次の面へ進める |
+| 非シーケンシャル | 最も近い面との交差を探し、Fresnel反射光・透過光を重みで分岐 |
+| 面 | 平面、球面キャップ、円錐面、A4～A18の偶数次非球面、三角形メッシュ |
+| 配置・口径 | 3次元の平行移動・回転（Rx→Ry→Rz）、円形・矩形口径 |
+| 材料 | 一定屈折率、Sellmeier式、Schott式、波長別表の線形補間、内部吸収 |
+| 光源・検出器 | 複数光源・複数波長、円板・円錐・Source Diode、複数の平面検出器 |
+| 出力 | 光路、画素別積算光量、光量収支、光学距離、終端光線 |
+
+長さはmm、真空波長はµm、演算はf64です。材料の有効波長範囲を実行前に確認し、範囲外をエラーにします。光学距離は各媒質の `n(λ) × 幾何学的距離` の合計です。
+
+屈折面の `minus_medium`／`plus_medium` は局所法線の負側／正側の媒質番号で、`materials` 配列の添字を指定します。非シーケンシャルのレンズやロッドは、側面を含めて媒質境界を定義します。
+
+## Zemaxファイルの読込と保存
+
+| 定義 | 読込範囲 |
+|---|---|
+| Sequential Standard / Even Asphere | 面形状・間隔・材料・口径。Even AsphereのPARM 2をA4として解釈 |
+| NSC Source Diode | 位置・回転・光量・波長番号・X/Y発散・発光領域・Gaussian幅・配列 |
+| NSC Detector Rectangle | 位置・回転・寸法・ピクセル数 |
+| NSC CAD Import | STEPで参照された単一の閉じたソリッド |
+| AGF | GCAT指定カタログのSchott式1・Sellmeier 1式2、LD波長範囲、IT内部透過率 |
+
+Source DiodeはGaussian係数Gx/Gy/Hx/Hyが1、非点収差0の範囲に対応します。Sequential ZMXの初期照射は主波長の軸上平行光です。視野・瞳・有限距離物体は照射条件の追加が必要です。
+
+材料カタログはGUIの「AGFフォルダーを追加…」から指定できます。
+
+読込レポートに未対応の定義や不足ファイルを表示します。コーティングは名前を保持し、未コートFresnelで計算するには明示設定が必要です。SPCDスペクトルを使う光源は、単色の計算波長を指定して追跡します。
+
+STEPの初回読込にはFreeCADのPythonが必要です。`RAYTRACE_FREECAD_PYTHON` で実行ファイルを指定できます。Windowsの既定値は `%LOCALAPPDATA%/Programs/FreeCAD 1.1/bin/python.exe` です。0.02 mm設定で分割したメッシュをビルド元の `results/cad_cache` に保存し、追跡はRustで行います。CADの精度はメッシュ分割を変えた収束確認が必要です。
+
+「保存…」は元のZMX全文と編集状態をJSONプロジェクトへ保存します。「ZMX書出し…」は次の編集をZemaxへ返します。
+
+- Sequential：軸上の面形状・間隔・口径・材料。
+- NSC：既存オブジェクトの位置・回転、Source Diodeの本数・光量・発散・配列・発光領域。
+
+変更のないZMXは元の文字コードとレコードを保って書き出します。参照ファイルも保存先へコピーし、同名で内容が異なるファイルがあれば上書きを止めます。NSCの新規部品、形状・材料・波長表の変更、座標ブレークを伴う編集はJSONプロジェクトで保存します。
+
+## 光量の読み方
+
+`reference_plane` で指定した発射基準面の光線重み合計を100%とします。複数光源・波長の合計は各光源の `total_weight` の和です。検出器マップは画素内の積算光量で、照度密度を求めるには画素面積で割ります。
+
+光量収支は、検出器到達、追跡領域外、幾何学的な外れ、界面・内部吸収、逐次追跡で追わない界面反射、分岐・深さの打切り、数値的な未解決分に分けて記録します。これらの和を発射光量と照合します。
+
+非シーケンシャルの面別値は、同じ面への複数回の入射を積算します。`numerical_failure` は未解決の面交差、`medium_mismatch` は媒質境界の不整合です。偶数次非球面の交差は、口径内で解の一意性を確認できる範囲に対応します。
+
+## OpticStudioと比べた主な未対応機能
+
+[OpticStudioの公式機能一覧](https://www.ansys.com/products/optics/ansys-zemax-opticstudio)、[面型](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Summary_Table_of_Sequential_Surface_Types.html)、[光源モデル](https://optics.ansys.com/hc/en-us/articles/42661687233939-Light-sources-used-in-illumination-design)と比較した、v0.3の主な制約です。
+
+| 分野 | 未対応の機能 |
+|---|---|
+| ファイル・配置 | ZMX全定義の計算再現、任意の編集の再書出し、ZOS/ZBB/ZRD、Coordinate Break連鎖、NSC参照階層 |
+| 面・照射 | 円筒・トロイド・自由曲面・回折面、視野・瞳・有限距離物体・Ray Aimingの自動再現 |
+| 光源・材料 | IES/SDF/SPCD、Source Diodeの非点収差・超Gaussian、追加AGF分散式、温度依存、GRIN、複屈折 |
+| 界面・散乱 | 偏光追跡、多層薄膜、実コーティング、BRDF/BSDF表面散乱、体積散乱、迷光経路の分類 |
+| 評価・設計 | 収差図・MTF/PSF、自動最適化、ソルブ／ピックアップ、複数構成、公差・歩留まり解析 |
+| GUI | 3D操作、部品単位の組立編集、部品カタログ |
+
+POPによる波動伝搬、干渉、回折によるビーム拡がり、ファイバーのモード結合は対象外です。
 
 ## 検証
 
 ```powershell
-cargo test --release --offline
-cargo clippy --all-targets --all-features --offline -- -D warnings
+cargo test --locked
+cargo clippy --all-targets --all-features --locked -- -D warnings
+./target/release/raytrace-gui.exe --smoke results/gui_check
 ```
 
-物理計算15項目とZMX交換8項目で、Snell則、Fresnel反射、臨界角、平行平板、多重反射、吸収、ロッド、非球面、並列実行の再現性、AGF選択、文字コード、元定義の保持、編集の反映、依存ファイルの競合を確認しています。
+テストではSnell則、Fresnel反射、全反射、多重反射、吸収、光学距離、分散、ZMX往復保存を確認します。サンプリングは等面積・等立体角・位置と方向の同時分布、Gaussian分布、seedと光線数変更時の再現性を確認します。
 
-GUIの起動・計算・画面保存は `--smoke 出力先` で検証できます。例えば `./target/release/raytrace-gui.exe --smoke results/gui_lens` でサンプルレンズを確認できます。実光源ZMXの検証出力はローカルで管理しています。
-
-実機OpticStudioとの往復検証は `examples/exchange_check.rs` と `scripts/zemax_exchange_probe.py` を使います。ダミー平面・レンズ2面・像面からなるローカルZMXを入力し、レンズの中心厚を0.25 mm増やして書き出します。Python側にはpythonnetと有効なOpticStudio APIライセンスが必要です。インストール先は `RAYTRACE_ZEMAX_ROOT` で指定できます。
+OpticStudioとの光線比較には `examples/exchange_check.rs` と `scripts/zemax_exchange_probe.py` を使えます。入力はダミー平面・レンズ2面・像面からなるZMXです。中心厚を0.25 mm増やして書き出し、同じ7本の光線を比較します。Python側にはpythonnetと有効なOpticStudio APIライセンスが必要で、インストール先は `RAYTRACE_ZEMAX_ROOT` で指定できます。
 
 ```powershell
-cargo run --release --example exchange_check -- local_data/lens.zmx results/exchange
+cargo run --release --example exchange_check -- lens.zmx results/exchange
 python scripts/zemax_exchange_probe.py --input results/exchange/lens_edited.zmx --rays results/exchange/reference.json --output results/zemax_exchange
 ```
 
-ローカル検証ではACL5040U-Aを使い、633 nm、軸上平行光の代表7本で、像面のX/Y位置と進行方向をOpticStudioと許容値内で照合できました。この試験はレンズの幾何光路を検証する範囲で、コーティングや全NSC機能の一致は追加の検証対象です。入力・編集後のZMX、比較光線、読込結果を含むJSONは公開リポジトリに含めません。
-
-既存の独立NumPy実装とも、ローカルの保存光線を使って位置・方向・重み・通過本数を照合しました。15,955本から両実装とも15,921本がレンズを通過し、座標差は最大1e-9 mm未満でした。この値は両実装の数値的一致を示し、部品寸法や材料データの物理的精度は実物とカタログに基づいて別途評価します。この15,955本を使う条件のOpticStudio直接照合は今後の検証です。専用の検証ヘルパーと元の研究データはローカルで管理しています。
-
-v0.1で同じ15,955本・465 nmを使い、21回の中央値で測定した結果は次のとおりです。時間はレンズ2面の計算で、ファイル読込、JSON/CSV出力、描画、ウォームアップを除きます。Rust側には集計処理を含めています。比較対象は既存NumPy実装で、OpticStudioの実行時間は測定していません。
-
-| 実装 | レンズ2面の計算時間 | NumPy実装に対する速度比 |
-|---|---:|---:|
-| 既存NumPy | 90.11 ms | 1.00 |
-| Rust・1スレッド | 9.66 ms | 9.33 |
-| Rust・4スレッド | 3.15 ms | 28.60 |
-
-## OpticStudioと比べた主な未対応機能
-
-2026年10月15日時点のv0.2と、公式資料に掲載された代表機能の比較です。[公式機能一覧](https://www.ansys.com/products/optics/ansys-zemax-opticstudio)、[面型一覧](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Summary_Table_of_Sequential_Surface_Types.html)、[光源モデル](https://optics.ansys.com/hc/en-us/articles/42661687233939-Light-sources-used-in-illumination-design)を基準にしています。
-
-| 分野 | v0.2の未対応・制約 |
-|---|---|
-| Zemaxファイル互換 | ZMXの全定義の計算再現、任意の編集の再書出し、ZOS・ZBB・ZRDの直接読込。元ZMXのレコード保持は実装済み |
-| 面形状・配置 | 円筒・トロイド・自由曲面・回折面の専用モデル。3D配置自体は可能で、ZMXのCoordinate Break連鎖・NSC参照階層の読込が未対応 |
-| 照射・光源 | 視野・瞳・有限距離物体・[Ray Aiming](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v251/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Ray_Aiming.html)の自動再現、IES/SDF光源・SPCDスペクトル。Source Diodeの非点収差・超Gaussianも未対応 |
-| 材料 | AGFの追加分散式、温度依存、GRIN（空間的な屈折率分布）、複屈折。現在は等方媒質の波長分散・内部吸収を計算 |
-| 偏光・コーティング | 偏光状態の追跡、多層薄膜、波長・角度に依存する実コーティング。現在は非偏光平均Fresnelと一定反射率を使用（[公式解説](https://optics.ansys.com/hc/en-us/articles/42661707808019-How-to-add-coatings-and-scattering-functions-to-Non-Sequential-objects)） |
-| 散乱・迷光 | BRDF/BSDF表面散乱、体積散乱、迷光の経路別集計・検索。鏡面反射と透過の分岐追跡は実装済み |
-| 評価・設計支援 | 収差図・MTF/PSFなどの画像品質解析、自動最適化、ソルブ／ピックアップ、複数構成、公差・Monte Carlo歩留まり解析。現在は光路・検出器分布・光量収支・光学距離が中心 |
-| GUI・CAD | 3D操作、部品単位の組立編集、部品カタログ。STEP読込は単一の閉じたソリッドをメッシュ近似する方式 |
-
-POPによる波動伝搬、干渉、回折によるビーム拡がり、ファイバーのモード結合は、今回の「光線追跡専門」という方針では対象外です。OpticStudioの関連機能は[解析機能の公式説明](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v261/en/OpticStudio_User_Guide/OpticStudio_Help/topics/The_Analyze_Tab_sequential_ui_mode.html)に記載されています。
-
-今回の用途で先に拡張したいのは、ZMXの配置・照射条件の再現、光源形式とスペクトル、実コーティングです。最適化・公差解析まで含む設計支援は、その後の拡張候補です（[最適化・公差の公式紹介](https://optics.ansys.com/hc/en-us/articles/42661787388947-Designing-a-microscope-objective-with-OpticStudio-webinar)）。
-
-## 次に拡張する点
-
-1. 部品数が増えた場合の探索を加速する。CAD内部は三角形BVHを使用し、部品間は境界ボックスで候補を除外して全登録面を調べる方式。
-2. ZMXの追加面型・光源型・参照オブジェクトと、偏心・傾き・複合系の書出しを拡張する。ブラックボックス部品は面データの提供か参照計算が必要。
-3. 円筒面・円錐側面・自由曲面、部品単位の組立編集を追加する。
-4. 偏光状態、波長・角度に依存するコーティング、散乱モデルを追加する。現状は各界面で非偏光平均のFresnel係数を使用する。`reflectance` を明示した界面は一定反射率の近似。
-5. 光路ビューアーのズーム、3D表示、材料と部品のライブラリを追加する。
-
-現状の偶数次非球面は、口径内の勾配上限から光線との交差が一意と確認できる場合を処理します。一意性の条件を満たさない斜入射や複雑な高次面は `numerical_failure` に集計し、全根の分離に対応する解法を追加する対象としています。位置の自己交差除外は1e-8 mmで、重なった面・同一位置の境界には適切な面間隔が必要です。
-
-計算核は `src/geometry.rs` と `src/trace.rs`、配置・材料・光源は `src/model.rs`、実行と保存は `src/main.rs` に分けています。CPU並列化には[Rayon](https://docs.rs/rayon/latest/rayon/)、sceneと結果の保存には[Serde](https://serde.rs/)を使います。既存Pythonから呼ぶ際は[PyO3](https://pyo3.rs/main/parallelism)の接続層を追加でき、計算核を共有できます。
+計算核は `src/geometry.rs` と `src/trace.rs`、光源生成は `src/model.rs` と `src/sampling.rs`、ZMX交換は `src/zemax.rs` にあります。Rustライブラリとしても利用できます。
