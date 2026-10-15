@@ -170,6 +170,25 @@ v0.1で同じ15,955本・465 nmを使い、21回の中央値で測定した結�
 | Rust・1スレッド | 9.66 ms | 9.33 |
 | Rust・4スレッド | 3.15 ms | 28.60 |
 
+## OpticStudioと比べた主な未対応機能
+
+2026年10月15日時点のv0.2と、公式資料に掲載された代表機能の比較です。[公式機能一覧](https://www.ansys.com/products/optics/ansys-zemax-opticstudio)、[面型一覧](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Summary_Table_of_Sequential_Surface_Types.html)、[光源モデル](https://optics.ansys.com/hc/en-us/articles/42661687233939-Light-sources-used-in-illumination-design)を基準にしています。
+
+| 分野 | v0.2の未対応・制約 |
+|---|---|
+| Zemaxファイル互換 | ZMXの全定義の計算再現、任意の編集の再書出し、ZOS・ZBB・ZRDの直接読込。元ZMXのレコード保持は実装済み |
+| 面形状・配置 | 円筒・トロイド・自由曲面・回折面の専用モデル。3D配置自体は可能で、ZMXのCoordinate Break連鎖・NSC参照階層の読込が未対応 |
+| 照射・光源 | 視野・瞳・有限距離物体・[Ray Aiming](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v251/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Ray_Aiming.html)の自動再現、IES/SDF光源・SPCDスペクトル。Source Diodeの非点収差・超Gaussianも未対応 |
+| 材料 | AGFの追加分散式、温度依存、GRIN（空間的な屈折率分布）、複屈折。現在は等方媒質の波長分散・内部吸収を計算 |
+| 偏光・コーティング | 偏光状態の追跡、多層薄膜、波長・角度に依存する実コーティング。現在は非偏光平均Fresnelと一定反射率を使用（[公式解説](https://optics.ansys.com/hc/en-us/articles/42661707808019-How-to-add-coatings-and-scattering-functions-to-Non-Sequential-objects)） |
+| 散乱・迷光 | BRDF/BSDF表面散乱、体積散乱、迷光の経路別集計・検索。鏡面反射と透過の分岐追跡は実装済み |
+| 評価・設計支援 | 収差図・MTF/PSFなどの画像品質解析、自動最適化、ソルブ／ピックアップ、複数構成、公差・Monte Carlo歩留まり解析。現在は光路・検出器分布・光量収支・光学距離が中心 |
+| GUI・CAD | 3D操作、部品単位の組立編集、部品カタログ。STEP読込は単一の閉じたソリッドをメッシュ近似する方式 |
+
+POPによる波動伝搬、干渉、回折によるビーム拡がり、ファイバーのモード結合は、今回の「光線追跡専門」という方針では対象外です。OpticStudioの関連機能は[解析機能の公式説明](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v261/en/OpticStudio_User_Guide/OpticStudio_Help/topics/The_Analyze_Tab_sequential_ui_mode.html)に記載されています。
+
+今回の用途で先に拡張したいのは、ZMXの配置・照射条件の再現、光源形式とスペクトル、実コーティングです。最適化・公差解析まで含む設計支援は、その後の拡張候補です（[最適化・公差の公式紹介](https://optics.ansys.com/hc/en-us/articles/42661787388947-Designing-a-microscope-objective-with-OpticStudio-webinar)）。
+
 ## 次に拡張する点
 
 1. 部品数が増えた場合の探索を加速する。CAD内部は三角形BVHを使用し、部品間は境界ボックスで候補を除外して全登録面を調べる方式。
