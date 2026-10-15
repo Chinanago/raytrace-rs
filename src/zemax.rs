@@ -750,6 +750,11 @@ fn read_nsc(
 /// Preserve the complete source text on an unchanged document. Geometry edits
 /// are patched only for supported coaxial sequential surfaces.
 pub fn export(project: &Project, path: &Path) -> Result<(), String> {
+    if project.assembly.is_some() {
+        return Err(
+            "組立光学系はJSONプロジェクトで保存できます。部品を含むZMX書出しは追加予定です".into(),
+        );
+    }
     if let Some(original) = &project.zemax {
         if serde_json::to_value(&project.scene).map_err(|e| e.to_string())?
             == serde_json::to_value(&original.baseline_scene).map_err(|e| e.to_string())?

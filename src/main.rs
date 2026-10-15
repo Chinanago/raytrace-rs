@@ -189,6 +189,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
     }
     if let Some(mode) = mode {
+        if project.assembly.is_some() && mode == Mode::Sequential {
+            return Err("組立光学系は非シーケンシャルで追跡してください".into());
+        }
         spec.mode = mode;
     }
     let scene = spec.prepare()?;

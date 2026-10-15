@@ -1,6 +1,6 @@
 [package]
 name = "raytrace-rs"
-version = "0.3.0"
+version = "0.4.0"
 default-run = "raytrace-rs"
 edition = "2021"
 description = "Experimental sequential and non-sequential geometric optical ray tracing"

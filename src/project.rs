@@ -1,4 +1,5 @@
 //! Editable project plus the original Zemax document and compatibility diagnostics.
+use crate::assembly::{empty_scene, Assembly, Component, ComponentKind};
 use crate::model::Scene;
 use crate::zemax::{self, ZmxDocument};
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,8 @@ pub struct Issue {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assembly: Option<Assembly>,
     pub format: String,
     pub scene: Scene,
     pub material_names: Vec<String>,
@@ -42,6 +45,7 @@ impl Project {
             })
             .collect();
         Self {
+            assembly: None,
             format: "raytrace-project-v1".into(),
             scene,
             material_names,
@@ -61,10 +65,13 @@ impl Project {
         let bytes = fs::read(path).map_err(|e| e.to_string())?;
         let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
         if value.get("format").is_some() {
-            let project: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
-            if project.format != "raytrace-project-v1" {
+            let mut project: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
+            if !["raytrace-project-v1", "raytrace-project-v2"].contains(&project.format.as_str())
+                || project.format == "raytrace-project-v2" && project.assembly.is_none()
+            {
                 return Err("未対応のプロジェクト形式です".into());
             }
+            project.refresh_assembly()?;
             Ok(project)
         } else {
             Ok(Self::new(
@@ -73,33 +80,84 @@ impl Project {
         }
     }
     pub fn save(&self, path: &Path) -> Result<(), String> {
+        let mut snapshot = self.clone();
+        snapshot.refresh_assembly()?;
         fs::write(
             path,
-            serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?,
+            serde_json::to_vec_pretty(&snapshot).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())
     }
     pub fn trace_scene(&self) -> Result<Scene, String> {
+        let (mut scene, issues) = if let Some(a) = &self.assembly {
+            let (scene, _, issues) = a.compose(&self.scene)?;
+            (scene, issues)
+        } else {
+            (self.scene.clone(), self.issues.clone())
+        };
         let blocked: Vec<_> = self
-            .issues
+            .blocking_issues(&issues)
             .iter()
-            .filter(|i| {
-                i.blocking
-                    && !(i.code == "coating" && self.allow_uncoated
-                        || i.code == "spectrum" && self.monochromatic_override_um.is_some())
-            })
             .map(|i| i.message.as_str())
             .collect();
         if !blocked.is_empty() {
             return Err(blocked.join("\n"));
         }
-        let mut scene = self.scene.clone();
         if let Some(wavelength) = self.monochromatic_override_um {
             for source in &mut scene.sources {
                 source.wavelength_um = wavelength;
             }
         }
         Ok(scene)
+    }
+    fn blocking_issues<'a>(&self, issues: &'a [Issue]) -> Vec<&'a Issue> {
+        issues
+            .iter()
+            .filter(|i| {
+                i.blocking
+                    && !(i.code == "coating" && self.allow_uncoated
+                        || i.code == "spectrum" && self.monochromatic_override_um.is_some())
+            })
+            .collect()
+    }
+    pub fn new_assembly() -> Self {
+        let mut p = Self::new(empty_scene("組立光学系"));
+        p.format = "raytrace-project-v2".into();
+        p.assembly = Some(Assembly::default());
+        p
+    }
+    pub fn refresh_assembly(&mut self) -> Result<(), String> {
+        if let Some(a) = &self.assembly {
+            let (scene, names, issues) = a.compose(&self.scene)?;
+            self.scene = scene;
+            self.material_names = names;
+            self.issues = issues;
+        }
+        Ok(())
+    }
+    pub fn add_component(&mut self, component: Component) -> Result<(), String> {
+        let mut candidate = self.clone();
+        if candidate.assembly.is_none() {
+            let current = Component::imported(candidate.clone(), ComponentKind::System)?;
+            candidate = Self::new_assembly();
+            candidate
+                .assembly
+                .as_mut()
+                .unwrap()
+                .components
+                .push(current);
+            candidate.allow_uncoated = self.allow_uncoated;
+            candidate.monochromatic_override_um = self.monochromatic_override_um;
+        }
+        candidate
+            .assembly
+            .as_mut()
+            .unwrap()
+            .components
+            .push(component);
+        candidate.refresh_assembly()?;
+        *self = candidate;
+        Ok(())
     }
     pub fn issue(&mut self, code: &str, message: impl Into<String>, blocking: bool) {
         let message = message.into();

@@ -11,9 +11,30 @@ cargo build --release --locked --features gui --bins
 ./target/release/raytrace-gui.exe
 ```
 
-ビルド後は `Raytraceを起動.cmd` からも起動できます。GUIはレンズのサンプルで開きます。「開く…」またはドラッグ＆ドロップで `.zmx` やJSONプロジェクトを読み込み、「計算する」で追跡します。
+ビルド後は `Raytraceを起動.cmd` からも起動できます。GUIは光源・レンズ・ロッド・検出器の組立サンプルで開きます。「開く…」またはドラッグ＆ドロップで `.zmx` やJSONプロジェクトを読み込み、「計算する」で追跡します。
 
 光源の本数・波長・サンプリング、面の位置・傾き・曲率・材料を編集できます。光路図はZ–X／Z–Y／X–Y投影、検出器は画素ごとの積算光量を表示します。設定を変えると再計算が必要です。
+
+## 光源・レンズ・ロッドを組み合わせる
+
+1. 「新規」で空の光学系を作ります。
+2. 「部品を追加 → 光源ZMX…」で光源を読み込みます。光源内のレンズやガラス形状も部品に含まれます。
+3. 「部品を追加 → レンズZMX…」でレンズを読み込みます。レンズの試験光源・像面を除き、光学面と材料を追加します。
+4. 「部品を追加 → ロッド」でロッドを追加し、幅X・幅Y・長さと材料を設定します。
+5. 「部品を追加 → 検出器」で観測面を追加し、配置して「計算する」を押します。
+
+図の丸印をドラッグして、選んだ投影の2軸方向へ部品を移動できます。「部品と配置」のX/Y/Z・θx/θy/θzでは位置と傾きを数値指定します。配置の基準は、光源が発光配列の中心、レンズが最初の光学面の頂点、ロッドが入口中心です。部品一覧のチェックで有効／無効を切り替え、「削除」で取り除けます。
+
+組立光学系は非シーケンシャルで追跡します。各部品の内部形状・波長依存の材料を維持し、全体で材料番号を割り当てます。円形口径の軸上逐次レンズには、各面の口径端を結ぶ円筒／円錐側面を追加します。側面形状はこの幾何近似に基づくため、実部品の有効径と形状に合わせて確認してください。
+
+「保存…」は部品の元定義・配置・材料・ロッド寸法を含むJSONを保存します。「開く…」で、元のZMXやSTEPを開き直さずに復元できます。組立光学系のZMX書出しは未対応です。
+
+組立サンプルは「サンプルを開く → 光源＋レンズ＋ロッド」からも開けます。CLI用のプロジェクトは次のように生成できます。
+
+```powershell
+cargo run --release --example assembly_demo -- results/assembly_demo.json
+./target/release/raytrace-rs.exe results/assembly_demo.json --threads 4 --output results/assembly_trace.json
+```
 
 ## コマンドライン
 
@@ -79,7 +100,7 @@ GUIなしで使う場合は `cargo build --release --locked` でビルドしま�
 |---|---|
 | シーケンシャル | 指定順の面を追跡。屈折面は主透過光、ミラーと全反射は反射光を次の面へ進める |
 | 非シーケンシャル | 最も近い面との交差を探し、Fresnel反射光・透過光を重みで分岐 |
-| 面 | 平面、球面キャップ、円錐面、A4～A18の偶数次非球面、三角形メッシュ |
+| 面 | 平面、球面キャップ、円錐面、A4～A18の偶数次非球面、レンズ側面（円筒・円錐）、三角形メッシュ |
 | 配置・口径 | 3次元の平行移動・回転（Rx→Ry→Rz）、円形・矩形口径 |
 | 材料 | 一定屈折率、Sellmeier式、Schott式、波長別表の線形補間、内部吸収 |
 | 光源・検出器 | 複数光源・複数波長、円板・円錐・Source Diode、複数の平面検出器 |
@@ -120,32 +141,34 @@ STEPの初回読込にはFreeCADのPythonが必要です。`RAYTRACE_FREECAD_PYT
 
 光量収支は、検出器到達、追跡領域外、幾何学的な外れ、界面・内部吸収、逐次追跡で追わない界面反射、分岐・深さの打切り、数値的な未解決分に分けて記録します。これらの和を発射光量と照合します。
 
-非シーケンシャルの面別値は、同じ面への複数回の入射を積算します。`numerical_failure` は未解決の面交差、`medium_mismatch` は媒質境界の不整合です。偶数次非球面の交差は、口径内で解の一意性を確認できる範囲に対応します。
+非シーケンシャルの面別値は、同じ面への複数回の入射を積算します。`numerical_failure` は未解決の面交差、`medium_mismatch` は媒質境界の不整合です。非球面の斜入射は区間を分割して最も近い交点を探し、探索上限に達した光量を未解決分として記録します。
 
 ## OpticStudioと比べた主な未対応機能
 
-[OpticStudioの公式機能一覧](https://www.ansys.com/products/optics/ansys-zemax-opticstudio)、[面型](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Summary_Table_of_Sequential_Surface_Types.html)、[光源モデル](https://optics.ansys.com/hc/en-us/articles/42661687233939-Light-sources-used-in-illumination-design)と比較した、v0.3の主な制約です。
+[OpticStudioの公式機能一覧](https://www.ansys.com/products/optics/ansys-zemax-opticstudio)、[面型](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Summary_Table_of_Sequential_Surface_Types.html)、[光源モデル](https://optics.ansys.com/hc/en-us/articles/42661687233939-Light-sources-used-in-illumination-design)と比較した、v0.4の主な制約です。
 
 | 分野 | 未対応の機能 |
 |---|---|
 | ファイル・配置 | ZMX全定義の計算再現、任意の編集の再書出し、ZOS/ZBB/ZRD、Coordinate Break連鎖、NSC参照階層 |
-| 面・照射 | 円筒・トロイド・自由曲面・回折面、視野・瞳・有限距離物体・Ray Aimingの自動再現 |
+| 面・照射 | 円筒レンズ・トロイド・自由曲面・回折面、視野・瞳・有限距離物体・Ray Aimingの自動再現 |
 | 光源・材料 | IES/SDF/SPCD、Source Diodeの非点収差・超Gaussian、追加AGF分散式、温度依存、GRIN、複屈折 |
 | 界面・散乱 | 偏光追跡、多層薄膜、実コーティング、BRDF/BSDF表面散乱、体積散乱、迷光経路の分類 |
 | 評価・設計 | 収差図・MTF/PSF、自動最適化、ソルブ／ピックアップ、複数構成、公差・歩留まり解析 |
-| GUI | 3D操作、部品単位の組立編集、部品カタログ |
+| GUI | 3Dビューでの操作、部品カタログ。部品の追加・配置・ロッド編集は2D投影と数値入力に対応 |
 
 POPによる波動伝搬、干渉、回折によるビーム拡がり、ファイバーのモード結合は対象外です。
 
 ## 検証
 
 ```powershell
-cargo test --locked
+cargo test --all-features --locked
 cargo clippy --all-targets --all-features --locked -- -D warnings
 ./target/release/raytrace-gui.exe --smoke results/gui_check
 ```
 
 テストではSnell則、Fresnel反射、全反射、多重反射、吸収、光学距離、分散、ZMX往復保存を確認します。サンプリングは等面積・等立体角・位置と方向の同時分布、Gaussian分布、seedと光線数変更時の再現性を確認します。
+
+組立はZMXの別読込、材料番号の統合、側面との交差、剛体変換による位置・方向・光学距離の対応、保存・復元、GUIのドラッグ操作を検証します。
 
 OpticStudioとの光線比較には `examples/exchange_check.rs` と `scripts/zemax_exchange_probe.py` を使えます。入力はダミー平面・レンズ2面・像面からなるZMXです。中心厚を0.25 mm増やして書き出し、同じ7本の光線を比較します。Python側にはpythonnetと有効なOpticStudio APIライセンスが必要で、インストール先は `RAYTRACE_ZEMAX_ROOT` で指定できます。
 
@@ -154,4 +177,4 @@ cargo run --release --example exchange_check -- lens.zmx results/exchange
 python scripts/zemax_exchange_probe.py --input results/exchange/lens_edited.zmx --rays results/exchange/reference.json --output results/zemax_exchange
 ```
 
-計算核は `src/geometry.rs` と `src/trace.rs`、光源生成は `src/model.rs` と `src/sampling.rs`、ZMX交換は `src/zemax.rs` にあります。Rustライブラリとしても利用できます。
+計算核は `src/geometry.rs` と `src/trace.rs`、光源生成は `src/model.rs` と `src/sampling.rs`、ZMX交換は `src/zemax.rs`、部品の組立は `src/assembly.rs` にあります。Rustライブラリとしても利用できます。

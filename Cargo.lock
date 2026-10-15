@@ -1701,7 +1701,7 @@ dependencies = [
 
 [[package]]
 name = "raytrace-rs"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "eframe",
  "encoding_rs",

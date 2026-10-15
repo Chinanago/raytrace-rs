@@ -19,6 +19,15 @@ pub enum Miss {
 
 /// Conservative bounds include the full sag cap, including polynomial terms.
 pub fn bounds(shape: &Shape, aperture: &Aperture) -> Option<([V3; 2], f64)> {
+    if let Shape::ConicalSide {
+        radius_start_mm,
+        radius_end_mm,
+        length_mm,
+    } = shape
+    {
+        let r = radius_start_mm.max(*radius_end_mm);
+        return Some(([V3([-r, -r, 0.0]), V3([r, r, *length_mm])], 0.0));
+    }
     if let Shape::TriangleMesh { vertices, .. } = shape {
         if vertices.is_empty() {
             return None;
@@ -39,7 +48,7 @@ pub fn bounds(shape: &Shape, aperture: &Aperture) -> Option<([V3; 2], f64)> {
     }
     let (hx, hy) = aperture.bounds();
     let (radius, conic, coefficients): (f64, f64, &[f64]) = match shape {
-        Shape::TriangleMesh { .. } => unreachable!(),
+        Shape::TriangleMesh { .. } | Shape::ConicalSide { .. } => unreachable!(),
         Shape::Plane => return Some(([V3([-hx, -hy, 0.0]), V3([hx, hy, 0.0])], 0.0)),
         Shape::Sphere { radius_mm } => (*radius_mm, 0.0, &[]),
         Shape::EvenAsphere {
@@ -108,7 +117,7 @@ fn bounded_interval(surface: &PreparedSurface, p: V3, d: V3) -> Option<(f64, f64
 /// Sag and derivatives with respect to x and y.
 pub fn sag(shape: &Shape, x: f64, y: f64) -> Option<(f64, f64, f64)> {
     let (radius, conic, coefficients): (f64, f64, &[f64]) = match shape {
-        Shape::TriangleMesh { .. } => return None,
+        Shape::TriangleMesh { .. } | Shape::ConicalSide { .. } => return None,
         Shape::Plane => return Some((0.0, 0.0, 0.0)),
         Shape::Sphere { radius_mm } => (*radius_mm, 0.0, &[]),
         Shape::EvenAsphere {
@@ -139,6 +148,53 @@ pub fn intersect(surface: &PreparedSurface, p_world: V3, d_world: V3) -> Result<
     let p = surface.frame.local_point(p_world);
     let d = surface.frame.local_vector(d_world);
     let (t_low, t_high) = bounded_interval(surface, p, d).ok_or(Miss::Geometry)?;
+    if let Shape::ConicalSide {
+        radius_start_mm,
+        radius_end_mm,
+        length_mm,
+    } = surface.spec.shape
+    {
+        let k = (radius_end_mm - radius_start_mm) / length_mm;
+        let r = radius_start_mm + k * p.0[2];
+        let a = d.0[0].powi(2) + d.0[1].powi(2) - (k * d.0[2]).powi(2);
+        let b = 2.0 * (p.0[0] * d.0[0] + p.0[1] * d.0[1] - r * k * d.0[2]);
+        let c = p.0[0].powi(2) + p.0[1].powi(2) - r * r;
+        let mut candidates = if a.abs() < 1e-15 {
+            if b.abs() < 1e-15 {
+                return Err(Miss::Geometry);
+            }
+            [-c / b, f64::INFINITY]
+        } else {
+            let discriminant = b * b - 4.0 * a * c;
+            if discriminant < 0.0 {
+                return Err(Miss::Geometry);
+            }
+            let q = -0.5 * (b + discriminant.sqrt().copysign(b));
+            if q == 0.0 {
+                [-b / (2.0 * a), f64::INFINITY]
+            } else {
+                [q / a, c / q]
+            }
+        };
+        candidates.sort_by(f64::total_cmp);
+        let distance_mm = candidates
+            .into_iter()
+            .find(|t| t.is_finite() && *t > RAY_EPS_MM && *t >= t_low - 1e-9 && *t <= t_high + 1e-9)
+            .ok_or(Miss::Geometry)?;
+        let point = p + d * distance_mm;
+        let normal = V3([
+            point.0[0],
+            point.0[1],
+            -k * (radius_start_mm + k * point.0[2]),
+        ])
+        .unit();
+        return Ok(Hit {
+            distance_mm,
+            local_point: point,
+            point: surface.frame.world_point(point),
+            normal: surface.frame.world_vector(normal).unit(),
+        });
+    }
     if let Some(mesh) = &surface.mesh {
         let (distance_mm, normal) = mesh.hit(p, d).ok_or(Miss::Geometry)?;
         let local_point = p + d * distance_mm;
@@ -150,7 +206,7 @@ pub fn intersect(surface: &PreparedSurface, p_world: V3, d_world: V3) -> Result<
         });
     }
     let t = match &surface.spec.shape {
-        Shape::TriangleMesh { .. } => unreachable!(),
+        Shape::TriangleMesh { .. } | Shape::ConicalSide { .. } => unreachable!(),
         Shape::Plane => {
             if d.0[2].abs() < 1e-14 {
                 return Err(Miss::Geometry);
@@ -174,11 +230,11 @@ pub fn intersect(surface: &PreparedSurface, p_world: V3, d_world: V3) -> Result<
                 .ok_or(Miss::Geometry)?
         }
         Shape::EvenAsphere { .. } => {
-            // A conservative monotonicity condition proves there is at most one
-            // intersection in the bounded cap. Ambiguous profiles are reported.
+            // Use the fast solver when monotonicity proves a unique intersection;
+            // otherwise search bounded intervals in nearest-first order.
             let transverse = d.0[0].hypot(d.0[1]);
             if d.0[2].abs() <= surface.max_sag_slope * transverse + 1e-14 {
-                return Err(Miss::Numerical);
+                return oblique_asphere_hit(surface, p, d, t_low, t_high);
             }
             let residual_at = |t: f64| -> Option<f64> {
                 let q = p + d * t;
@@ -248,6 +304,69 @@ pub fn intersect(surface: &PreparedSurface, p_world: V3, d_world: V3) -> Result<
             .world_vector(V3([-gx, -gy, 1.0]).unit())
             .unit(),
     })
+}
+
+/// Search from near to far; a global Lipschitz bound excludes root-free intervals.
+/// This handles multiple intersections without assuming the sag residual is monotone.
+fn oblique_asphere_hit(
+    surface: &PreparedSurface,
+    p: V3,
+    d: V3,
+    lo: f64,
+    hi: f64,
+) -> Result<Hit, Miss> {
+    let value = |t| {
+        let q = p + d * t;
+        sag(&surface.spec.shape, q.0[0], q.0[1]).map(|v| q.0[2] - v.0)
+    };
+    let slope = d.0[2].abs() + surface.max_sag_slope * d.0[0].hypot(d.0[1]);
+    let mut stack = [(0.0, 0.0); 64];
+    let mut count = 1;
+    stack[0] = (lo, hi);
+    for _ in 0..4096 {
+        if count == 0 {
+            return Err(Miss::Geometry);
+        }
+        count -= 1;
+        let (a, b) = stack[count];
+        let mid = a + (b - a) * 0.5;
+        let fm = value(mid).ok_or(Miss::Numerical)?;
+        if fm.abs() > slope * (b - a) * 0.5 + 1e-12 {
+            continue;
+        }
+        if b - a <= 1e-9 || mid == a || mid == b {
+            let fa = value(a).ok_or(Miss::Numerical)?;
+            let fb = value(b).ok_or(Miss::Numerical)?;
+            let candidate = if fa * fb < 0.0 {
+                a - fa * (b - a) / (fb - fa)
+            } else {
+                mid
+            };
+            let residual = value(candidate).ok_or(Miss::Numerical)?;
+            if residual.abs() > 1e-9 {
+                return Err(Miss::Numerical);
+            }
+            let local_point = p + d * candidate;
+            let (_, gx, gy) = sag(&surface.spec.shape, local_point.0[0], local_point.0[1])
+                .ok_or(Miss::Numerical)?;
+            return Ok(Hit {
+                distance_mm: candidate,
+                local_point,
+                point: surface.frame.world_point(local_point),
+                normal: surface
+                    .frame
+                    .world_vector(V3([-gx, -gy, 1.0]).unit())
+                    .unit(),
+            });
+        }
+        if count + 2 > stack.len() {
+            return Err(Miss::Numerical);
+        }
+        stack[count] = (mid, b);
+        stack[count + 1] = (a, mid);
+        count += 2;
+    }
+    Err(Miss::Numerical)
 }
 
 #[derive(Clone, Copy, Debug)]

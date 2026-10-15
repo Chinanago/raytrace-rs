@@ -7,7 +7,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 FILES = {
     ".gitattributes", ".gitignore", "Cargo.toml", "Cargo.lock", "README.md",
-    "Raytraceを起動.cmd", "examples/exchange_check.rs",
+    "Raytraceを起動.cmd", "examples/exchange_check.rs", "examples/assembly_demo.rs",
     "scripts/check_publish.py", "scripts/step_mesh.py", "scripts/zemax_exchange_probe.py",
 }
 DEMOS = {
@@ -22,7 +22,7 @@ def git(*args):
 
 def embedded_document(value):
     if isinstance(value, dict):
-        if value.get("format") == "raytrace-project-v1" or value.get("zemax") is not None:
+        if str(value.get("format", "")).startswith("raytrace-project-") or value.get("zemax") is not None:
             return True
         return any(embedded_document(v) for v in value.values())
     if isinstance(value, list):

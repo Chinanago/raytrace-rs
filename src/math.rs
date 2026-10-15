@@ -75,6 +75,36 @@ pub struct Frame {
 }
 
 impl Frame {
+    fn pose_from_axes(origin: V3, axes: [V3; 3]) -> Pose {
+        let cy = axes[0].0[0].hypot(axes[0].0[1]);
+        let y = (-axes[0].0[2]).atan2(cy);
+        let (x, z) = if cy > 1e-12 {
+            (
+                axes[1].0[2].atan2(axes[2].0[2]),
+                axes[0].0[1].atan2(axes[0].0[0]),
+            )
+        } else {
+            (0.0, (-axes[1].0[0]).atan2(axes[1].0[1]))
+        };
+        Pose {
+            translation_mm: origin,
+            rotation_deg: V3([x, y, z].map(f64::to_degrees)),
+        }
+    }
+    pub fn transform_pose(&self, pose: &Pose) -> Pose {
+        let child = Self::new(pose);
+        Self::pose_from_axes(
+            self.world_point(child.origin),
+            child.axes.map(|a| self.world_vector(a)),
+        )
+    }
+    pub fn inverse_pose(&self, pose: &Pose) -> Pose {
+        let child = Self::new(pose);
+        Self::pose_from_axes(
+            self.local_point(child.origin),
+            child.axes.map(|a| self.local_vector(a)),
+        )
+    }
     pub fn new(pose: &Pose) -> Self {
         let [x, y, z] = pose.rotation_deg.0.map(f64::to_radians);
         let (sx, cx) = x.sin_cos();

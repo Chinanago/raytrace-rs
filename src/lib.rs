@@ -1,4 +1,5 @@
 //! A small geometric-optics kernel. Lengths are mm; wavelengths are micrometres.
+pub mod assembly;
 pub mod cad;
 pub mod geometry;
 #[cfg(feature = "gui")]

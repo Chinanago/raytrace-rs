@@ -136,6 +136,12 @@ impl Material {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Shape {
+    /// Side of a closed lens barrel: z in [0,length], outward-pointing normal.
+    ConicalSide {
+        radius_start_mm: f64,
+        radius_end_mm: f64,
+        length_mm: f64,
+    },
     TriangleMesh {
         vertices: Vec<V3>,
         triangles: Vec<[u32; 3]>,
@@ -453,6 +459,16 @@ impl Scene {
                 return Err("Invalid aperture".into());
             }
             match &surface.shape {
+                Shape::ConicalSide {
+                    radius_start_mm,
+                    radius_end_mm,
+                    length_mm,
+                } if !positive(*radius_start_mm)
+                    || !positive(*radius_end_mm)
+                    || !positive(*length_mm) =>
+                {
+                    return Err("Invalid lens barrel".into());
+                }
                 Shape::TriangleMesh {
                     vertices,
                     triangles,

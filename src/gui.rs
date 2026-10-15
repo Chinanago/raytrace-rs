@@ -1,5 +1,6 @@
 //! Small native editor; expensive imports and tracing run off the UI thread.
 use crate::{
+    assembly::{self, Component, ComponentKind},
     geometry::sag,
     math::{Frame, V3},
     model::*,
@@ -25,6 +26,7 @@ struct ResultView {
     texture: Option<egui::TextureHandle>,
 }
 enum Job {
+    Added(ComponentKind, Result<Box<Project>, String>),
     Loaded(Result<Box<Project>, String>),
     Traced(Result<Box<ResultView>, String>),
 }
@@ -34,6 +36,7 @@ struct App {
     result: Option<ResultView>,
     job: Option<Receiver<Job>>,
     selected: usize,
+    component: usize,
     source: usize,
     detector: usize,
     projection: usize,
@@ -74,13 +77,13 @@ impl App {
         style.visuals.panel_fill = Color32::from_rgb(246, 248, 251);
         style.visuals.selection.bg_fill = BLUE;
         cc.egui_ctx.set_style(style);
-        let scene = serde_json::from_str(include_str!("../examples/sequential_lens.json")).unwrap();
         let mut app = Self {
-            project: Project::new(scene),
+            project: assembly::demo_project().expect("assembly demo"),
             path: None,
             result: None,
             job: None,
             selected: 0,
+            component: 2,
             source: 0,
             detector: 0,
             projection: 0,
@@ -99,6 +102,7 @@ impl App {
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
+                "--assembly-demo" => (),
                 "--smoke" => {
                     i += 1;
                     app.smoke = args.get(i).map(PathBuf::from);
@@ -124,6 +128,64 @@ impl App {
     fn changed(&mut self) {
         self.dirty = true;
         self.stale = true;
+    }
+    fn refresh_components(&mut self) {
+        if let Err(e) = self.project.refresh_assembly() {
+            self.error = Some(e);
+        }
+        self.changed();
+    }
+    fn add_file(&mut self, path: PathBuf, kind: ComponentKind, ctx: &egui::Context) {
+        let (tx, rx) = mpsc::channel();
+        let catalogs = self.catalogs.clone();
+        let context = ctx.clone();
+        self.status = "部品を読込中…".into();
+        self.job = Some(rx);
+        std::thread::spawn(move || {
+            let result = Project::open(&path, &catalogs).map(Box::new);
+            let _ = tx.send(Job::Added(kind, result));
+            context.request_repaint();
+        });
+    }
+    fn next_z(&self) -> f64 {
+        let mut end = self
+            .project
+            .scene
+            .sources
+            .iter()
+            .map(|s| s.origin_mm.0[2])
+            .fold(0.0, f64::max);
+        for s in &self.project.scene.surfaces {
+            if matches!(s.interaction, Interaction::Detector { .. }) {
+                continue;
+            }
+            if let Some((b, _)) = crate::geometry::bounds(&s.shape, &s.aperture) {
+                let f = Frame::new(&s.pose);
+                for x in [b[0].0[0], b[1].0[0]] {
+                    for y in [b[0].0[1], b[1].0[1]] {
+                        for z in [b[0].0[2], b[1].0[2]] {
+                            end = end.max(f.world_point(V3([x, y, z])).0[2]);
+                        }
+                    }
+                }
+            }
+        }
+        end + 10.0
+    }
+    fn append_component(&mut self, mut component: Component) {
+        if component.kind != ComponentKind::Source {
+            component.pose.translation_mm.0[2] = self.next_z();
+        }
+        match self.project.add_component(component) {
+            Ok(()) => {
+                self.component = self.project.assembly.as_ref().unwrap().components.len() - 1;
+                self.result = None;
+                self.detector = 0;
+                self.changed();
+                self.status = "部品を追加しました・位置を調整して計算してください".into();
+            }
+            Err(e) => self.error = Some(e),
+        }
     }
     fn load(&mut self, path: PathBuf, ctx: &egui::Context) {
         let (tx, rx) = mpsc::channel();
@@ -218,15 +280,24 @@ impl App {
         if let Some(message) = message {
             self.job = None;
             match message {
+                Job::Added(kind, Ok(p)) => match Component::imported(*p, kind) {
+                    Ok(c) => {
+                        self.append_component(c);
+                        self.preview_limit = Some(256);
+                    }
+                    Err(e) => self.error = Some(e),
+                },
+                Job::Added(_, Err(e)) => self.error = Some(e),
                 Job::Loaded(Ok(mut p)) => {
                     p.allow_uncoated |= self.project.allow_uncoated;
                     if self.project.monochromatic_override_um.is_some() {
                         p.monochromatic_override_um = self.project.monochromatic_override_um;
                     }
-                    self.preview_limit = p.zemax.as_ref().map(|_| 256);
+                    self.preview_limit = (p.zemax.is_some() || p.assembly.is_some()).then_some(256);
                     self.project = *p;
                     self.result = None;
                     self.selected = 0;
+                    self.component = 0;
                     self.source = 0;
                     self.detector = 0;
                     self.dirty = false;
@@ -286,7 +357,13 @@ impl App {
                             self.run(ctx);
                         }
                         if ui
-                            .add_enabled(self.job.is_none(), egui::Button::new("ZMX書出し…"))
+                            .add_enabled(
+                                self.job.is_none() && self.project.assembly.is_none(),
+                                egui::Button::new("ZMX書出し…"),
+                            )
+                            .on_hover_text(
+                                "組立光学系は「保存…」でJSONプロジェクトとして保存します",
+                            )
                             .clicked()
                         {
                             if let Some(path) = rfd::FileDialog::new()
@@ -326,6 +403,50 @@ impl App {
                                 self.load(path, ctx);
                             }
                         }
+                        ui.add_enabled_ui(self.job.is_none(), |ui| {
+                            ui.menu_button("部品を追加", |ui| {
+                                for (label, kind) in [
+                                    ("光源ZMX…", ComponentKind::Source),
+                                    ("レンズZMX…", ComponentKind::Optic),
+                                ] {
+                                    if ui.button(label).clicked() {
+                                        ui.close_menu();
+                                        if let Some(path) = rfd::FileDialog::new()
+                                            .add_filter("Optics", &["zmx", "ZMX", "json"])
+                                            .pick_file()
+                                        {
+                                            self.add_file(path, kind, ctx);
+                                        }
+                                    }
+                                }
+                                if ui.button("ロッド").clicked() {
+                                    let demo: Scene = serde_json::from_str(include_str!(
+                                        "../examples/integrator_rod.json"
+                                    ))
+                                    .unwrap();
+                                    self.append_component(Component::rod(
+                                        demo.materials[1].clone(),
+                                        "Silica".into(),
+                                    ));
+                                    ui.close_menu();
+                                }
+                                if ui.button("検出器").clicked() {
+                                    self.append_component(Component::detector());
+                                    ui.close_menu();
+                                }
+                            });
+                            if ui.button("新規").clicked() {
+                                self.project = Project::new_assembly();
+                                self.result = None;
+                                self.path = None;
+                                self.component = 0;
+                                self.source = 0;
+                                self.detector = 0;
+                                self.preview_limit = Some(256);
+                                self.changed();
+                                self.status = "部品を追加して光学系を組み立てます".into();
+                            }
+                        });
                     });
                 });
             });
@@ -346,13 +467,17 @@ impl App {
                         ui.add_space(10.0);
                         ui.label("追跡方式");
                         let mut changed = false;
+                        let assembled = self.project.assembly.is_some();
                         changed |= ui
-                            .selectable_value(
-                                &mut self.project.scene.mode,
-                                Mode::Sequential,
-                                "シーケンシャル",
+                            .add_enabled(
+                                !assembled,
+                                egui::Button::new("シーケンシャル")
+                                    .selected(self.project.scene.mode == Mode::Sequential),
                             )
-                            .changed();
+                            .clicked();
+                        if changed {
+                            self.project.scene.mode = Mode::Sequential;
+                        }
                         changed |= ui
                             .selectable_value(
                                 &mut self.project.scene.mode,
@@ -590,6 +715,17 @@ impl App {
                         ui.add_space(8.0);
                         ui.separator();
                         egui::CollapsingHeader::new("サンプルを開く").show(ui, |ui| {
+                            if ui.button("光源＋レンズ＋ロッド").clicked() {
+                                self.project = assembly::demo_project().expect("assembly demo");
+                                self.path = None;
+                                self.result = None;
+                                self.component = 2;
+                                self.source = 0;
+                                self.detector = 0;
+                                self.preview_limit = None;
+                                self.dirty = false;
+                                self.run(ctx);
+                            }
                             for (name, text) in [
                                 ("レンズ", include_str!("../examples/sequential_lens.json")),
                                 ("ロッド", include_str!("../examples/integrator_rod.json")),
@@ -624,13 +760,204 @@ impl App {
                                 .changed();
                         });
                         if changed {
+                            if let Some(a) = &mut self.project.assembly {
+                                a.sync_sources(&self.project.scene);
+                            }
+                            if let Err(e) = self.project.refresh_assembly() {
+                                self.error = Some(e);
+                            }
                             self.changed();
                         }
                     });
                 });
             });
     }
+    fn components(&mut self, ui: &mut egui::Ui) {
+        ui.label(egui::RichText::new("部品と配置").strong().size(16.0));
+        let materials: Vec<_> = self
+            .project
+            .material_names
+            .iter()
+            .cloned()
+            .zip(self.project.scene.materials.iter().cloned())
+            .collect();
+        let Some(assembly) = &mut self.project.assembly else {
+            return;
+        };
+        if assembly.components.is_empty() {
+            ui.label("「部品を追加」から光源・レンズ・ロッド・検出器を追加します。");
+            return;
+        }
+        self.component = self.component.min(assembly.components.len() - 1);
+        let mut changed = false;
+        let mut remove = false;
+        ui.add_enabled_ui(self.job.is_none(), |ui| {
+            ui.columns(2, |cols| {
+                egui::ScrollArea::vertical()
+                    .max_height(240.0)
+                    .show(&mut cols[0], |ui| {
+                        egui::Grid::new("components").striped(true).show(ui, |ui| {
+                            ui.label("使用");
+                            ui.label("部品");
+                            ui.label("種類");
+                            ui.label("Z [mm]");
+                            ui.end_row();
+                            for (i, c) in assembly.components.iter_mut().enumerate() {
+                                changed |= ui.checkbox(&mut c.enabled, "").changed();
+                                let title = format!(
+                                    "{}  {}",
+                                    i + 1,
+                                    c.name.chars().take(21).collect::<String>()
+                                );
+                                if ui
+                                    .selectable_label(self.component == i, title)
+                                    .on_hover_text(&c.name)
+                                    .clicked()
+                                {
+                                    self.component = i;
+                                }
+                                ui.label(c.kind.label());
+                                ui.label(format!("{:.2}", c.pose.translation_mm.0[2]));
+                                ui.end_row();
+                            }
+                        });
+                    });
+                let ui = &mut cols[1];
+                let c = &mut assembly.components[self.component];
+                ui.horizontal(|ui| {
+                    changed |= ui.text_edit_singleline(&mut c.name).changed();
+                    remove = ui.button("削除").clicked();
+                });
+                ui.horizontal(|ui| {
+                    for a in 0..3 {
+                        ui.label(["X", "Y", "Z"][a]);
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut c.pose.translation_mm.0[a])
+                                    .speed(0.1)
+                                    .max_decimals(5),
+                            )
+                            .changed();
+                    }
+                    ui.label("mm");
+                });
+                ui.horizontal(|ui| {
+                    for a in 0..3 {
+                        ui.label(["θx", "θy", "θz"][a]);
+                        changed |= ui
+                            .add(
+                                egui::DragValue::new(&mut c.pose.rotation_deg.0[a])
+                                    .speed(0.1)
+                                    .max_decimals(3),
+                            )
+                            .changed();
+                    }
+                    ui.label("°");
+                });
+                if let Some(r) = &mut c.rod {
+                    ui.horizontal(|ui| {
+                        for (name, v) in [
+                            ("幅X", &mut r.width_mm),
+                            ("幅Y", &mut r.height_mm),
+                            ("長さ", &mut r.length_mm),
+                        ] {
+                            ui.label(name);
+                            changed |= ui
+                                .add(egui::DragValue::new(v).speed(0.1).range(0.0001..=1e9))
+                                .changed();
+                        }
+                        ui.label("mm");
+                    });
+                    egui::ComboBox::from_id_salt("rod_material")
+                        .width(280.0)
+                        .selected_text(
+                            c.project
+                                .material_names
+                                .get(1)
+                                .map(String::as_str)
+                                .unwrap_or("材料"),
+                        )
+                        .show_ui(ui, |ui| {
+                            for (name, material) in &materials {
+                                if ui.selectable_label(false, name).clicked() {
+                                    c.project.scene.materials[1] = material.clone();
+                                    c.project.material_names[1] =
+                                        name.rsplit(" / ").next().unwrap_or(name).into();
+                                    changed = true;
+                                }
+                            }
+                        });
+                    let wavelength = self
+                        .project
+                        .monochromatic_override_um
+                        .or_else(|| self.project.scene.sources.first().map(|s| s.wavelength_um))
+                        .unwrap_or(0.55);
+                    if let Some(n) = c.project.scene.materials[1].index(wavelength) {
+                        ui.label(format!("n({:.1} nm) = {:.7}", wavelength * 1000.0, n));
+                    }
+                }
+                if c.kind == ComponentKind::Detector {
+                    let s = &mut c.project.scene.surfaces[0];
+                    if let Aperture::Rectangle {
+                        half_width_mm,
+                        half_height_mm,
+                    } = &mut s.aperture
+                    {
+                        ui.horizontal(|ui| {
+                            for (name, value) in [("幅", half_width_mm), ("高さ", half_height_mm)]
+                            {
+                                let mut full = *value * 2.0;
+                                ui.label(name);
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut full)
+                                            .speed(0.5)
+                                            .range(0.0001..=1e9)
+                                            .suffix(" mm"),
+                                    )
+                                    .changed()
+                                {
+                                    *value = full / 2.0;
+                                    changed = true;
+                                }
+                            }
+                        });
+                    }
+                    if let Interaction::Detector { pixels } = &mut s.interaction {
+                        ui.horizontal(|ui| {
+                            ui.label("画素 X / Y");
+                            for p in pixels {
+                                changed |=
+                                    ui.add(egui::DragValue::new(p).range(1..=1024)).changed();
+                            }
+                        });
+                    }
+                }
+                ui.label(
+                    egui::RichText::new(match c.kind {
+                        ComponentKind::Source => "配置基準：発光配列の中心（Zは最初の発射面）",
+                        ComponentKind::Optic => "配置基準：最初の光学面の頂点",
+                        ComponentKind::Rod => "配置基準：ロッド入口の中心",
+                        _ => "部品全体の位置・傾きを設定します",
+                    })
+                    .size(11.0)
+                    .color(MUTED),
+                );
+            });
+        });
+        if remove {
+            assembly.components.remove(self.component);
+            changed = true;
+        }
+        if changed {
+            self.refresh_components();
+        }
+    }
     fn surfaces(&mut self, ui: &mut egui::Ui) {
+        if self.project.assembly.is_some() {
+            self.components(ui);
+            return;
+        }
         ui.label(egui::RichText::new("光学面").strong().size(16.0));
         if self.project.scene.surfaces.is_empty() {
             ui.label("計算可能な光学面はありません。読込レポートを確認してください。");
@@ -825,18 +1152,51 @@ impl App {
                     }
                 });
                 let height = (ui.available_height() * 0.52).clamp(210.0, 370.0);
+                let markers: Vec<_> = self
+                    .project
+                    .assembly
+                    .as_ref()
+                    .map(|a| {
+                        a.components
+                            .iter()
+                            .enumerate()
+                            .map(|(i, c)| PartMarker {
+                                index: i,
+                                label: format!("{} {}", i + 1, c.kind.label()),
+                                position: c.pose.translation_mm,
+                                enabled: c.enabled,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let mut placement = None;
                 ui.columns(2, |cols| {
-                    let scene = self
-                        .result
-                        .as_ref()
-                        .map(|r| &r.scene)
-                        .unwrap_or(&self.project.scene);
-                    let paths = self
-                        .result
-                        .as_ref()
-                        .map(|r| r.report.paths.as_slice())
-                        .unwrap_or(&[]);
-                    draw_paths(&mut cols[0], scene, paths, self.projection, height);
+                    let scene = if self.project.assembly.is_some() {
+                        &self.project.scene
+                    } else {
+                        self.result
+                            .as_ref()
+                            .map(|r| &r.scene)
+                            .unwrap_or(&self.project.scene)
+                    };
+                    let paths = if self.stale && self.project.assembly.is_some() {
+                        &[][..]
+                    } else {
+                        self.result
+                            .as_ref()
+                            .map(|r| r.report.paths.as_slice())
+                            .unwrap_or(&[])
+                    };
+                    placement = draw_paths(
+                        &mut cols[0],
+                        scene,
+                        paths,
+                        self.projection,
+                        height,
+                        &markers,
+                        self.component,
+                        self.job.is_none(),
+                    );
                     let ui = &mut cols[1];
                     if let Some(r) = self.result.as_mut() {
                         if !r.report.detectors.is_empty() {
@@ -860,6 +1220,20 @@ impl App {
                         ui.label(egui::RichText::new("計算後に照度分布を表示します").color(MUTED));
                     }
                 });
+                if let Some((index, delta)) = placement {
+                    self.component = index;
+                    if delta.norm() > 0.0 {
+                        if let Some(c) = self
+                            .project
+                            .assembly
+                            .as_mut()
+                            .and_then(|a| a.components.get_mut(index))
+                        {
+                            c.pose.translation_mm = c.pose.translation_mm + delta;
+                        }
+                        self.refresh_components();
+                    }
+                }
                 ui.add_space(8.0);
                 ui.separator();
                 if let Some(r) = &self.result {
@@ -915,7 +1289,7 @@ impl App {
             && self.smoke_frames > 5
         {
             let _ = std::fs::create_dir_all(dir);
-            let status = serde_json::json!({"scene":self.project.scene.name,"sources":self.project.scene.sources.len(),"surfaces":self.project.scene.surfaces.len(),"issues":self.project.issues,"error":self.error,"trace_seconds":self.result.as_ref().map(|r|r.seconds),"budget":self.result.as_ref().map(|r|&r.report.budget)});
+            let status = serde_json::json!({"scene":self.project.scene.name,"components":self.project.assembly.as_ref().map(|a|a.components.len()),"sources":self.project.scene.sources.len(),"surfaces":self.project.scene.surfaces.len(),"issues":self.project.issues,"error":self.error,"trace_seconds":self.result.as_ref().map(|r|r.seconds),"budget":self.result.as_ref().map(|r|&r.report.budget)});
             let _ = std::fs::write(
                 dir.join("gui_smoke.json"),
                 serde_json::to_vec_pretty(&status).unwrap(),
@@ -990,22 +1364,33 @@ impl eframe::App for App {
 }
 fn shape_name(s: &Shape) -> &'static str {
     match s {
+        Shape::ConicalSide { .. } => "レンズ側面",
         Shape::Plane => "平面",
         Shape::Sphere { .. } => "球面",
         Shape::EvenAsphere { .. } => "非球面",
         Shape::TriangleMesh { .. } => "CAD",
     }
 }
+struct PartMarker {
+    index: usize,
+    label: String,
+    position: V3,
+    enabled: bool,
+}
+#[allow(clippy::too_many_arguments)]
 fn draw_paths(
     ui: &mut egui::Ui,
     scene: &Scene,
     paths: &[crate::trace::PathEvent],
     projection: usize,
     height: f32,
-) {
-    let (rect, _response) = ui.allocate_exact_size(
+    markers: &[PartMarker],
+    selected: usize,
+    editable: bool,
+) -> Option<(usize, V3)> {
+    let (rect, response) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), height),
-        egui::Sense::hover(),
+        egui::Sense::click_and_drag(),
     );
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 6.0, Color32::from_rgb(248, 250, 253));
@@ -1015,7 +1400,34 @@ fn draw_paths(
     for s in &scene.surfaces {
         let f = Frame::new(&s.pose);
         let (hx, hy) = s.aperture.bounds();
-        if let Shape::TriangleMesh {
+        if let Shape::ConicalSide {
+            radius_start_mm,
+            radius_end_mm,
+            length_mm,
+        } = &s.shape
+        {
+            for theta in [
+                0.0,
+                std::f64::consts::FRAC_PI_2,
+                std::f64::consts::PI,
+                3.0 * std::f64::consts::FRAC_PI_2,
+            ] {
+                let line = vec![
+                    f.world_point(V3([
+                        radius_start_mm * theta.cos(),
+                        radius_start_mm * theta.sin(),
+                        0.0,
+                    ])),
+                    f.world_point(V3([
+                        radius_end_mm * theta.cos(),
+                        radius_end_mm * theta.sin(),
+                        *length_mm,
+                    ])),
+                ];
+                points.extend_from_slice(&line);
+                lines.push(line);
+            }
+        } else if let Shape::TriangleMesh {
             vertices,
             triangles,
             ..
@@ -1037,7 +1449,33 @@ fn draw_paths(
             let line: Vec<_> = (0..65)
                 .filter_map(|i| {
                     let u = -extent + 2.0 * extent * i as f64 / 64.0;
-                    let (x, y) = if axes.1 == 1 { (0.0, u) } else { (u, 0.0) };
+                    let (x, y) = if axes.0 == 0 {
+                        match s.aperture {
+                            Aperture::Circle { radius_mm } => {
+                                let t = std::f64::consts::TAU * i as f64 / 64.0;
+                                (radius_mm * t.cos(), radius_mm * t.sin())
+                            }
+                            Aperture::Rectangle {
+                                half_width_mm: x,
+                                half_height_mm: y,
+                            } => {
+                                let t = i as f64 / 16.0;
+                                if t <= 1.0 {
+                                    (-x + 2.0 * x * t, -y)
+                                } else if t <= 2.0 {
+                                    (x, -y + 2.0 * y * (t - 1.0))
+                                } else if t <= 3.0 {
+                                    (x - 2.0 * x * (t - 2.0), y)
+                                } else {
+                                    (-x, y - 2.0 * y * (t - 3.0))
+                                }
+                            }
+                        }
+                    } else if axes.1 == 1 {
+                        (0.0, u)
+                    } else {
+                        (u, 0.0)
+                    };
                     Some(f.world_point(V3([x, y, sag(&s.shape, x, y)?.0])))
                 })
                 .collect();
@@ -1049,6 +1487,12 @@ fn draw_paths(
         points.push(p.start_mm);
         points.push(p.end_mm);
     }
+    points.extend(
+        markers
+            .iter()
+            .filter(|m| m.position.finite())
+            .map(|m| m.position),
+    );
     if points.is_empty() {
         painter.text(
             rect.center(),
@@ -1057,7 +1501,7 @@ fn draw_paths(
             egui::FontId::proportional(13.0),
             MUTED,
         );
-        return;
+        return None;
     }
     let mut low = [f64::INFINITY; 2];
     let mut high = [f64::NEG_INFINITY; 2];
@@ -1068,11 +1512,24 @@ fn draw_paths(
         }
     }
     let span = [(high[0] - low[0]).max(1e-3), (high[1] - low[1]).max(1e-3)];
+    let grid_id = ui.id().with(("part_grid", projection));
+    let active_id = grid_id.with("active");
+    let mut grid = [low[0], low[1], span[0], span[1]];
+    if response.dragged() {
+        if let Some(old) = ui.ctx().data_mut(|d| d.get_temp::<[f64; 4]>(grid_id)) {
+            grid = old;
+        }
+    } else {
+        ui.ctx().data_mut(|d| {
+            d.remove_temp::<[f64; 4]>(grid_id);
+            d.remove_temp::<usize>(active_id);
+        });
+    }
     let inner = rect.shrink2(Vec2::new(32.0, 28.0));
     let map = |p: V3| {
         Pos2::new(
-            inner.left() + ((p.0[axes.0] - low[0]) / span[0]) as f32 * inner.width(),
-            inner.bottom() - ((p.0[axes.1] - low[1]) / span[1]) as f32 * inner.height(),
+            inner.left() + ((p.0[axes.0] - grid[0]) / grid[2]) as f32 * inner.width(),
+            inner.bottom() - ((p.0[axes.1] - grid[1]) / grid[3]) as f32 * inner.height(),
         )
     };
     for i in 0..=4 {
@@ -1106,14 +1563,43 @@ fn draw_paths(
             ),
         );
     }
+    for m in markers.iter().filter(|m| m.position.finite()) {
+        let p = map(m.position);
+        let color = if m.enabled { BLUE } else { MUTED };
+        painter.circle_filled(p, if m.index == selected { 6.0 } else { 4.0 }, color);
+        if m.index == selected {
+            painter.circle_stroke(p, 9.0, Stroke::new(1.0_f32, BLUE));
+        }
+        let label =
+            painter.layout_no_wrap(m.label.clone(), egui::FontId::proportional(10.0), color);
+        let size = label.size();
+        let left = if p.x + 8.0 + size.x < rect.right() - 6.0 {
+            p.x + 8.0
+        } else {
+            p.x - size.x - 8.0
+        };
+        let top = if m.index % 2 == 0 {
+            p.y + 12.0
+        } else {
+            p.y - 12.0 - size.y
+        }
+        .clamp(rect.top() + 22.0, rect.bottom() - 22.0 - size.y);
+        let pos = Pos2::new(left, top);
+        painter.rect_filled(
+            egui::Rect::from_min_size(pos, size).expand(2.0),
+            2.0,
+            Color32::from_rgb(248, 250, 253),
+        );
+        painter.galley(pos, label, color);
+    }
     painter.text(
         Pos2::new(rect.center().x, rect.bottom() - 4.0),
         egui::Align2::CENTER_BOTTOM,
         format!(
             "{}  [{:.2} … {:.2}] mm",
             ["X", "Y", "Z"][axes.0],
-            low[0],
-            high[0]
+            grid[0],
+            grid[0] + grid[2]
         ),
         egui::FontId::proportional(10.0),
         MUTED,
@@ -1126,10 +1612,50 @@ fn draw_paths(
         MUTED,
     );
     ui.label(
-        egui::RichText::new("投影の縦横縮尺は独立・CAD外形線は間引き表示")
-            .size(10.0)
-            .color(MUTED),
+        egui::RichText::new(if markers.is_empty() {
+            "投影の縦横縮尺は独立・CAD外形線は間引き表示"
+        } else {
+            "●をドラッグして配置（縦横縮尺は独立）・傾きは下の数値で設定"
+        })
+        .size(10.0)
+        .color(MUTED),
     );
+    let mut action = None;
+    if editable && (response.clicked() || response.drag_started()) {
+        let pointer = ui
+            .ctx()
+            .input(|i| i.pointer.press_origin())
+            .or_else(|| response.interact_pointer_pos());
+        if let Some(p) = pointer {
+            if let Some(m) = markers
+                .iter()
+                .filter(|m| m.position.finite() && map(m.position).distance(p) < 22.0)
+                .min_by(|a, b| {
+                    map(a.position)
+                        .distance(p)
+                        .total_cmp(&map(b.position).distance(p))
+                })
+            {
+                action = Some((m.index, V3::default()));
+                if response.drag_started() {
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(grid_id, grid);
+                        d.insert_temp(active_id, m.index);
+                    });
+                }
+            }
+        }
+    }
+    if editable && response.dragged() {
+        if let Some(index) = ui.ctx().data_mut(|d| d.get_temp::<usize>(active_id)) {
+            let pixel = ui.ctx().input(|i| i.pointer.delta());
+            let mut delta = V3::default();
+            delta.0[axes.0] = pixel.x as f64 / inner.width() as f64 * grid[2];
+            delta.0[axes.1] = -pixel.y as f64 / inner.height() as f64 * grid[3];
+            action = Some((index, delta));
+        }
+    }
+    action
 }
 fn draw_detector(
     ui: &mut egui::Ui,
@@ -1207,5 +1733,70 @@ pub fn main() {
         Box::new(move |cc| Ok(Box::new(App::new(cc, &args)))),
     ) {
         eprintln!("{e}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn drag_handle_changes_the_component_in_the_selected_projection() {
+        let ctx = egui::Context::default();
+        let scene = assembly::empty_scene("drag check");
+        let markers = [
+            PartMarker {
+                index: 0,
+                label: "A".into(),
+                position: V3([0.0, 0.0, 0.0]),
+                enabled: true,
+            },
+            PartMarker {
+                index: 1,
+                label: "B".into(),
+                position: V3([0.0, 0.0, 10.0]),
+                enabled: true,
+            },
+        ];
+        let frame = |events| {
+            let mut action = None;
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    Pos2::ZERO,
+                    Vec2::new(640.0, 480.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let output = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    action = draw_paths(ui, &scene, &[], 0, 300.0, &markers, 0, true);
+                });
+            });
+            (output, action)
+        };
+        let (output, _) = frame(vec![]);
+        let p = output
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Circle(c) if c.radius == 6.0 => Some(c.center),
+                _ => None,
+            })
+            .unwrap();
+        frame(vec![
+            egui::Event::PointerMoved(p),
+            egui::Event::PointerButton {
+                pos: p,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ]);
+        let (_, action) = frame(vec![egui::Event::PointerMoved(p + Vec2::new(40.0, 0.0))]);
+        let (part, delta) = action.expect("dragging a marker must produce a placement edit");
+        assert_eq!(part, 0);
+        assert!(delta.0[2] > 0.0);
+        assert_eq!(delta.0[0], 0.0);
+        assert_eq!(delta.0[1], 0.0);
     }
 }
