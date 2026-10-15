@@ -21,6 +21,21 @@ const MUTED: Color32 = Color32::from_rgb(105, 117, 132);
 const LINE: Color32 = Color32::from_rgb(221, 226, 234);
 const HALF_COLOR: Color32 = Color32::from_rgb(188, 48, 92);
 
+mod workspace;
+
+#[derive(Clone, Copy, Default, PartialEq, Debug)]
+enum View {
+    #[default]
+    Layout,
+    Screen,
+}
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Details {
+    Calculation,
+    Import,
+    Budget,
+}
+
 #[derive(Clone, Copy, Default, PartialEq)]
 enum ScreenNormalization {
     #[default]
@@ -72,6 +87,11 @@ struct App {
     source: usize,
     detector: usize,
     projection: usize,
+    view: View,
+    details: Option<Details>,
+    source_selected: bool,
+    show_rays: bool,
+    equal_scale: bool,
     screen_display: ScreenDisplay,
     threads: usize,
     preview_limit: Option<usize>,
@@ -111,34 +131,14 @@ impl App {
         style.visuals.panel_fill = Color32::from_rgb(246, 248, 251);
         style.visuals.selection.bg_fill = BLUE;
         cc.egui_ctx.set_style(style);
-        let mut app = Self {
-            project: assembly::demo_project().expect("assembly demo"),
-            path: None,
-            result: None,
-            job: None,
-            selected: 0,
-            component: 2,
-            source: 0,
-            detector: 0,
-            projection: 0,
-            screen_display: ScreenDisplay::default(),
-            threads: 4,
-            preview_limit: None,
-            status: "準備完了".into(),
-            error: None,
-            dirty: false,
-            stale: false,
-            catalogs: Vec::new(),
-            smoke: None,
-            smoke_frames: 0,
-            smoke_ready_at: None,
-            screenshot_requested: false,
-        };
+        let mut app = Self::demo();
         let mut input = None;
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
                 "--assembly-demo" => (),
+                "--screen" => app.view = View::Screen,
+                "--settings" => app.details = Some(Details::Calculation),
                 "--screen-profiles" => app.screen_display.profiles = true,
                 "--screen-reference" => {
                     app.screen_display.normalization = ScreenNormalization::Reference
@@ -165,6 +165,36 @@ impl App {
             app.run(&cc.egui_ctx);
         }
         app
+    }
+    fn demo() -> Self {
+        Self {
+            project: assembly::demo_project().expect("assembly demo"),
+            path: None,
+            result: None,
+            job: None,
+            selected: 0,
+            component: 2,
+            source: 0,
+            detector: 0,
+            projection: 0,
+            view: View::Layout,
+            details: None,
+            source_selected: false,
+            show_rays: true,
+            equal_scale: true,
+            screen_display: ScreenDisplay::default(),
+            threads: 4,
+            preview_limit: None,
+            status: "準備完了".into(),
+            error: None,
+            dirty: false,
+            stale: false,
+            catalogs: Vec::new(),
+            smoke: None,
+            smoke_frames: 0,
+            smoke_ready_at: None,
+            screenshot_requested: false,
+        }
     }
     fn changed(&mut self) {
         self.dirty = true;
@@ -341,16 +371,20 @@ impl App {
                     self.selected = 0;
                     self.component = 0;
                     self.source = 0;
+                    self.source_selected = false;
                     self.detector = 0;
                     self.dirty = false;
                     self.stale = false;
-                    self.status = "読込完了・互換性の確認が必要です".into();
+                    self.status = "読込完了".into();
                     if self.project.trace_scene().is_ok() {
                         self.run(ctx);
+                    } else {
+                        self.details = Some(Details::Import);
+                        self.status = "読込レポートで計算条件を確認してください".into();
                     }
                 }
                 Job::Traced(Ok(r)) => {
-                    self.status = format!("追跡完了  {:.2} ms", r.seconds * 1000.0);
+                    self.status = "計算完了".into();
                     self.result = Some(*r);
                     self.stale = false;
                 }
@@ -360,973 +394,6 @@ impl App {
                 }
             }
         }
-    }
-    fn toolbar(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("toolbar")
-            .exact_height(68.0)
-            .frame(egui::Frame::new().fill(Color32::WHITE).inner_margin(16.0))
-            .show(ctx, |ui| {
-                ui.horizontal_centered(|ui| {
-                    ui.label(egui::RichText::new("●").color(BLUE).size(24.0));
-                    ui.label(
-                        egui::RichText::new("Raytrace")
-                            .color(INK)
-                            .size(23.0)
-                            .strong(),
-                    );
-                    ui.separator();
-                    ui.label(
-                        egui::RichText::new(if self.dirty {
-                            format!("{}  •", self.project.scene.name)
-                        } else {
-                            self.project.scene.name.clone()
-                        })
-                        .size(12.0)
-                        .color(MUTED),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add_enabled(
-                                self.job.is_none(),
-                                egui::Button::new(
-                                    egui::RichText::new("▶  計算する").color(Color32::WHITE),
-                                )
-                                .fill(BLUE)
-                                .min_size(Vec2::new(118.0, 34.0)),
-                            )
-                            .clicked()
-                        {
-                            self.run(ctx);
-                        }
-                        if ui
-                            .add_enabled(
-                                self.job.is_none() && self.project.assembly.is_none(),
-                                egui::Button::new("ZMX書出し…"),
-                            )
-                            .on_hover_text(
-                                "組立光学系は「保存…」でJSONプロジェクトとして保存します",
-                            )
-                            .clicked()
-                        {
-                            if let Some(path) = rfd::FileDialog::new()
-                                .set_file_name("optics_edited.zmx")
-                                .add_filter("Zemax", &["zmx"])
-                                .save_file()
-                            {
-                                match zemax::export(&self.project, &path) {
-                                    Ok(()) => self.status = format!("ZMX保存: {}", path.display()),
-                                    Err(e) => self.error = Some(e),
-                                }
-                            }
-                        }
-                        if ui.button("保存…").clicked() {
-                            if let Some(path) = rfd::FileDialog::new()
-                                .set_file_name("optics.raytrace.json")
-                                .add_filter("Raytrace", &["json"])
-                                .save_file()
-                            {
-                                match self.project.save(&path) {
-                                    Ok(()) => {
-                                        self.dirty = false;
-                                        self.status = "プロジェクトを保存しました".into();
-                                    }
-                                    Err(e) => self.error = Some(e),
-                                }
-                            }
-                        }
-                        if ui
-                            .add_enabled(self.job.is_none(), egui::Button::new("開く…"))
-                            .clicked()
-                        {
-                            if let Some(path) = rfd::FileDialog::new()
-                                .add_filter("Optics", &["zmx", "ZMX", "json"])
-                                .pick_file()
-                            {
-                                self.load(path, ctx);
-                            }
-                        }
-                        ui.add_enabled_ui(self.job.is_none(), |ui| {
-                            ui.menu_button("部品を追加", |ui| {
-                                for (label, kind) in [
-                                    ("光源ZMX…", ComponentKind::Source),
-                                    ("レンズZMX…", ComponentKind::Optic),
-                                ] {
-                                    if ui.button(label).clicked() {
-                                        ui.close_menu();
-                                        if let Some(path) = rfd::FileDialog::new()
-                                            .add_filter("Optics", &["zmx", "ZMX", "json"])
-                                            .pick_file()
-                                        {
-                                            self.add_file(path, kind, ctx);
-                                        }
-                                    }
-                                }
-                                if ui.button("ロッド").clicked() {
-                                    let demo: Scene = serde_json::from_str(include_str!(
-                                        "../examples/integrator_rod.json"
-                                    ))
-                                    .unwrap();
-                                    self.append_component(Component::rod(
-                                        demo.materials[1].clone(),
-                                        "Silica".into(),
-                                    ));
-                                    ui.close_menu();
-                                }
-                                if ui.button("検出器").clicked() {
-                                    self.append_component(Component::detector());
-                                    ui.close_menu();
-                                }
-                            });
-                            if ui.button("新規").clicked() {
-                                self.project = Project::new_assembly();
-                                self.result = None;
-                                self.path = None;
-                                self.component = 0;
-                                self.source = 0;
-                                self.detector = 0;
-                                self.preview_limit = Some(256);
-                                self.changed();
-                                self.status = "部品を追加して光学系を組み立てます".into();
-                            }
-                        });
-                    });
-                });
-            });
-    }
-    fn sidebar(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("controls")
-            .exact_width(246.0)
-            .resizable(false)
-            .frame(
-                egui::Frame::new()
-                    .fill(Color32::from_rgb(246, 248, 251))
-                    .inner_margin(16.0),
-            )
-            .show(ctx, |ui| {
-                ui.add_enabled_ui(self.job.is_none(), |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.label(egui::RichText::new("計算設定").strong().size(17.0));
-                        ui.add_space(10.0);
-                        ui.label("追跡方式");
-                        let mut changed = false;
-                        let assembled = self.project.assembly.is_some();
-                        changed |= ui
-                            .add_enabled(
-                                !assembled,
-                                egui::Button::new("シーケンシャル")
-                                    .selected(self.project.scene.mode == Mode::Sequential),
-                            )
-                            .clicked();
-                        if changed {
-                            self.project.scene.mode = Mode::Sequential;
-                        }
-                        changed |= ui
-                            .selectable_value(
-                                &mut self.project.scene.mode,
-                                Mode::NonSequential,
-                                "非シーケンシャル",
-                            )
-                            .changed();
-                        ui.add_space(8.0);
-                        ui.separator();
-                        ui.label(egui::RichText::new("光源").strong());
-                        let mut preview = self.preview_limit.is_some();
-                        if ui
-                            .checkbox(&mut preview, "プレビュー（各光源 最大256本）")
-                            .changed()
-                        {
-                            self.preview_limit = preview.then_some(256);
-                            self.stale = true;
-                        }
-                        if !self.project.scene.sources.is_empty() {
-                            self.source = self.source.min(self.project.scene.sources.len() - 1);
-                            egui::ComboBox::from_id_salt("source")
-                                .selected_text(format!(
-                                    "光源 {} / {}",
-                                    self.source + 1,
-                                    self.project.scene.sources.len()
-                                ))
-                                .show_ui(ui, |ui| {
-                                    for i in 0..self.project.scene.sources.len() {
-                                        ui.selectable_value(
-                                            &mut self.source,
-                                            i,
-                                            format!("光源 {}", i + 1),
-                                        );
-                                    }
-                                });
-                            let s = &mut self.project.scene.sources[self.source];
-                            ui.label("サンプリング");
-                            egui::ComboBox::from_id_salt("sampling")
-                                .selected_text(match s.sampling {
-                                    Sampling::Sobol => "Sobol（低偏差列）",
-                                    Sampling::Pseudorandom => "疑似乱数",
-                                })
-                                .show_ui(ui, |ui| {
-                                    changed |= ui
-                                        .selectable_value(
-                                            &mut s.sampling,
-                                            Sampling::Sobol,
-                                            "Sobol（低偏差列）",
-                                        )
-                                        .changed();
-                                    changed |= ui
-                                        .selectable_value(
-                                            &mut s.sampling,
-                                            Sampling::Pseudorandom,
-                                            "疑似乱数",
-                                        )
-                                        .changed();
-                                });
-                            ui.horizontal(|ui| {
-                                ui.label("光線数");
-                                changed |= ui
-                                    .add(
-                                        egui::DragValue::new(&mut s.count)
-                                            .range(1..=2_000_000)
-                                            .speed(100),
-                                    )
-                                    .changed();
-                            });
-                            if s.sampling == Sampling::Sobol && !s.count.is_power_of_two() {
-                                ui.label(
-                                    egui::RichText::new("Sobol推奨本数: 256 / 1024 / 4096…")
-                                        .size(11.0)
-                                        .color(MUTED),
-                                );
-                            }
-                            let mut nm = s.wavelength_um * 1000.0;
-                            ui.horizontal(|ui| {
-                                ui.label(if self.project.monochromatic_override_um.is_some() {
-                                    "定義の波長"
-                                } else {
-                                    "波長"
-                                });
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut nm)
-                                            .range(100.0..=20000.0)
-                                            .speed(1.0)
-                                            .suffix(" nm"),
-                                    )
-                                    .changed()
-                                {
-                                    s.wavelength_um = nm / 1000.0;
-                                    changed = true;
-                                }
-                            });
-                            ui.label(
-                                egui::RichText::new(if s.diode.is_some() {
-                                    "ZMX Source Diode"
-                                } else {
-                                    "円板 / 円錐光源"
-                                })
-                                .color(MUTED)
-                                .size(12.0),
-                            );
-                            egui::CollapsingHeader::new("位置・分布").show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label("seed");
-                                    changed |= ui.add(egui::DragValue::new(&mut s.seed)).changed();
-                                });
-                                for a in 0..3 {
-                                    ui.horizontal(|ui| {
-                                        ui.label(["X", "Y", "Z"][a]);
-                                        changed |= ui
-                                            .add(
-                                                egui::DragValue::new(&mut s.origin_mm.0[a])
-                                                    .speed(0.1)
-                                                    .suffix(" mm"),
-                                            )
-                                            .changed();
-                                    });
-                                }
-                                if let Some(d) = s.diode.as_mut() {
-                                    for a in 0..2 {
-                                        ui.horizontal(|ui| {
-                                            ui.label(["X発散", "Y発散"][a]);
-                                            changed |= ui
-                                                .add(
-                                                    egui::DragValue::new(&mut d.divergence_deg[a])
-                                                        .speed(0.1)
-                                                        .suffix(" °"),
-                                                )
-                                                .changed();
-                                        });
-                                    }
-                                } else {
-                                    ui.horizontal(|ui| {
-                                        ui.label("円板半径");
-                                        changed |= ui
-                                            .add(
-                                                egui::DragValue::new(&mut s.disk_radius_mm)
-                                                    .speed(0.1)
-                                                    .range(0.0..=10000.0)
-                                                    .suffix(" mm"),
-                                            )
-                                            .changed();
-                                    });
-                                }
-                            });
-                            if ui.button("光線数・方式を全光源へ").clicked() {
-                                let count = s.count;
-                                let sampling = s.sampling;
-                                for s in &mut self.project.scene.sources {
-                                    s.count = count;
-                                    s.sampling = sampling;
-                                }
-                                changed = true;
-                            }
-                        }
-                        ui.add_space(8.0);
-                        ui.separator();
-                        ui.label(egui::RichText::new("Zemax互換性").strong());
-                        if self.project.zemax.is_some() {
-                            ui.label(
-                                egui::RichText::new("ZMXを直接読込済み")
-                                    .color(BLUE)
-                                    .size(12.0),
-                            );
-                        }
-                        if self.project.issues.iter().any(|i| i.code == "coating") {
-                            changed |= ui
-                                .checkbox(&mut self.project.allow_uncoated, "未コートFresnelで計算")
-                                .changed();
-                            ui.label(
-                                egui::RichText::new("元のコーティング名は保持")
-                                    .size(11.0)
-                                    .color(MUTED),
-                            );
-                        }
-                        let mut mono = self.project.monochromatic_override_um.is_some();
-                        if ui.checkbox(&mut mono, "単色の波長を明示する").changed() {
-                            self.project.monochromatic_override_um = mono.then_some(0.465);
-                            changed = true;
-                        }
-                        if let Some(value) = self.project.monochromatic_override_um.as_mut() {
-                            let mut nm = *value * 1000.0;
-                            if ui
-                                .add(
-                                    egui::DragValue::new(&mut nm)
-                                        .range(100.0..=20000.0)
-                                        .speed(1.0)
-                                        .suffix(" nm"),
-                                )
-                                .changed()
-                            {
-                                *value = nm / 1000.0;
-                                changed = true;
-                            }
-                        }
-                        if !self.project.issues.is_empty() {
-                            let blocked = self.project.trace_scene().is_err();
-                            ui.label(
-                                egui::RichText::new(if blocked {
-                                    "確認が必要な項目があります"
-                                } else {
-                                    "対応条件で計算できます"
-                                })
-                                .color(if blocked {
-                                    Color32::from_rgb(173, 93, 20)
-                                } else {
-                                    BLUE
-                                })
-                                .size(12.0),
-                            );
-                            egui::CollapsingHeader::new(format!(
-                                "読込レポート ({})",
-                                self.project.issues.len()
-                            ))
-                            .show(ui, |ui| {
-                                for issue in &self.project.issues {
-                                    ui.label(
-                                        egui::RichText::new(&issue.message).size(11.0).color(MUTED),
-                                    );
-                                    ui.add_space(5.0);
-                                }
-                            });
-                        }
-                        if ui.button("AGFフォルダーを追加…").clicked() {
-                            if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                                self.catalogs.push(dir);
-                                if let Some(path) = self.path.clone() {
-                                    self.load(path, ctx);
-                                }
-                            }
-                        }
-                        ui.add_space(8.0);
-                        ui.separator();
-                        egui::CollapsingHeader::new("サンプルを開く").show(ui, |ui| {
-                            if ui.button("光源＋レンズ＋ロッド").clicked() {
-                                self.project = assembly::demo_project().expect("assembly demo");
-                                self.path = None;
-                                self.result = None;
-                                self.component = 2;
-                                self.source = 0;
-                                self.detector = 0;
-                                self.preview_limit = None;
-                                self.dirty = false;
-                                self.run(ctx);
-                            }
-                            for (name, text) in [
-                                ("レンズ", include_str!("../examples/sequential_lens.json")),
-                                ("ロッド", include_str!("../examples/integrator_rod.json")),
-                                ("ミラー", include_str!("../examples/folded_mirror.json")),
-                            ] {
-                                if ui.button(name).clicked() {
-                                    self.project =
-                                        Project::new(serde_json::from_str(text).unwrap());
-                                    self.path = None;
-                                    self.result = None;
-                                    self.source = 0;
-                                    self.selected = 0;
-                                    self.detector = 0;
-                                    self.dirty = false;
-                                    self.run(ctx);
-                                }
-                            }
-                        });
-                        egui::CollapsingHeader::new("計算上限").show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label("スレッド");
-                                ui.add(egui::DragValue::new(&mut self.threads).range(1..=64));
-                            });
-                            changed |= ui
-                                .add(
-                                    egui::DragValue::new(
-                                        &mut self.project.scene.settings.max_depth,
-                                    )
-                                    .range(1..=1000)
-                                    .prefix("最大深さ "),
-                                )
-                                .changed();
-                        });
-                        if changed {
-                            if let Some(a) = &mut self.project.assembly {
-                                a.sync_sources(&self.project.scene);
-                            }
-                            if let Err(e) = self.project.refresh_assembly() {
-                                self.error = Some(e);
-                            }
-                            self.changed();
-                        }
-                    });
-                });
-            });
-    }
-    fn components(&mut self, ui: &mut egui::Ui) {
-        ui.label(egui::RichText::new("部品と配置").strong().size(16.0));
-        let materials: Vec<_> = self
-            .project
-            .material_names
-            .iter()
-            .cloned()
-            .zip(self.project.scene.materials.iter().cloned())
-            .collect();
-        let Some(assembly) = &mut self.project.assembly else {
-            return;
-        };
-        if assembly.components.is_empty() {
-            ui.label("「部品を追加」から光源・レンズ・ロッド・検出器を追加します。");
-            return;
-        }
-        self.component = self.component.min(assembly.components.len() - 1);
-        let mut changed = false;
-        let mut remove = false;
-        ui.add_enabled_ui(self.job.is_none(), |ui| {
-            ui.columns(2, |cols| {
-                egui::ScrollArea::vertical()
-                    .max_height(240.0)
-                    .show(&mut cols[0], |ui| {
-                        egui::Grid::new("components").striped(true).show(ui, |ui| {
-                            ui.label("使用");
-                            ui.label("部品");
-                            ui.label("種類");
-                            ui.label("Z [mm]");
-                            ui.end_row();
-                            for (i, c) in assembly.components.iter_mut().enumerate() {
-                                changed |= ui.checkbox(&mut c.enabled, "").changed();
-                                let title = format!(
-                                    "{}  {}",
-                                    i + 1,
-                                    c.name.chars().take(21).collect::<String>()
-                                );
-                                if ui
-                                    .selectable_label(self.component == i, title)
-                                    .on_hover_text(&c.name)
-                                    .clicked()
-                                {
-                                    self.component = i;
-                                }
-                                ui.label(c.kind.label());
-                                ui.label(format!("{:.2}", c.pose.translation_mm.0[2]));
-                                ui.end_row();
-                            }
-                        });
-                    });
-                let ui = &mut cols[1];
-                let c = &mut assembly.components[self.component];
-                ui.horizontal(|ui| {
-                    changed |= ui.text_edit_singleline(&mut c.name).changed();
-                    remove = ui.button("削除").clicked();
-                });
-                ui.horizontal(|ui| {
-                    for a in 0..3 {
-                        ui.label(["X", "Y", "Z"][a]);
-                        changed |= ui
-                            .add(
-                                egui::DragValue::new(&mut c.pose.translation_mm.0[a])
-                                    .speed(0.1)
-                                    .max_decimals(5),
-                            )
-                            .changed();
-                    }
-                    ui.label("mm");
-                });
-                ui.horizontal(|ui| {
-                    for a in 0..3 {
-                        ui.label(["θx", "θy", "θz"][a]);
-                        changed |= ui
-                            .add(
-                                egui::DragValue::new(&mut c.pose.rotation_deg.0[a])
-                                    .speed(0.1)
-                                    .max_decimals(3),
-                            )
-                            .changed();
-                    }
-                    ui.label("°");
-                });
-                if let Some(r) = &mut c.rod {
-                    ui.horizontal(|ui| {
-                        for (name, v) in [
-                            ("幅X", &mut r.width_mm),
-                            ("幅Y", &mut r.height_mm),
-                            ("長さ", &mut r.length_mm),
-                        ] {
-                            ui.label(name);
-                            changed |= ui
-                                .add(egui::DragValue::new(v).speed(0.1).range(0.0001..=1e9))
-                                .changed();
-                        }
-                        ui.label("mm");
-                    });
-                    egui::ComboBox::from_id_salt("rod_material")
-                        .width(280.0)
-                        .selected_text(
-                            c.project
-                                .material_names
-                                .get(1)
-                                .map(String::as_str)
-                                .unwrap_or("材料"),
-                        )
-                        .show_ui(ui, |ui| {
-                            for (name, material) in &materials {
-                                if ui.selectable_label(false, name).clicked() {
-                                    c.project.scene.materials[1] = material.clone();
-                                    c.project.material_names[1] =
-                                        name.rsplit(" / ").next().unwrap_or(name).into();
-                                    changed = true;
-                                }
-                            }
-                        });
-                    let wavelength = self
-                        .project
-                        .monochromatic_override_um
-                        .or_else(|| self.project.scene.sources.first().map(|s| s.wavelength_um))
-                        .unwrap_or(0.55);
-                    if let Some(n) = c.project.scene.materials[1].index(wavelength) {
-                        ui.label(format!("n({:.1} nm) = {:.7}", wavelength * 1000.0, n));
-                    }
-                }
-                if c.kind == ComponentKind::Detector {
-                    let s = &mut c.project.scene.surfaces[0];
-                    if let Aperture::Rectangle {
-                        half_width_mm,
-                        half_height_mm,
-                    } = &mut s.aperture
-                    {
-                        ui.horizontal(|ui| {
-                            for (name, value) in [("幅", half_width_mm), ("高さ", half_height_mm)]
-                            {
-                                let mut full = *value * 2.0;
-                                ui.label(name);
-                                if ui
-                                    .add(
-                                        egui::DragValue::new(&mut full)
-                                            .speed(0.5)
-                                            .range(0.0001..=1e9)
-                                            .suffix(" mm"),
-                                    )
-                                    .changed()
-                                {
-                                    *value = full / 2.0;
-                                    changed = true;
-                                }
-                            }
-                        });
-                    }
-                    if let Interaction::Detector { pixels } = &mut s.interaction {
-                        ui.horizontal(|ui| {
-                            ui.label("画素 X / Y");
-                            for p in pixels {
-                                changed |=
-                                    ui.add(egui::DragValue::new(p).range(1..=1024)).changed();
-                            }
-                        });
-                    }
-                }
-                ui.label(
-                    egui::RichText::new(match c.kind {
-                        ComponentKind::Source => "配置基準：発光配列の中心（Zは最初の発射面）",
-                        ComponentKind::Optic => "配置基準：最初の光学面の頂点",
-                        ComponentKind::Rod => "配置基準：ロッド入口の中心",
-                        _ => "部品全体の位置・傾きを設定します",
-                    })
-                    .size(11.0)
-                    .color(MUTED),
-                );
-            });
-        });
-        if remove {
-            assembly.components.remove(self.component);
-            changed = true;
-        }
-        if changed {
-            self.refresh_components();
-        }
-    }
-    fn surfaces(&mut self, ui: &mut egui::Ui) {
-        if self.project.assembly.is_some() {
-            self.components(ui);
-            return;
-        }
-        ui.label(egui::RichText::new("光学面").strong().size(16.0));
-        if self.project.scene.surfaces.is_empty() {
-            ui.label("計算可能な光学面はありません。読込レポートを確認してください。");
-            return;
-        }
-        self.selected = self.selected.min(self.project.scene.surfaces.len() - 1);
-        ui.columns(2, |cols| {
-            egui::ScrollArea::vertical()
-                .max_height(180.0)
-                .show(&mut cols[0], |ui| {
-                    egui::Grid::new("surfaces")
-                        .striped(true)
-                        .spacing([12.0, 7.0])
-                        .show(ui, |ui| {
-                            ui.label("面");
-                            ui.label("形状");
-                            ui.label("Z [mm]");
-                            ui.end_row();
-                            for (i, s) in self.project.scene.surfaces.iter().enumerate() {
-                                let name = if s.name.chars().count() > 22 {
-                                    format!("{}…", s.name.chars().take(21).collect::<String>())
-                                } else {
-                                    s.name.clone()
-                                };
-                                if ui.selectable_label(self.selected == i, name).clicked() {
-                                    self.selected = i;
-                                }
-                                ui.label(shape_name(&s.shape));
-                                ui.label(format!("{:.3}", s.pose.translation_mm.0[2]));
-                                ui.end_row();
-                            }
-                        });
-                });
-            let mut changed = false;
-            let wavelength = self
-                .project
-                .monochromatic_override_um
-                .or_else(|| {
-                    self.project
-                        .scene
-                        .sources
-                        .get(self.source)
-                        .map(|s| s.wavelength_um)
-                })
-                .unwrap_or(0.55);
-            cols[1].add_enabled_ui(self.job.is_none(), |ui| {
-                let s = &mut self.project.scene.surfaces[self.selected];
-                let title = if s.name.chars().count() > 50 {
-                    format!(
-                        "{}…{}",
-                        s.name.chars().take(12).collect::<String>(),
-                        s.name
-                            .chars()
-                            .skip(s.name.chars().count() - 35)
-                            .collect::<String>()
-                    )
-                } else {
-                    s.name.clone()
-                };
-                ui.label(egui::RichText::new(title).strong())
-                    .on_hover_text(&s.name);
-                ui.horizontal(|ui| {
-                    for a in 0..3 {
-                        ui.label(["X", "Y", "Z"][a]);
-                        changed |= ui
-                            .add(
-                                egui::DragValue::new(&mut s.pose.translation_mm.0[a])
-                                    .speed(0.1)
-                                    .max_decimals(5),
-                            )
-                            .changed();
-                    }
-                });
-                ui.horizontal(|ui| {
-                    for a in 0..3 {
-                        ui.label(["θx", "θy", "θz"][a]);
-                        changed |= ui
-                            .add(
-                                egui::DragValue::new(&mut s.pose.rotation_deg.0[a])
-                                    .speed(0.1)
-                                    .max_decimals(3),
-                            )
-                            .changed();
-                    }
-                });
-                match &mut s.shape {
-                    Shape::Sphere { radius_mm } | Shape::EvenAsphere { radius_mm, .. } => {
-                        ui.horizontal(|ui| {
-                            ui.label("曲率半径 [mm]");
-                            changed |= ui.add(egui::DragValue::new(radius_mm).speed(0.1)).changed();
-                        });
-                    }
-                    Shape::TriangleMesh { triangles, .. } => {
-                        ui.label(
-                            egui::RichText::new(format!("CAD  {} triangles", triangles.len()))
-                                .size(12.0)
-                                .color(MUTED),
-                        );
-                    }
-                    _ => (),
-                }
-                if let Shape::EvenAsphere { conic, .. } = &mut s.shape {
-                    ui.horizontal(|ui| {
-                        ui.label("円錐定数");
-                        changed |= ui.add(egui::DragValue::new(conic).speed(0.001)).changed();
-                    });
-                }
-                if let Interaction::Dielectric {
-                    minus_medium,
-                    plus_medium,
-                    ..
-                } = &mut s.interaction
-                {
-                    for (label, value) in [("法線 − 側", minus_medium), ("法線 ＋ 側", plus_medium)]
-                    {
-                        egui::ComboBox::from_id_salt(label)
-                            .selected_text(format!(
-                                "{label}: {}",
-                                self.project
-                                    .material_names
-                                    .get(*value)
-                                    .map(String::as_str)
-                                    .unwrap_or("?")
-                            ))
-                            .show_ui(ui, |ui| {
-                                for (i, name) in self.project.material_names.iter().enumerate() {
-                                    changed |= ui.selectable_value(value, i, name).changed();
-                                }
-                            });
-                        if let Some(n) = self
-                            .project
-                            .scene
-                            .materials
-                            .get(*value)
-                            .and_then(|m| m.index(wavelength))
-                        {
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "n({:.1} nm) = {:.7}",
-                                    wavelength * 1000.0,
-                                    n
-                                ))
-                                .size(11.0)
-                                .color(MUTED),
-                            );
-                        }
-                    }
-                }
-            });
-            if changed {
-                self.changed();
-            }
-        });
-    }
-    fn content(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(Color32::WHITE).inner_margin(20.0))
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("光路と検出器").strong().size(19.0));
-                    if self.job.is_some() {
-                        ui.spinner();
-                    }
-                    if self.stale {
-                        ui.colored_label(
-                            Color32::from_rgb(173, 93, 20),
-                            "設定が変わりました・再計算で更新",
-                        );
-                    }
-                });
-                ui.add_space(8.0);
-                ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_salt("projection")
-                        .selected_text(["Z–X 投影", "Z–Y 投影", "X–Y 投影"][self.projection])
-                        .show_ui(ui, |ui| {
-                            for (i, t) in ["Z–X 投影", "Z–Y 投影", "X–Y 投影"].iter().enumerate()
-                            {
-                                ui.selectable_value(&mut self.projection, i, *t);
-                            }
-                        });
-                    if let Some(r) = &self.result {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{} 本  ·  {:.2} ms  ·  {} 面",
-                                r.scene.sources.iter().map(|s| s.count).sum::<usize>(),
-                                r.seconds * 1000.0,
-                                r.scene.surfaces.len()
-                            ))
-                            .color(MUTED)
-                            .size(12.0),
-                        );
-                    }
-                });
-                let height = (ui.available_height() * 0.52).clamp(210.0, 370.0);
-                let markers: Vec<_> = self
-                    .project
-                    .assembly
-                    .as_ref()
-                    .map(|a| {
-                        a.components
-                            .iter()
-                            .enumerate()
-                            .map(|(i, c)| PartMarker {
-                                index: i,
-                                label: format!("{} {}", i + 1, c.kind.label()),
-                                position: c.pose.translation_mm,
-                                enabled: c.enabled,
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let mut placement = None;
-                ui.columns(2, |cols| {
-                    let scene = if self.project.assembly.is_some() {
-                        &self.project.scene
-                    } else {
-                        self.result
-                            .as_ref()
-                            .map(|r| &r.scene)
-                            .unwrap_or(&self.project.scene)
-                    };
-                    let paths = if self.stale && self.project.assembly.is_some() {
-                        &[][..]
-                    } else {
-                        self.result
-                            .as_ref()
-                            .map(|r| r.report.paths.as_slice())
-                            .unwrap_or(&[])
-                    };
-                    placement = draw_paths(
-                        &mut cols[0],
-                        scene,
-                        paths,
-                        self.projection,
-                        height,
-                        &markers,
-                        self.component,
-                        self.job.is_none(),
-                    );
-                    let ui = &mut cols[1];
-                    if let Some(r) = self.result.as_mut() {
-                        if !r.report.detectors.is_empty() {
-                            let old = self.detector;
-                            self.detector = self.detector.min(r.report.detectors.len() - 1);
-                            egui::ComboBox::from_id_salt("detector")
-                                .selected_text(&r.report.detectors[self.detector].name)
-                                .show_ui(ui, |ui| {
-                                    for (i, d) in r.report.detectors.iter().enumerate() {
-                                        ui.selectable_value(&mut self.detector, i, &d.name);
-                                    }
-                                });
-                            if old != self.detector {
-                                r.texture = None;
-                                r.screen = None;
-                            }
-                            draw_detector(
-                                ui,
-                                ctx,
-                                r,
-                                self.detector,
-                                height - 32.0,
-                                &mut self.screen_display,
-                            );
-                        } else {
-                            ui.label("検出器のないモデルです。");
-                        }
-                    } else {
-                        ui.label(egui::RichText::new("計算後に照度分布を表示します").color(MUTED));
-                    }
-                });
-                if let Some((index, delta)) = placement {
-                    self.component = index;
-                    if delta.norm() > 0.0 {
-                        if let Some(c) = self
-                            .project
-                            .assembly
-                            .as_mut()
-                            .and_then(|a| a.components.get_mut(index))
-                        {
-                            c.pose.translation_mm = c.pose.translation_mm + delta;
-                        }
-                        self.refresh_components();
-                    }
-                }
-                ui.add_space(8.0);
-                ui.separator();
-                if let Some(r) = &self.result {
-                    let b = &r.report.budget;
-                    let reference = b.launched;
-                    ui.label(
-                        egui::RichText::new(format!("基準面：{} = 100%", r.scene.reference_plane))
-                            .color(MUTED)
-                            .size(11.0),
-                    );
-                    ui.horizontal_wrapped(|ui| {
-                        for (label, value) in [
-                            ("検出器合計", b.detected),
-                            ("追跡領域外", b.escaped),
-                            ("幾何学的外れ", b.geometric_miss),
-                            ("主光路からの反射", b.sequential_reflection_not_followed),
-                            ("吸収", b.surface_absorbed + b.bulk_absorbed),
-                            ("分岐・深さ打切り", b.branch_cutoff + b.interaction_limit),
-                            ("未解決", b.numerical_failure + b.medium_mismatch),
-                        ] {
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "{label}  {:.3}%",
-                                    100.0 * value / reference
-                                ))
-                                .size(12.0)
-                                .color(
-                                    if label == "未解決" && value > 0.0 {
-                                        Color32::from_rgb(190, 65, 40)
-                                    } else {
-                                        INK
-                                    },
-                                ),
-                            );
-                            ui.add_space(6.0);
-                        }
-                    });
-                }
-                ui.add_space(10.0);
-                ui.separator();
-                ui.add_space(8.0);
-                self.surfaces(ui);
-            });
     }
     fn smoke(&mut self, ctx: &egui::Context) {
         let Some(dir) = &self.smoke else {
@@ -1350,7 +417,7 @@ impl App {
         {
             let _ = std::fs::create_dir_all(dir);
             let screen = self.result.as_ref().and_then(|r| r.screen.as_ref()).map(|a| serde_json::json!({"peak_weight":a.peak_weight,"peak_position_mm":a.peak_position_mm,"pixel_pitch_mm":a.pixel_pitch_mm,"fwhm_x_mm":a.x_profile.as_ref().and_then(|p|p.half_maximum.width_mm()),"fwhm_y_mm":a.y_profile.as_ref().and_then(|p|p.half_maximum.width_mm())}));
-            let status = serde_json::json!({"scene":self.project.scene.name,"components":self.project.assembly.as_ref().map(|a|a.components.len()),"sources":self.project.scene.sources.len(),"surfaces":self.project.scene.surfaces.len(),"issues":self.project.issues,"error":self.error,"trace_seconds":self.result.as_ref().map(|r|r.seconds),"budget":self.result.as_ref().map(|r|&r.report.budget),"screen":screen});
+            let status = serde_json::json!({"scene":self.project.scene.name,"view":format!("{:?}",self.view),"details":self.details.map(|d|format!("{d:?}")),"components":self.project.assembly.as_ref().map(|a|a.components.len()),"sources":self.project.scene.sources.len(),"surfaces":self.project.scene.surfaces.len(),"issues":self.project.issues,"error":self.error,"trace_seconds":self.result.as_ref().map(|r|r.seconds),"budget":self.result.as_ref().map(|r|&r.report.budget),"screen":screen});
             let _ = std::fs::write(
                 dir.join("gui_smoke.json"),
                 serde_json::to_vec_pretty(&status).unwrap(),
@@ -1389,12 +456,33 @@ impl eframe::App for App {
         self.poll(ctx);
         self.toolbar(ctx);
         egui::TopBottomPanel::bottom("status")
-            .exact_height(27.0)
+            .exact_height(30.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(Color32::from_rgb(248, 250, 252))
+                    .inner_margin(egui::Margin::symmetric(18, 5)),
+            )
             .show(ctx, |ui| {
-                ui.label(egui::RichText::new(&self.status).size(11.0).color(MUTED));
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(&self.status).size(11.0).color(MUTED));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if let Some(r) = &self.result {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "{} 本 · {:.2} ms",
+                                    r.scene.sources.iter().map(|s| s.count).sum::<usize>(),
+                                    r.seconds * 1000.0
+                                ))
+                                .size(11.0)
+                                .color(MUTED),
+                            );
+                        }
+                    });
+                });
             });
         self.sidebar(ctx);
         self.content(ctx);
+        self.details_window(ctx);
         if let Some(error) = self.error.clone() {
             let mut close = false;
             egui::Window::new("設定・読込の確認")
@@ -1448,6 +536,7 @@ fn draw_paths(
     markers: &[PartMarker],
     selected: usize,
     editable: bool,
+    equal_scale: bool,
 ) -> Option<(usize, V3)> {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), height),
@@ -1572,10 +661,10 @@ fn draw_paths(
             high[a] = high[a].max(p.0[k]);
         }
     }
-    let span = [(high[0] - low[0]).max(1e-3), (high[1] - low[1]).max(1e-3)];
+    let inner = rect.shrink2(Vec2::new(44.0, 36.0));
     let grid_id = ui.id().with(("part_grid", projection));
     let active_id = grid_id.with("active");
-    let mut grid = [low[0], low[1], span[0], span[1]];
+    let mut grid = plot_bounds(low, high, inner.size(), equal_scale);
     if response.dragged() {
         if let Some(old) = ui.ctx().data_mut(|d| d.get_temp::<[f64; 4]>(grid_id)) {
             grid = old;
@@ -1586,7 +675,6 @@ fn draw_paths(
             d.remove_temp::<usize>(active_id);
         });
     }
-    let inner = rect.shrink2(Vec2::new(32.0, 28.0));
     let map = |p: V3| {
         Pos2::new(
             inner.left() + ((p.0[axes.0] - grid[0]) / grid[2]) as f32 * inner.width(),
@@ -1599,12 +687,18 @@ fn draw_paths(
             [Pos2::new(inner.left(), y), Pos2::new(inner.right(), y)],
             Stroke::new(0.5_f32, LINE),
         );
-    }
-    for line in lines {
-        painter.add(egui::Shape::line(
-            line.into_iter().map(map).collect(),
-            Stroke::new(1.0_f32, Color32::from_rgb(104, 139, 172)),
-        ));
+        painter.text(
+            Pos2::new(inner.left() - 8.0, y),
+            egui::Align2::RIGHT_CENTER,
+            format!("{:.1}", grid[1] + grid[3] * (1.0 - i as f64 / 4.0)),
+            egui::FontId::proportional(10.0),
+            MUTED,
+        );
+        let x = inner.left() + inner.width() * i as f32 / 4.0;
+        painter.line_segment(
+            [Pos2::new(x, inner.top()), Pos2::new(x, inner.bottom())],
+            Stroke::new(0.5_f32, LINE),
+        );
     }
     let max = paths
         .iter()
@@ -1623,6 +717,12 @@ fn draw_paths(
                 Color32::from_rgba_unmultiplied(224, 135, 48, (25.0 + 155.0 * t.sqrt()) as u8),
             ),
         );
+    }
+    for line in lines {
+        painter.add(egui::Shape::line(
+            line.into_iter().map(map).collect(),
+            Stroke::new(1.0_f32, Color32::from_rgb(104, 139, 172)),
+        ));
     }
     for m in markers.iter().filter(|m| m.position.finite()) {
         let p = map(m.position);
@@ -1674,9 +774,9 @@ fn draw_paths(
     );
     ui.label(
         egui::RichText::new(if markers.is_empty() {
-            "投影の縦横縮尺は独立・CAD外形線は間引き表示"
+            "光源と面の設定は左側で編集 · CAD外形線は間引き表示"
         } else {
-            "●をドラッグして配置（縦横縮尺は独立）・傾きは下の数値で設定"
+            "丸印をドラッグして配置 · 位置と傾きは左側で設定"
         })
         .size(10.0)
         .color(MUTED),
@@ -1718,6 +818,24 @@ fn draw_paths(
     }
     action
 }
+
+fn plot_bounds(low: [f64; 2], high: [f64; 2], size: Vec2, equal_scale: bool) -> [f64; 4] {
+    let mut span = [(high[0] - low[0]).max(1e-3), (high[1] - low[1]).max(1e-3)];
+    if equal_scale {
+        let units_per_pixel =
+            (span[0] / size.x.max(1.0) as f64).max(span[1] / size.y.max(1.0) as f64);
+        span = [
+            units_per_pixel * size.x as f64,
+            units_per_pixel * size.y as f64,
+        ];
+    }
+    [
+        (low[0] + high[0] - span[0]) * 0.5,
+        (low[1] + high[1] - span[1]) * 0.5,
+        span[0],
+        span[1],
+    ]
+}
 fn draw_detector(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
@@ -1750,9 +868,7 @@ fn draw_detector(
             });
         ui.checkbox(&mut display.half_maximum, "半値幅")
             .on_hover_text("最大画素を通るX・Y断面の半値交点を表示します。複数の山がある場合は主ピーク周囲の幅です。");
-        if ui.button("断面…").clicked() {
-            display.profiles = true;
-        }
+        ui.checkbox(&mut display.profiles, "断面");
     });
     if old_scale != display.scale {
         result.texture = None;
@@ -1786,10 +902,65 @@ fn draw_detector(
             egui::TextureOptions::NEAREST,
         ));
     }
+    let reference = result.report.budget.launched.max(1e-300);
+    let texture = result.texture.as_ref().unwrap();
+    if display.profiles {
+        ui.columns(2, |cols| {
+            draw_detector_map(
+                &mut cols[0],
+                map,
+                analysis,
+                texture,
+                reference,
+                height,
+                display,
+            );
+            let ui = &mut cols[1];
+            if let Some([x, y]) = analysis.peak_position_mm {
+                ui.label(format!("ピーク位置 X={x:.4}, Y={y:.4} mm"));
+                for (axis, profile, half) in [
+                    (
+                        "X",
+                        analysis.x_profile.as_ref().unwrap(),
+                        map.half_extent_mm[0],
+                    ),
+                    (
+                        "Y",
+                        analysis.y_profile.as_ref().unwrap(),
+                        map.half_extent_mm[1],
+                    ),
+                ] {
+                    draw_profile(ui, profile, axis, half, peak, display, reference);
+                    ui.add_space(10.0);
+                }
+                ui.label(
+                    egui::RichText::new("赤破線：ピークの50%とその交点。画素中心の値を線形補間。")
+                        .size(11.0)
+                        .color(MUTED),
+                );
+            } else {
+                ui.label("受光がありません。");
+            }
+        });
+    } else {
+        draw_detector_map(ui, map, analysis, texture, reference, height, display);
+    }
+}
+
+fn draw_detector_map(
+    ui: &mut egui::Ui,
+    map: &crate::trace::DetectorMap,
+    analysis: &ScreenAnalysis,
+    texture: &egui::TextureHandle,
+    reference: f64,
+    height: f32,
+    display: &ScreenDisplay,
+) {
+    let peak = analysis.peak_weight;
     let [hx, hy] = map.half_extent_mm;
     let aspect = (hx / hy) as f32;
     let width = (ui.available_width() - 90.0)
-        .min((height - 116.0).max(80.0) * aspect)
+        .min((height - 150.0).max(80.0) * aspect)
         .max(30.0);
     let size = Vec2::new(width, width / aspect);
     let (area, _) = ui.allocate_exact_size(
@@ -1802,7 +973,7 @@ fn draw_detector(
     );
     let painter = ui.painter_at(area);
     painter.image(
-        result.texture.as_ref().unwrap().id(),
+        texture.id(),
         rect,
         egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
         Color32::WHITE,
@@ -1828,7 +999,6 @@ fn draw_detector(
             screen_color(if peak > 0.0 { fraction } else { 0.0 }, display.scale),
         );
     }
-    let reference = result.report.budget.launched.max(1e-300);
     for fraction in [0.0, 0.5, 1.0] {
         let value = match display.normalization {
             ScreenNormalization::Peak => {
@@ -1898,47 +1068,6 @@ fn draw_detector(
                     .color(MUTED),
             );
         }
-    }
-    if display.profiles {
-        let mut open = true;
-        egui::Window::new("ピークを通る断面")
-            .open(&mut open)
-            .default_width(620.0)
-            .show(ctx, |ui| {
-                if let Some([x, y]) = analysis.peak_position_mm {
-                    ui.label(format!("ピーク位置 X={x:.4}, Y={y:.4} mm"));
-                    ui.columns(2, |cols| {
-                        draw_profile(
-                            &mut cols[0],
-                            analysis.x_profile.as_ref().unwrap(),
-                            "X",
-                            hx,
-                            peak,
-                            display,
-                            reference,
-                        );
-                        draw_profile(
-                            &mut cols[1],
-                            analysis.y_profile.as_ref().unwrap(),
-                            "Y",
-                            hy,
-                            peak,
-                            display,
-                            reference,
-                        );
-                    });
-                    ui.label(
-                        egui::RichText::new(
-                            "赤破線：ピークの50%とその交点。画素中心の値を線形補間。",
-                        )
-                        .size(11.0)
-                        .color(MUTED),
-                    );
-                } else {
-                    ui.label("受光がありません。");
-                }
-            });
-        display.profiles = open;
     }
 }
 
@@ -2106,6 +1235,19 @@ pub fn main() {
 mod tests {
     use super::*;
     #[test]
+    fn equal_scale_preserves_lengths_in_both_axes_and_contains_the_scene() {
+        let size = Vec2::new(800.0, 500.0);
+        for (low, high) in [([0.0, -2.0], [100.0, 3.0]), ([-1.0, -50.0], [2.0, 90.0])] {
+            let grid = plot_bounds(low, high, size, true);
+            assert!((grid[2] / size.x as f64 - grid[3] / size.y as f64).abs() < 1e-12);
+            for a in 0..2 {
+                assert!(grid[a] <= low[a]);
+                assert!(grid[a] + grid[a + 2] >= high[a]);
+            }
+        }
+    }
+
+    #[test]
     fn drag_handle_changes_the_component_in_the_selected_projection() {
         let ctx = egui::Context::default();
         let scene = assembly::empty_scene("drag check");
@@ -2135,7 +1277,7 @@ mod tests {
             };
             let output = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    action = draw_paths(ui, &scene, &[], 0, 300.0, &markers, 0, true);
+                    action = draw_paths(ui, &scene, &[], 0, 300.0, &markers, 0, true, true);
                 });
             });
             (output, action)

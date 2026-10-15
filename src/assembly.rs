@@ -186,7 +186,7 @@ impl Component {
     }
 
     pub fn detector() -> Self {
-        let mut scene = empty_scene("検出器");
+        let mut scene = empty_scene("スクリーン");
         scene.surfaces.push(Surface {
             name: "検出面".into(),
             pose: Pose::default(),
@@ -198,7 +198,7 @@ impl Component {
             interaction: Interaction::Detector { pixels: [64, 64] },
         });
         Self {
-            name: "検出器".into(),
+            name: "スクリーン".into(),
             enabled: true,
             kind: ComponentKind::Detector,
             pose: Pose::default(),
