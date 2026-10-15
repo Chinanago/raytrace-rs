@@ -165,6 +165,26 @@ fn parameters(lines: &[String], key: &str) -> BTreeMap<usize, f64> {
         })
         .collect()
 }
+fn checked_parameters(lines: &[String], key: &str) -> Result<BTreeMap<usize, f64>, String> {
+    let mut values = BTreeMap::new();
+    for line in lines {
+        let w = words(line);
+        if w.first().copied() != Some(key) {
+            continue;
+        }
+        if w.len() < 3 {
+            return Err(format!("{key}の定義が不足しています"));
+        }
+        let index = w[1]
+            .parse::<usize>()
+            .map_err(|_| format!("{key}の番号が不正です"))?;
+        let value = number(w[2])?;
+        if !value.is_finite() || values.insert(index, value).is_some() {
+            return Err(format!("{key}の値が有限でないか、番号が重複しています"));
+        }
+    }
+    Ok(values)
+}
 fn field<'a>(lines: &'a [String], key: &str) -> Option<&'a str> {
     lines.iter().find_map(|l| {
         let l = l.trim();
@@ -322,14 +342,41 @@ fn pose_from(line: &str) -> Result<(Pose, String), String> {
 }
 
 pub fn read_zmx(path: &Path, extra: &[PathBuf]) -> Result<Project, String> {
+    read_zmx_with_cad_tolerance(path, extra, 0.02)
+}
+pub fn read_zmx_with_cad_tolerance(
+    path: &Path,
+    extra: &[PathBuf],
+    deflection_mm: f64,
+) -> Result<Project, String> {
+    if !deflection_mm.is_finite() || deflection_mm <= 0.0 {
+        return Err("CAD分割精度が不正です".into());
+    }
     let (text, encoding) = decode(&fs::read(path).map_err(|e| e.to_string())?);
     let all: Vec<String> = text.lines().map(str::to_owned).collect();
     if field(&all, "UNIT").is_some_and(|s| s.split_whitespace().next() != Some("MM")) {
         return Err("現在はmm単位のZMXに対応しています".into());
     }
     let mode = field(&all, "MODE").unwrap_or("SEQ");
-    let wavelengths = parameters(&all, "WAVM");
-    let primary = scalar(&all, "PWAV", 1.0)? as usize;
+    if !["SEQ", "NSC"].contains(&mode) {
+        return Err(format!("未対応のZMX追跡方式です: {mode}"));
+    }
+    let wavelengths = checked_parameters(&all, "WAVM")?;
+    for line in &all {
+        let w = words(line);
+        if w.first() == Some(&"WAVM")
+            && (w.len() < 3
+                || w[1].parse::<usize>().ok().is_none_or(|i| i == 0)
+                || number(w[2]).ok().is_none_or(|v| !v.is_finite() || v <= 0.0))
+        {
+            return Err(format!("ZMXの波長定義が不正です: {}", line.trim()));
+        }
+    }
+    let primary_value = scalar(&all, "PWAV", 1.0)?;
+    if !primary_value.is_finite() || primary_value < 1.0 || primary_value.fract() != 0.0 {
+        return Err("ZMXの主波長番号が不正です".into());
+    }
+    let primary = primary_value as usize;
     let wavelength = *wavelengths
         .get(&primary)
         .or_else(|| wavelengths.values().next())
@@ -358,11 +405,44 @@ pub fn read_zmx(path: &Path, extra: &[PathBuf]) -> Result<Project, String> {
         .split_whitespace()
         .map(str::to_owned)
         .collect();
+    if !wavelengths.contains_key(&primary) {
+        project.issue(
+            "spectrum",
+            "主波長が波長表にありません。計算波長を明示してください",
+            true,
+        );
+    }
+    if let Some(environment) = field(&all, "ENVD") {
+        let values: Vec<_> = environment
+            .split_whitespace()
+            .map(number)
+            .collect::<Result<_, _>>()?;
+        if values.len() < 2
+            || (values[0] - 20.0).abs() > 1e-12
+            || (values[1] - 1.0).abs() > 1e-12
+            || values.iter().any(|v| !v.is_finite())
+            || values.iter().skip(2).any(|v| *v != 0.0)
+        {
+            project.issue(
+                "environment",
+                format!("環境条件ENVD {environment}の温度・圧力による屈折率補正は未対応です"),
+                true,
+            );
+        }
+    }
     let glasses = catalogs(path, extra, &declared);
     let mut records = BTreeMap::new();
     let mut bindings = Vec::new();
     if mode.starts_with("NSC") {
-        read_nsc(&all, path, wavelength, &mut project, &glasses, &mut records)?;
+        read_nsc(
+            &all,
+            path,
+            wavelength,
+            &mut project,
+            &glasses,
+            &mut records,
+            deflection_mm,
+        )?;
     } else {
         read_sequential(
             &all,
@@ -418,7 +498,7 @@ fn read_sequential(
             .unwrap_or("");
         let curvature = scalar(lines, "CURV", 0.0)?;
         let conic = scalar(lines, "CONI", 0.0)?;
-        let coeff = parameters(lines, "PARM");
+        let coeff = checked_parameters(lines, "PARM")?;
         if coeff.iter().any(|(i, v)| *i > 9 && *v != 0.0) {
             project.issue(
                 "surface",
@@ -503,12 +583,12 @@ fn read_sequential(
             if w.is_empty() {
                 continue;
             }
-            if line.starts_with(char::is_whitespace)
-                && ![
-                    "TYPE", "COMM", "STOP", "FIMP", "CURV", "CONI", "PARM", "DISZ", "GLAS", "DIAM",
-                    "SQAP", "CLAP", "COAT", "HIDE", "MIRR", "SLAB", "POPS", "FLAP", "MEMA", "SSID",
-                ]
-                .contains(&w[0])
+            if ![
+                "TYPE", "COMM", "STOP", "FIMP", "CURV", "CONI", "PARM", "DISZ", "GLAS", "DIAM",
+                "SQAP", "CLAP", "COAT", "HIDE", "MIRR", "SLAB", "POPS", "FLAP", "MEMA", "SSID",
+                "MNUM", "OPER", "NOTE", "PUSH", "TOL", "TOLR",
+            ]
+            .contains(&w[0])
             {
                 project.issue(
                     "surface",
@@ -575,6 +655,7 @@ fn read_nsc(
     project: &mut Project,
     glasses: &BTreeMap<String, Glass>,
     records: &mut BTreeMap<String, String>,
+    deflection_mm: f64,
 ) -> Result<(), String> {
     let mut objects: Vec<Vec<String>> = Vec::new();
     for line in all {
@@ -598,9 +679,55 @@ fn read_nsc(
             .trim_matches('"')
             .to_owned();
         let (pose, glass) = pose_from(field(lines, "NSOP").unwrap_or("0 0 0 0 0 0"))?;
-        let p = parameters(lines, "NSOD");
+        let p = checked_parameters(lines, "NSOD")?;
         let param = |k, default| *p.get(&k).unwrap_or(&default);
         let label = format!("O{} {typ}", i + 1);
+        for line in lines {
+            let w = words(line);
+            let Some(key) = w.first() else {
+                continue;
+            };
+            if ![
+                "NSOH", "NSOP", "NSOD", "NSOO", "NSCS", "COMM", "MNUM", "OPER", "NOTE", "PUSH",
+                "TOL", "TOLR",
+            ]
+            .contains(key)
+            {
+                project.issue(
+                    "object",
+                    format!("{label}: 未対応レコード{key}の作用を確認してください"),
+                    true,
+                );
+            }
+        }
+        for line in lines {
+            let w = words(line);
+            if w.first() == Some(&"NSCS") && w.get(1).is_none_or(|id| !["1", "7"].contains(id)) {
+                project.issue(
+                    "object",
+                    format!(
+                        "{label}: NSCS属性{}の光学的な作用は未対応です",
+                        w.get(1).copied().unwrap_or("不明")
+                    ),
+                    true,
+                );
+            }
+        }
+        // Check optical face conditions before a geometry-only object is skipped.
+        if lines.iter().any(|l| {
+            let w = words(l);
+            w.len() > 3
+                && w[0] == "NSCS"
+                && w[1] == "1"
+                && w.last()
+                    .is_some_and(|s| !["_NONE_", ""].contains(&s.trim_matches('"')))
+        }) {
+            project.issue(
+                "coating",
+                format!("{label}: 面コーティングの追跡は未対応です"),
+                true,
+            );
+        }
         if let Some(ns) = field(lines, "NSOH") {
             let h = words(ns);
             if h.get(1..3).is_some_and(|v| v.iter().any(|s| *s != "0")) {
@@ -624,6 +751,19 @@ fn read_nsc(
         }
         match typ {
             "NSC_SDIO" => {
+                if lines.iter().any(|line| {
+                    let w = words(line);
+                    w.first() == Some(&"NSCS") && w.get(1) == Some(&"7") && w.get(2) != Some(&"0")
+                }) && !lines
+                    .iter()
+                    .any(|line| line.to_uppercase().contains(".SPCD"))
+                {
+                    project.issue(
+                        "spectrum",
+                        format!("{label}: 光源スペクトル定義NSCS 7の追跡は未対応です。計算波長を明示してください"),
+                        true,
+                    );
+                }
                 if [8, 10, 17, 20]
                     .iter()
                     .any(|k| (param(*k, 1.0) - 1.0).abs() > 1e-12)
@@ -638,6 +778,9 @@ fn read_nsc(
                 let frame = crate::math::Frame::new(&pose);
                 let waves = parameters(all, "WAVM");
                 let source_wave = *waves.get(&(param(4, 1.0) as usize)).unwrap_or(&wavelength);
+                if param(4, 1.0).fract() != 0.0 || !waves.contains_key(&(param(4, 1.0) as usize)) {
+                    project.issue("spectrum", format!("{label}: 指定した波長番号が波長表にありません。計算波長を明示してください"), true);
+                }
                 project.scene.sources.push(Source {
                     sampling: Sampling::Sobol,
                     count: param(2, 1000.0).max(1.0) as usize,
@@ -659,7 +802,7 @@ fn read_nsc(
                     }),
                 });
                 for line in lines {
-                    if line.contains(".SPCD") || line.contains(".spcd") {
+                    if line.to_uppercase().contains(".SPCD") {
                         let name = line
                             .split('"')
                             .find(|s| s.to_uppercase().ends_with(".SPCD"))
@@ -700,7 +843,7 @@ fn read_nsc(
                     );
                 }
                 let step = path.parent().unwrap_or(Path::new(".")).join(&reference);
-                match crate::cad::load_step(&step) {
+                match crate::cad::load_step_with_tolerance(&step, deflection_mm) {
                     Ok(shape) => project.scene.surfaces.push(Surface {
                         name: reference,
                         pose,
@@ -725,16 +868,6 @@ fn read_nsc(
                 true,
             ),
         }
-        if lines.iter().any(|l| {
-            let w = words(l);
-            w.len() > 3 && w[0] == "NSCS" && w[1] == "1" && w.last().is_some_and(|s| *s != "_NONE_")
-        }) {
-            project.issue(
-                "coating",
-                format!("{label}: 面コーティングの追跡は未対応です"),
-                true,
-            );
-        }
     }
     if project
         .scene
@@ -742,7 +875,8 @@ fn read_nsc(
         .iter()
         .any(|s| matches!(s.shape, Shape::TriangleMesh { .. }))
     {
-        project.issue("cad_accuracy","STEPはFreeCADで初回に0.02 mm設定で分割し、頂点法線を補間します。メッシュを変えたときの結果の収束が検証対象です",false);
+        project.cad_deflection_mm = Some(deflection_mm);
+        project.issue("cad_accuracy",format!("STEPはFreeCADで{deflection_mm} mm設定で分割し、頂点法線を補間します。メッシュを変えたときの結果の収束が検証対象です"),false);
     }
     Ok(())
 }

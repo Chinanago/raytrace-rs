@@ -8,11 +8,14 @@ import Part
 
 shape = Part.Shape()
 shape.read(str(Path(sys.argv[1]).resolve()))
+deflection_mm = float(sys.argv[3]) if len(sys.argv) > 3 else 0.02
+if not math.isfinite(deflection_mm) or deflection_mm <= 0:
+    raise ValueError("CAD deflection must be finite and positive")
 if not shape.isValid() or len(shape.Solids) != 1:
     raise ValueError("Exactly one valid closed STEP solid is required")
 vertices, normals, triangles = [], [], []
 for face in shape.Faces:
-    points, cells = face.tessellate(0.02)
+    points, cells = face.tessellate(deflection_mm)
     offset = len(vertices)
     face_normals = []
     for p in points:

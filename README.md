@@ -134,7 +134,7 @@ Source DiodeはGaussian係数Gx/Gy/Hx/Hyが1、非点収差0の範囲に対応�
 
 材料カタログはGUIの「読込レポート → AGFフォルダーを追加…」から指定できます。追加後に部品を読み込むか、「現在のファイルを読み直す」を使います。
 
-読込レポートに未対応の定義や不足ファイルを表示します。コーティングは名前を保持し、未コートFresnelで計算するには明示設定が必要です。SPCDスペクトルを使う光源は、単色の計算波長を指定して追跡します。
+読込レポートは部品単位で、計算対応・原文のみ保持・条件指定待ち・条件指定済み・未対応を表示します。計算波長ごとの屈折率と吸収係数も確認できます。コーティングは名前を保持し、未コートFresnelで計算するには明示設定が必要です。SPCDスペクトルを使う光源は、単色の計算波長を指定して追跡します。未定義の波長番号、未知の面・オブジェクト属性、未対応の環境条件は読込時に明示します。
 
 STEPの初回読込にはFreeCADのPythonが必要です。`RAYTRACE_FREECAD_PYTHON` で実行ファイルを指定できます。Windowsの既定値は `%LOCALAPPDATA%/Programs/FreeCAD 1.1/bin/python.exe` です。0.02 mm設定で分割したメッシュをビルド元の `results/cad_cache` に保存し、追跡はRustで行います。CADの精度はメッシュ分割を変えた収束確認が必要です。
 
@@ -153,9 +153,48 @@ STEPの初回読込にはFreeCADのPythonが必要です。`RAYTRACE_FREECAD_PYT
 
 非シーケンシャルの面別値は、同じ面への複数回の入射を積算します。`numerical_failure` は未解決の面交差、`medium_mismatch` は媒質境界の不整合です。非球面の斜入射は区間を分割して最も近い交点を探し、探索上限に達した光量を未解決分として記録します。
 
+GUIの「光量の内訳 → 追跡の診断」から、未解決・媒質不整合・打切りの光量、原因の面、代表光線の位置・方向・波長を確認できます。「配置で確認」で対応する部品を選択します。記録する代表例は最大64グループとし、保存上限を超えた分岐の数と光量も集計します。分岐数は同じ発射IDの重複を含みます。
+
+## 計算記録と再計算
+
+CLIの計算結果とGUIの「ファイル → 計算結果を保存…」は、計算時点のプロジェクト・実際に使った光学系・光源条件・ソフトの版・追跡上限を結果と一緒に保存します。CSV入力では発射光線そのものを含み、元のCSVを開き直さずに再計算できます。
+
+```powershell
+./target/release/raytrace-rs.exe examples/sequential_lens.json --rays-per-source 1024 --output results/lens_run.json
+./target/release/raytrace-rs.exe --replay results/lens_run.json --threads 4 --output results/lens_replay.json
+```
+
+計算記録の形式は `raytrace-run-v1`、CLI出力の `schema_version` は2です。既存の `report`・光量比・ベンチマーク欄に `calculation` を追加しています。再計算では出力先・スレッド数・繰返し回数・保存する光線情報を指定でき、記録した光学条件を維持します。GUIの光路表示用サンプルは計算記録から除き、再計算時に `--paths N` で指定できます。配置の編集にはプロジェクトJSONを使います。
+
+## 収束確認
+
+光線数・seed・画素数・CAD分割精度を変えた計算を一括実行できます。既定は各光源256／1024／4096本、seed 42／43、64角画素、CAD分割精度0.02 mmです。
+
+```powershell
+./target/release/raytrace-rs.exe --convergence examples/sequential_lens.json --output results/lens_convergence
+./target/release/raytrace-rs.exe --convergence model.zmx --plan plan.json --output results/cad_convergence
+```
+
+計画JSONの例です。空配列の `ray_counts`・`seeds`・`pixels` は元の設定を維持します。指定したseedは先頭光源へ割り当て、以後の光源は順に+1します。
+
+```json
+{
+  "ray_counts": [256, 1024],
+  "seeds": [42, 43],
+  "pixels": [[32, 32], [64, 64]],
+  "cad_deflections_mm": [0.02, 0.01],
+  "threads": 4,
+  "save_runs": true
+}
+```
+
+`convergence.json` に受光量、光量収支、半値幅、画素寸法、三角形数、追跡時間、各ケースのエラーを保存します。ほかの条件を揃え、光線数・画素数の最大値、CAD分割精度の最小値、最初のseedをそれぞれ比較先とします。分布の差は、最大64角の共通画素へ面積比で集約した光量のL1差を、発射基準光量に対する割合で示します。細かい画素内の分布は一様と仮定した比較です。差分は感度の確認値で、収束の自動判定は行いません。
+
+CAD分割精度を比較する場合はSTEP参照を持つ元のZMXを指定します。保存済みJSONのメッシュは、その保存時の分割を使います。`save_runs: true` ではケースごとの計算記録も保存し、`--replay` で再計算できます。各ケースは合計200万光線、計画全体は256ケースが上限です。
+
 ## OpticStudioと比べた主な未対応機能
 
-[OpticStudioの公式機能一覧](https://www.ansys.com/products/optics/ansys-zemax-opticstudio)、[面型](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Summary_Table_of_Sequential_Surface_Types.html)、[光源モデル](https://optics.ansys.com/hc/en-us/articles/42661687233939-Light-sources-used-in-illumination-design)と比較した、v0.6の主な制約です。
+[OpticStudioの公式機能一覧](https://www.ansys.com/products/optics/ansys-zemax-opticstudio)、[面型](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Summary_Table_of_Sequential_Surface_Types.html)、[光源モデル](https://optics.ansys.com/hc/en-us/articles/42661687233939-Light-sources-used-in-illumination-design)と比較した、v0.7の主な制約です。
 
 | 分野 | 未対応の機能 |
 |---|---|
@@ -189,5 +228,14 @@ OpticStudioとの光線比較には `examples/exchange_check.rs` と `scripts/ze
 cargo run --release --example exchange_check -- lens.zmx results/exchange
 python scripts/zemax_exchange_probe.py --input results/exchange/lens_edited.zmx --rays results/exchange/reference.json --output results/zemax_exchange
 ```
+
+自作の検証ケースは次のコマンドで生成できます。逐次レンズ、非球面、平行平板、内部多重反射、分散を持つロッド、回転したロッド、逐次／非逐次の折返しミラーの8ケースで、解析解とZMX往復保存を確認します。
+
+```powershell
+cargo run --release --example validation_suite -- results/validation
+python scripts/zemax_exchange_probe.py --input results/validation/even_asphere/even_asphere.zmx --rays results/validation/even_asphere/reference.json --output results/validation/even_asphere/opticstudio
+```
+
+解析解との比較・Rust内のZMX往復保存と、OpticStudio実機との照合は別の検証です。生成したケースの実機照合状態は `not_run` から始まります。Pythonプローブは軸上Standard／Even Asphereの波長別・面別の交点と方向を比較し、許容差を超えると失敗します。Fresnel光量・光学距離・NSC分岐の実機照合は別途必要です。
 
 計算核は `src/geometry.rs` と `src/trace.rs`、光源生成は `src/model.rs` と `src/sampling.rs`、ZMX交換は `src/zemax.rs`、部品の組立は `src/assembly.rs`、追跡後のスクリーン解析は `src/screen.rs` にあります。Rustライブラリとしても利用できます。

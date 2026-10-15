@@ -31,6 +31,8 @@ pub struct Project {
     pub allow_uncoated: bool,
     #[serde(default)]
     pub monochromatic_override_um: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cad_deflection_mm: Option<f64>,
 }
 
 impl Project {
@@ -53,18 +55,32 @@ impl Project {
             zemax: None,
             allow_uncoated: false,
             monochromatic_override_um: None,
+            cad_deflection_mm: None,
         }
     }
     pub fn open(path: &Path, catalogs: &[PathBuf]) -> Result<Self, String> {
+        Self::open_with_cad_tolerance(path, catalogs, 0.02)
+    }
+    pub fn open_with_cad_tolerance(
+        path: &Path,
+        catalogs: &[PathBuf],
+        deflection_mm: f64,
+    ) -> Result<Self, String> {
+        if !deflection_mm.is_finite() || deflection_mm <= 0.0 {
+            return Err("CAD分割精度は正の有限値で指定してください".into());
+        }
         if path
             .extension()
             .is_some_and(|e| e.eq_ignore_ascii_case("zmx"))
         {
-            return zemax::read_zmx(path, catalogs);
+            return zemax::read_zmx_with_cad_tolerance(path, catalogs, deflection_mm);
         }
         let bytes = fs::read(path).map_err(|e| e.to_string())?;
         let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
         if value.get("format").is_some() {
+            if value["format"] == crate::record::RUN_FORMAT {
+                return Err("計算記録は raytrace-rs --replay で再計算できます。配置の編集にはプロジェクトJSONを開いてください".into());
+            }
             let mut project: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
             if !["raytrace-project-v1", "raytrace-project-v2"].contains(&project.format.as_str())
                 || project.format == "raytrace-project-v2" && project.assembly.is_none()

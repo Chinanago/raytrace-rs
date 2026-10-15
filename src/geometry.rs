@@ -144,9 +144,52 @@ pub fn sag(shape: &Shape, x: f64, y: f64) -> Option<(f64, f64, f64)> {
     (z.is_finite() && factor.is_finite()).then_some((z, factor * x, factor * y))
 }
 
+/// An ordered sequence may contain a stop, interface and image at the same
+/// position. Each is visited once, so a zero-distance hit cannot self-loop.
+pub fn intersect_ordered(surface: &PreparedSurface, p_world: V3, d_world: V3) -> Result<Hit, Miss> {
+    let p = surface.frame.local_point(p_world);
+    let d = surface.frame.local_vector(d_world);
+    if !matches!(
+        surface.spec.shape,
+        Shape::TriangleMesh { .. } | Shape::ConicalSide { .. }
+    ) {
+        let scale = p_world
+            .0
+            .into_iter()
+            .chain(surface.frame.origin.0)
+            .map(f64::abs)
+            .fold(1.0, f64::max);
+        let tolerance = 32.0 * f64::EPSILON * scale;
+        if p.0[2] >= surface.local_bounds[0].0[2] - tolerance
+            && p.0[2] <= surface.local_bounds[1].0[2] + tolerance
+            && surface.spec.aperture.contains(p.0[0], p.0[1])
+        {
+            if let Some((z, gx, gy)) = sag(&surface.spec.shape, p.0[0], p.0[1]) {
+                let normal = surface
+                    .frame
+                    .world_vector(V3([-gx, -gy, 1.0]).unit())
+                    .unit();
+                if (p.0[2] - z).abs() <= tolerance && d_world.dot(normal).abs() > 1e-14 {
+                    return Ok(Hit {
+                        distance_mm: 0.0,
+                        point: p_world,
+                        local_point: p,
+                        normal,
+                    });
+                }
+            }
+        }
+    }
+    intersect_local(surface, p, d)
+}
+
 pub fn intersect(surface: &PreparedSurface, p_world: V3, d_world: V3) -> Result<Hit, Miss> {
     let p = surface.frame.local_point(p_world);
     let d = surface.frame.local_vector(d_world);
+    intersect_local(surface, p, d)
+}
+
+fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss> {
     let (t_low, t_high) = bounded_interval(surface, p, d).ok_or(Miss::Geometry)?;
     if let Shape::ConicalSide {
         radius_start_mm,

@@ -6,6 +6,12 @@ use std::{
     process::Command,
 };
 pub fn load_step(path: &Path) -> Result<Shape, String> {
+    load_step_with_tolerance(path, 0.02)
+}
+pub fn load_step_with_tolerance(path: &Path, deflection_mm: f64) -> Result<Shape, String> {
+    if !deflection_mm.is_finite() || deflection_mm <= 0.0 {
+        return Err("CAD分割精度は正の有限値で指定してください".into());
+    }
     if !path.is_file() {
         return Err(format!("参照CADがありません: {}", path.display()));
     }
@@ -20,7 +26,8 @@ pub fn load_step(path: &Path) -> Result<Shape, String> {
     let metadata = fs::metadata(path).map_err(|e| e.to_string())?;
     metadata.len().hash(&mut hash);
     metadata.modified().ok().hash(&mut hash);
-    let cache = cache_dir.join(format!("{:016x}_d002_v1.json", hash.finish()));
+    deflection_mm.to_bits().hash(&mut hash);
+    let cache = cache_dir.join(format!("{:016x}_v2.json", hash.finish()));
     if !cache.is_file() {
         let python = std::env::var_os("RAYTRACE_FREECAD_PYTHON")
             .map(PathBuf::from)
@@ -36,10 +43,14 @@ pub fn load_step(path: &Path) -> Result<Shape, String> {
                     .into(),
             );
         }
-        let script = cache_dir.join("step_mesh_v1.py");
+        let script = cache_dir.join("step_mesh_v2.py");
         fs::write(&script, include_str!("../scripts/step_mesh.py")).map_err(|e| e.to_string())?;
         let mut command = Command::new(python);
-        command.arg(script).arg(path).arg(&cache);
+        command
+            .arg(script)
+            .arg(path)
+            .arg(&cache)
+            .arg(deflection_mm.to_string());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;

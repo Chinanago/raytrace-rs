@@ -5,6 +5,7 @@ use crate::{
     math::{Frame, V3},
     model::*,
     project::Project,
+    record::RunContext,
     screen::{Profile, ScreenAnalysis},
     trace::{trace, Report, TraceOptions},
     zemax,
@@ -66,6 +67,7 @@ impl Default for ScreenDisplay {
 }
 
 struct ResultView {
+    calculation: RunContext,
     scene: Scene,
     report: Report,
     seconds: f64,
@@ -139,6 +141,8 @@ impl App {
                 "--assembly-demo" => (),
                 "--screen" => app.view = View::Screen,
                 "--settings" => app.details = Some(Details::Calculation),
+                "--diagnostics" => app.details = Some(Details::Budget),
+                "--import-report" => app.details = Some(Details::Import),
                 "--screen-profiles" => app.screen_display.profiles = true,
                 "--screen-reference" => {
                     app.screen_display.normalization = ScreenNormalization::Reference
@@ -285,6 +289,7 @@ impl App {
             }
         }
         let threads = self.threads;
+        let project_snapshot = self.project.clone();
         let (tx, rx) = mpsc::channel();
         let context = ctx.clone();
         self.job = Some(rx);
@@ -336,6 +341,13 @@ impl App {
                     })
                     .paths;
                 Ok(Box::new(ResultView {
+                    calculation: RunContext::capture(
+                        &project_snapshot,
+                        &scene,
+                        None,
+                        threads,
+                        TraceOptions::default(),
+                    ),
                     scene,
                     report,
                     seconds,
@@ -417,7 +429,23 @@ impl App {
         {
             let _ = std::fs::create_dir_all(dir);
             let screen = self.result.as_ref().and_then(|r| r.screen.as_ref()).map(|a| serde_json::json!({"peak_weight":a.peak_weight,"peak_position_mm":a.peak_position_mm,"pixel_pitch_mm":a.pixel_pitch_mm,"fwhm_x_mm":a.x_profile.as_ref().and_then(|p|p.half_maximum.width_mm()),"fwhm_y_mm":a.y_profile.as_ref().and_then(|p|p.half_maximum.width_mm())}));
-            let status = serde_json::json!({"scene":self.project.scene.name,"view":format!("{:?}",self.view),"details":self.details.map(|d|format!("{d:?}")),"components":self.project.assembly.as_ref().map(|a|a.components.len()),"sources":self.project.scene.sources.len(),"surfaces":self.project.scene.surfaces.len(),"issues":self.project.issues,"error":self.error,"trace_seconds":self.result.as_ref().map(|r|r.seconds),"budget":self.result.as_ref().map(|r|&r.report.budget),"screen":screen});
+            let status = serde_json::json!({
+                "scene": self.project.scene.name,
+                "view": format!("{:?}", self.view),
+                "details": self.details.map(|d| format!("{d:?}")),
+                "components": self.project.assembly.as_ref().map(|a| a.components.len()),
+                "sources": self.project.scene.sources.len(),
+                "surfaces": self.project.scene.surfaces.len(),
+                "issues": self.project.issues,
+                "compatibility": self.project.compatibility_report(),
+                "error": self.error,
+                "trace_seconds": self.result.as_ref().map(|r| r.seconds),
+                "budget": self.result.as_ref().map(|r| &r.report.budget),
+                "diagnostics": self.result.as_ref().map(|r| &r.report.diagnostics),
+                "calculation_version": self.result.as_ref().map(|r| &r.calculation.software_version),
+                "launch_wavelengths_um": self.result.as_ref().map(|r| &r.calculation.launch_wavelengths_um),
+                "screen": screen,
+            });
             let _ = std::fs::write(
                 dir.join("gui_smoke.json"),
                 serde_json::to_vec_pretty(&status).unwrap(),

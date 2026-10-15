@@ -108,6 +108,27 @@ impl App {
             }
         }
         if ui
+            .add_enabled(self.result.is_some(), egui::Button::new("計算結果を保存…"))
+            .on_hover_text("計算時の部品・材料・光源条件と画素データを保存します")
+            .clicked()
+        {
+            ui.close_menu();
+            if let Some(path) = rfd::FileDialog::new()
+                .set_file_name("calculation.raytrace-run.json")
+                .add_filter("Raytrace calculation", &["json"])
+                .save_file()
+            {
+                let r = self.result.as_ref().unwrap();
+                let mut report = r.report.clone();
+                // Viewer paths use reindexed sample IDs; archive the actual calculation.
+                report.paths.clear();
+                match r.calculation.save(&report, r.seconds, &path) {
+                    Ok(()) => self.status = "計算時の条件と結果を保存しました".into(),
+                    Err(e) => self.error = Some(e),
+                }
+            }
+        }
+        if ui
             .add_enabled(
                 self.project.assembly.is_none(),
                 egui::Button::new("ZMX書出し…"),
@@ -695,7 +716,11 @@ impl App {
                         Details::Budget => self.power_budget(ui),
                     });
             });
-        self.details = open.then_some(page);
+        self.details = if self.details.is_some() {
+            open.then_some(page)
+        } else {
+            None
+        };
     }
 
     fn calculation_controls(&mut self, ui: &mut egui::Ui) {
@@ -830,17 +855,28 @@ impl App {
             }
             if changed { self.changed(); }
             section_label(ui, "読込の確認");
-            if self.project.issues.is_empty() {
-                ui.label("読込時の確認項目はありません。");
-            } else {
-                let blocked = self.project.trace_scene().is_err();
-                ui.label(egui::RichText::new(if blocked { "計算前に確認が必要な項目があります" } else { "指定した条件で計算できます" })
-                    .color(if blocked { Color32::from_rgb(173, 93, 20) } else { BLUE }));
-                for issue in &self.project.issues {
-                    ui.add_space(7.0);
-                    ui.label(egui::RichText::new(&issue.code).strong().size(11.0));
-                    ui.label(egui::RichText::new(&issue.message).size(12.0).color(MUTED));
-                }
+            let report = self.project.compatibility_report();
+            ui.label(egui::RichText::new(if report.traceable { "指定した条件で計算できます" } else { "計算前に確認が必要な項目があります" })
+                .color(if report.traceable { BLUE } else { Color32::from_rgb(173, 93, 20) }));
+            for component in report.components {
+                egui::CollapsingHeader::new(format!("{}{}", component.name, if component.enabled { "" } else { "（使用停止）" }))
+                    .id_salt(("compatibility", component.component)).default_open(true).show(ui, |ui| {
+                    for entry in &component.entries {
+                        ui.label(egui::RichText::new(format!("{} · {}", entry.status.label(), entry.code)).size(11.0).color(
+                            if entry.status.blocks() && component.enabled { Color32::from_rgb(173, 93, 20) } else { MUTED }));
+                        ui.label(egui::RichText::new(&entry.message).size(12.0));
+                    }
+                    egui::CollapsingHeader::new("計算波長・屈折率・吸収").id_salt(("optics", component.component)).show(ui, |ui| {
+                        for material in &component.materials {
+                            ui.label(egui::RichText::new(&material.name).strong().size(11.0));
+                            for sample in &material.samples {
+                                ui.label(egui::RichText::new(format!("{:.2} nm · n={} · 吸収係数 {} /mm", sample.wavelength_um * 1000.0,
+                                    sample.refractive_index.map_or_else(|| "範囲外".into(), |v| format!("{v:.7}")),
+                                    sample.absorption_per_mm.map_or_else(|| "範囲外".into(), |v| format!("{v:.6}")))).size(11.0).color(MUTED));
+                            }
+                        }
+                    });
+                });
             }
             section_label(ui, "材料カタログ");
             if ui.button("AGFフォルダーを追加…").clicked() {
@@ -858,7 +894,7 @@ impl App {
         });
     }
 
-    fn power_budget(&self, ui: &mut egui::Ui) {
+    fn power_budget(&mut self, ui: &mut egui::Ui) {
         let Some(r) = &self.result else {
             ui.label("計算後に光量収支を表示します。");
             return;
@@ -906,6 +942,97 @@ impl App {
             .size(11.0)
             .color(MUTED),
         );
+        section_label(ui, "追跡の診断");
+        if r.report.diagnostics.is_empty() {
+            ui.label(
+                egui::RichText::new("未解決の光線・打切りはありません")
+                    .size(12.0)
+                    .color(MUTED),
+            );
+        }
+        let mut locate = None;
+        for (i, d) in r.report.diagnostics.iter().enumerate() {
+            let name = d
+                .surface
+                .and_then(|s| r.scene.surfaces.get(s))
+                .map(|s| s.name.as_str())
+                .unwrap_or("面の特定なし");
+            let reason = match d.reason.as_str() {
+                "medium_mismatch" => "媒質の不整合",
+                "numerical_failure" => "未解決の交差",
+                "branch_cutoff" => "弱い分岐の打切り",
+                "interaction_limit" => "回数上限の打切り",
+                _ => &d.reason,
+            };
+            egui::CollapsingHeader::new(format!(
+                "{reason} · {:.6}% · {name}",
+                d.weight * 100.0 / reference
+            ))
+            .id_salt(("diagnostic", i))
+            .show(ui, |ui| {
+                ui.label(format!(
+                    "終端分岐数：{}（発射IDの重複を含む）",
+                    d.branch_count
+                ));
+                ui.label(format!(
+                    "代表光線 ID {} · 深さ {}",
+                    d.example.ray.id, d.example.depth
+                ));
+                ui.label(format!("最終位置 [mm]：{:?}", d.example.ray.position_mm.0));
+                ui.label(format!(
+                    "方向：{:?} · 波長 {:.3} nm",
+                    d.example.ray.direction.0,
+                    d.example.ray.wavelength_um * 1000.0
+                ));
+                if let Some(expected) = d.expected_medium {
+                    ui.label(format!(
+                        "入射媒質 {} · 境界が要求する媒質 {}",
+                        d.actual_medium, expected
+                    ));
+                }
+                if d.reason == "numerical_failure" {
+                    ui.label("位置は交差探索を開始した点です。");
+                }
+                if ["branch_cutoff", "interaction_limit"].contains(&d.reason.as_str()) {
+                    ui.label("面は直前に相互作用した面です。");
+                }
+                if ui
+                    .add_enabled(
+                        !self.stale && d.surface.is_some(),
+                        egui::Button::new("配置で確認"),
+                    )
+                    .clicked()
+                {
+                    locate = d.surface;
+                }
+            });
+        }
+        if r.report.diagnostic_overflow.branch_count > 0 {
+            ui.label(format!(
+                "代表例の保存上限を超えた診断：{} 分岐 · {:.6}%",
+                r.report.diagnostic_overflow.branch_count,
+                r.report.diagnostic_overflow.weight * 100.0 / reference
+            ));
+        }
+        if let Some(surface) = locate {
+            self.details = None;
+            self.view = View::Layout;
+            if self.project.assembly.is_some() {
+                if let Some(index) = r.scene.surfaces[surface]
+                    .name
+                    .split(':')
+                    .next()
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .and_then(|i| i.checked_sub(1))
+                {
+                    self.component = index;
+                    self.source = 0;
+                }
+            } else {
+                self.selected = surface;
+                self.source_selected = false;
+            }
+        }
     }
 }
 
@@ -1231,7 +1358,8 @@ mod tests {
     fn text_rect(output: &egui::FullOutput, text: &str) -> Option<egui::Rect> {
         output.shapes.iter().find_map(|s| match &s.shape {
             egui::Shape::Text(t) if t.galley.job.text == text => {
-                Some(egui::Rect::from_min_size(t.pos, t.galley.size()))
+                let rect = egui::Rect::from_min_size(t.pos, t.galley.size()).intersect(s.clip_rect);
+                rect.is_positive().then_some(rect)
             }
             _ => None,
         })
@@ -1261,6 +1389,78 @@ mod tests {
                 modifiers: egui::Modifiers::NONE,
             }],
         )
+    }
+
+    #[test]
+    fn diagnostic_navigation_selects_the_component_without_changing_the_model() {
+        let ctx = egui::Context::default();
+        ctx.style_mut(|s| s.animation_time = 0.0);
+        let mut app = App::demo();
+        for source in &mut app.project.assembly.as_mut().unwrap().components[0]
+            .project
+            .scene
+            .sources
+        {
+            source.medium = 1;
+            source.count = 4;
+        }
+        app.project.refresh_assembly().unwrap();
+        let scene = app.project.trace_scene().unwrap();
+        let prepared = scene.clone().prepare().unwrap();
+        let rays = prepared.generate_rays().unwrap();
+        let report = trace(&prepared, &rays, TraceOptions::default());
+        assert_eq!(report.diagnostics[0].reason, "medium_mismatch");
+        let label = format!(
+            "媒質の不整合 · {:.6}% · {}",
+            report.diagnostics[0].weight * 100.0 / report.budget.launched,
+            scene.surfaces[report.diagnostics[0].surface.unwrap()].name
+        );
+        let before = serde_json::to_value(&app.project).unwrap();
+        app.result = Some(ResultView {
+            calculation: RunContext::capture(
+                &app.project,
+                &scene,
+                None,
+                1,
+                TraceOptions::default(),
+            ),
+            scene,
+            report,
+            seconds: 0.1,
+            texture: None,
+            screen: None,
+        });
+        app.details = Some(Details::Budget);
+        frame(&mut app, &ctx, vec![]);
+        let out = frame(&mut app, &ctx, vec![]);
+        let header = text_rect(&out, &label).expect("diagnostic group").center();
+        click(&mut app, &ctx, header);
+        let mut out = frame(&mut app, &ctx, vec![]);
+        if text_rect(&out, "配置で確認").is_none() {
+            frame(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(header),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: Vec2::new(0.0, -600.0),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+            for _ in 0..30 {
+                out = frame(&mut app, &ctx, vec![]);
+            }
+        }
+        let button = text_rect(&out, "配置で確認")
+            .expect("navigation button")
+            .center();
+        click(&mut app, &ctx, button);
+        assert_eq!(app.view, View::Layout);
+        assert_eq!(app.component, 1);
+        assert_eq!(app.details, None);
+        assert_eq!(before, serde_json::to_value(&app.project).unwrap());
     }
 
     #[test]

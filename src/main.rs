@@ -1,5 +1,6 @@
 use raytrace_rs::math::V3;
 use raytrace_rs::model::{Mode, PreparedScene, Ray, Sampling, Scene};
+use raytrace_rs::record::{LaunchInput, RunContext, RunRecord, RUN_FORMAT};
 use raytrace_rs::trace::{trace, TraceOptions};
 use raytrace_rs::{project::Project, zemax};
 use serde::Serialize;
@@ -11,6 +12,8 @@ const HELP: &str =
     [--terminals] [--paths FIRST_N_LAUNCH_IDS]\n\
     [--inspect] [--export-zmx COPY.zmx] [--ignore-coatings]\n\
     [--wavelength-um VALUE] [--rays-per-source N] [--sampling sobol|pseudorandom]\n\
+    raytrace-rs --replay RECORD.json [--output NEW_REPORT.json] [--threads N]\n\
+    raytrace-rs --convergence MODEL [--plan PLAN.json] [--output DIRECTORY]\n\
 Ray CSV header: id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium\n\
 Units: mm, um, arbitrary power weights. Launch-weight sum is the 100% reference.\n\
 Sequential follows transmission, explicit mirrors and TIR. Non-sequential splits R/T.\n\
@@ -66,17 +69,59 @@ struct Benchmark {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    let args: Vec<_> = env::args().skip(1).collect();
+    let mut args: Vec<_> = env::args().skip(1).collect();
     if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
         println!("{HELP}");
         return Ok(());
     }
-    let mut output = PathBuf::from("results/report.json");
+    if args[0] == "--convergence" {
+        let model = args.get(1).ok_or("Missing convergence model")?;
+        let mut plan = raytrace_rs::convergence::ConvergencePlan::default();
+        let mut output = PathBuf::from("results/convergence");
+        let mut i = 2;
+        while i < args.len() {
+            let value = args.get(i + 1).ok_or("Missing convergence option value")?;
+            match args[i].as_str() {
+                "--plan" => plan = serde_json::from_slice(&fs::read(value)?)?,
+                "--output" => output = value.into(),
+                option => return Err(format!("Unknown convergence option: {option}").into()),
+            }
+            i += 2;
+        }
+        let report = raytrace_rs::convergence::run(std::path::Path::new(model), &plan, &output)?;
+        let failures = report.cases.iter().filter(|c| c.error.is_some()).count();
+        println!(
+            "Convergence: {} cases, {} comparisons, {} failed; {}",
+            report.cases.len(),
+            report.comparisons.len(),
+            failures,
+            output.join("convergence.json").display()
+        );
+        if failures > 0 {
+            return Err("Some convergence cases failed; inspect the saved summary".into());
+        }
+        return Ok(());
+    }
+    let replay = if args[0] == "--replay" {
+        args.remove(0);
+        Some(RunRecord::open(std::path::Path::new(
+            args.first().ok_or("Missing replay file")?,
+        ))?)
+    } else {
+        None
+    };
+    let mut output = PathBuf::from(if replay.is_some() {
+        "results/replay.json"
+    } else {
+        "results/report.json"
+    });
     let mut csv = None;
     let mut threads = None;
     let mut repeat = 1usize;
     let mut mode = None;
-    let mut options = TraceOptions::default();
+    let mut options = replay
+        .as_ref()
+        .map_or_else(TraceOptions::default, |r| r.calculation.trace_options);
     let mut inspect = false;
     let mut export_zmx = None;
     let mut ignore_coatings = false;
@@ -145,11 +190,29 @@ fn run() -> Result<(), Box<dyn Error>> {
         i += 2;
     }
     let mut builder = rayon::ThreadPoolBuilder::new();
-    if let Some(n) = threads {
+    if replay.is_some()
+        && (csv.is_some()
+            || mode.is_some()
+            || sampling.is_some()
+            || rays_per_source.is_some()
+            || wavelength.is_some()
+            || ignore_coatings
+            || inspect
+            || export_zmx.is_some())
+    {
+        return Err("Replay keeps the recorded optical conditions; only output, threads, repeat, terminals and paths can be changed".into());
+    }
+    if let Some(n) = threads.or_else(|| replay.as_ref().map(|r| r.calculation.worker_threads)) {
+        if n == 0 {
+            return Err("Thread count must be positive".into());
+        }
         builder = builder.num_threads(n);
     }
     let pool = builder.build()?;
-    let mut project = Project::open(std::path::Path::new(&args[0]), &[])?;
+    let mut project = match &replay {
+        Some(r) => r.calculation.project.clone(),
+        None => Project::open(std::path::Path::new(&args[0]), &[])?,
+    };
     project.allow_uncoated = ignore_coatings || project.allow_uncoated;
     if let Some(w) = wavelength {
         project.monochromatic_override_um = Some(w);
@@ -168,16 +231,22 @@ fn run() -> Result<(), Box<dyn Error>> {
             project.scene.surfaces.len(),
             project.scene.materials.len()
         );
-        for issue in &project.issues {
+        for component in project.compatibility_report().components {
             println!(
-                "{}: {}",
-                if issue.blocking { "ACTION" } else { "INFO" },
-                issue.message
+                "{}{}",
+                component.name,
+                if component.enabled { "" } else { " [disabled]" }
             );
+            for entry in component.entries {
+                println!("  {}: {}", entry.status.label(), entry.message);
+            }
         }
         return Ok(());
     }
-    let mut spec: Scene = project.trace_scene()?;
+    let mut spec: Scene = match &replay {
+        Some(r) => r.calculation.scene.clone(),
+        None => project.trace_scene()?,
+    };
     if let Some(sampling) = sampling {
         for source in &mut spec.sources {
             source.sampling = sampling;
@@ -195,8 +264,21 @@ fn run() -> Result<(), Box<dyn Error>> {
         spec.mode = mode;
     }
     let scene = spec.prepare()?;
-    let rays = if let Some(path) = csv {
-        read_csv(&path, &scene)?
+    if fs::canonicalize(&output)
+        .ok()
+        .zip(fs::canonicalize(&args[0]).ok())
+        .is_some_and(|(a, b)| a == b)
+    {
+        return Err("Output must differ from the input model or calculation record".into());
+    }
+    let explicit = csv.is_some()
+        || replay
+            .as_ref()
+            .is_some_and(|r| matches!(r.calculation.input, LaunchInput::Explicit { .. }));
+    let rays = if let Some(r) = &replay {
+        r.calculation.rays()?
+    } else if let Some(path) = &csv {
+        read_csv(path, &scene)?
     } else {
         scene.generate_rays()?
     };
@@ -268,8 +350,16 @@ fn run() -> Result<(), Box<dyn Error>> {
             })
         })
         .collect();
+    let calculation = RunContext::capture(
+        &project,
+        &scene.spec,
+        explicit.then_some(rays.as_slice()),
+        pool.current_num_threads(),
+        options,
+    );
     let result = serde_json::json!({
-        "schema_version": 1, "scene": scene.spec, "reference_weight": reference,
+        "format": RUN_FORMAT, "calculation": calculation, "trace_seconds": median,
+        "schema_version": 2, "scene": scene.spec, "reference_weight": reference,
         "budget_percent_of_reference": percentages,
         "detector_percent_of_reference": detector_percentages,
         "surface_encounter_percent_of_reference": surface_percentages,

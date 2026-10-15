@@ -1,10 +1,10 @@
-use crate::geometry::{dielectric, intersect, Hit, Miss};
+use crate::geometry::{dielectric, intersect, intersect_ordered, Hit, Miss};
 use crate::math::V3;
 use crate::model::{Interaction, Mode, PreparedScene, Ray};
 use rayon::prelude::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Budget {
     pub launched: f64,
     pub detected: f64,
@@ -46,7 +46,7 @@ impl Budget {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SurfaceStats {
     pub name: String,
     pub encounters: u64,
@@ -57,7 +57,7 @@ pub struct SurfaceStats {
     pub detected_weight: f64,
     pub geometric_miss_weight: f64,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DetectorMap {
     pub name: String,
     pub pixels: [usize; 2],
@@ -65,14 +65,14 @@ pub struct DetectorMap {
     /// Row-major: row y, column x. Values are integrated pixel power, not density.
     pub weights: Vec<f64>,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Terminal {
     pub ray: Ray,
-    pub reason: &'static str,
+    pub reason: String,
     pub surface: Option<usize>,
     pub depth: usize,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PathEvent {
     pub id: u64,
     pub depth: usize,
@@ -81,17 +81,39 @@ pub struct PathEvent {
     pub end_mm: V3,
     pub incident_weight: f64,
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TraceDiagnostic {
+    pub reason: String,
+    pub surface: Option<usize>,
+    pub expected_medium: Option<usize>,
+    pub actual_medium: usize,
+    /// Counts terminal branches, not unique launch IDs.
+    pub branch_count: u64,
+    pub weight: f64,
+    pub example: Terminal,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DiagnosticOverflow {
+    pub branch_count: u64,
+    pub weight: f64,
+}
+const MAX_DIAGNOSTIC_GROUPS: usize = 64;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Report {
     pub budget: Budget,
     pub surfaces: Vec<SurfaceStats>,
     pub detectors: Vec<DetectorMap>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub terminals: Vec<Terminal>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub paths: Vec<PathEvent>,
     pub surface_intersections: u64,
     pub total_internal_reflections: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub diagnostics: Vec<TraceDiagnostic>,
+    #[serde(default)]
+    pub diagnostic_overflow: DiagnosticOverflow,
 }
 impl Report {
     fn new(scene: &PreparedScene) -> Self {
@@ -126,6 +148,8 @@ impl Report {
             paths: Vec::new(),
             surface_intersections: 0,
             total_internal_reflections: 0,
+            diagnostics: Vec::new(),
+            diagnostic_overflow: DiagnosticOverflow::default(),
         }
     }
     fn merge(mut self, other: Self) -> Self {
@@ -148,6 +172,11 @@ impl Report {
         }
         self.terminals.extend(other.terminals);
         self.paths.extend(other.paths);
+        self.diagnostic_overflow.branch_count += other.diagnostic_overflow.branch_count;
+        self.diagnostic_overflow.weight += other.diagnostic_overflow.weight;
+        for d in other.diagnostics {
+            self.merge_diagnostic(d);
+        }
         self
     }
     fn terminal(
@@ -161,15 +190,69 @@ impl Report {
         if keep {
             self.terminals.push(Terminal {
                 ray,
-                reason,
+                reason: reason.into(),
                 surface,
                 depth,
             });
         }
     }
+    fn merge_diagnostic(&mut self, diagnostic: TraceDiagnostic) {
+        if let Some(existing) = self.diagnostics.iter_mut().find(|d| {
+            d.reason == diagnostic.reason
+                && d.surface == diagnostic.surface
+                && d.expected_medium == diagnostic.expected_medium
+                && d.actual_medium == diagnostic.actual_medium
+        }) {
+            existing.branch_count += diagnostic.branch_count;
+            existing.weight += diagnostic.weight;
+        } else if self.diagnostics.len() < MAX_DIAGNOSTIC_GROUPS {
+            self.diagnostics.push(diagnostic);
+        } else {
+            self.diagnostic_overflow.branch_count += diagnostic.branch_count;
+            self.diagnostic_overflow.weight += diagnostic.weight;
+        }
+    }
+    fn diagnose(
+        &mut self,
+        ray: Ray,
+        reason: &'static str,
+        surface: Option<usize>,
+        depth: usize,
+        expected_medium: Option<usize>,
+    ) {
+        if let Some(existing) = self.diagnostics.iter_mut().find(|d| {
+            d.reason == reason
+                && d.surface == surface
+                && d.expected_medium == expected_medium
+                && d.actual_medium == ray.medium
+        }) {
+            existing.branch_count += 1;
+            existing.weight += ray.weight;
+            return;
+        }
+        if self.diagnostics.len() == MAX_DIAGNOSTIC_GROUPS {
+            self.diagnostic_overflow.branch_count += 1;
+            self.diagnostic_overflow.weight += ray.weight;
+            return;
+        }
+        self.merge_diagnostic(TraceDiagnostic {
+            reason: reason.into(),
+            surface,
+            expected_medium,
+            actual_medium: ray.medium,
+            branch_count: 1,
+            weight: ray.weight,
+            example: Terminal {
+                ray,
+                reason: reason.into(),
+                surface,
+                depth,
+            },
+        });
+    }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct TraceOptions {
     pub keep_terminals: bool,
     /// Store every segment belonging to the first N launch IDs, including branches.
@@ -235,34 +318,44 @@ fn trace_one(scene: &PreparedScene, launch: Ray, report: &mut Report, options: T
         }
         if ray.weight < launch.weight * scene.spec.settings.min_relative_branch_weight {
             report.budget.branch_cutoff += ray.weight;
-            report.terminal(ray, "branch_cutoff", None, depth, options.keep_terminals);
+            let previous = next_surface.checked_sub(1);
+            report.diagnose(ray, "branch_cutoff", previous, depth, None);
+            report.terminal(
+                ray,
+                "branch_cutoff",
+                previous,
+                depth,
+                options.keep_terminals,
+            );
             continue;
         }
         if depth >= scene.spec.settings.max_depth
             || events >= scene.spec.settings.max_events_per_launch
         {
             report.budget.interaction_limit += ray.weight;
+            let previous = next_surface.checked_sub(1);
+            report.diagnose(ray, "interaction_limit", previous, depth, None);
             report.terminal(
                 ray,
                 "interaction_limit",
-                None,
+                previous,
                 depth,
                 options.keep_terminals,
             );
             continue;
         }
-        let selection: Result<Option<(usize, Hit)>, Miss> = if scene.spec.mode == Mode::Sequential {
+        let selection = if scene.spec.mode == Mode::Sequential {
             match scene.surfaces.get(next_surface) {
-                Some(s) => {
-                    intersect(s, ray.position_mm, ray.direction).map(|h| Some((next_surface, h)))
-                }
+                Some(s) => intersect_ordered(s, ray.position_mm, ray.direction)
+                    .map(|h| Some((next_surface, h)))
+                    .map_err(|e| (e, Some(next_surface))),
                 None => Ok(None),
             }
         } else {
             // Linear nearest-hit traversal is deliberate in v0.1. BVH is a future
             // acceleration layer and does not change interaction semantics.
             let mut nearest: Option<(usize, Hit)> = None;
-            let mut numerical = false;
+            let mut numerical = None;
             for (i, s) in scene.surfaces.iter().enumerate() {
                 match intersect(s, ray.position_mm, ray.direction) {
                     Ok(hit)
@@ -272,12 +365,14 @@ fn trace_one(scene: &PreparedScene, launch: Ray, report: &mut Report, options: T
                     {
                         nearest = Some((i, hit))
                     }
-                    Err(Miss::Numerical) => numerical = true,
+                    Err(Miss::Numerical) => {
+                        numerical.get_or_insert(i);
+                    }
                     _ => (),
                 }
             }
-            if numerical {
-                Err(Miss::Numerical)
+            if let Some(i) = numerical {
+                Err((Miss::Numerical, Some(i)))
             } else {
                 Ok(nearest)
             }
@@ -289,7 +384,7 @@ fn trace_one(scene: &PreparedScene, launch: Ray, report: &mut Report, options: T
                 report.terminal(ray, "escaped", None, depth, options.keep_terminals);
                 continue;
             }
-            Err(Miss::Geometry) => {
+            Err((Miss::Geometry, _)) => {
                 report.budget.geometric_miss += ray.weight;
                 report.surfaces[next_surface].geometric_miss_weight += ray.weight;
                 report.terminal(
@@ -301,12 +396,13 @@ fn trace_one(scene: &PreparedScene, launch: Ray, report: &mut Report, options: T
                 );
                 continue;
             }
-            Err(Miss::Numerical) => {
+            Err((Miss::Numerical, surface)) => {
                 report.budget.numerical_failure += ray.weight;
+                report.diagnose(ray, "numerical_failure", surface, depth, None);
                 report.terminal(
                     ray,
                     "numerical_failure",
-                    None,
+                    surface,
                     depth,
                     options.keep_terminals,
                 );
@@ -391,6 +487,13 @@ fn trace_one(scene: &PreparedScene, launch: Ray, report: &mut Report, options: T
                 };
                 if ray.medium != expected {
                     report.budget.medium_mismatch += ray.weight;
+                    report.diagnose(
+                        ray,
+                        "medium_mismatch",
+                        Some(index),
+                        depth + 1,
+                        Some(expected),
+                    );
                     report.terminal(
                         ray,
                         "medium_mismatch",
