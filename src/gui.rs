@@ -5,6 +5,7 @@ use crate::{
     math::{Frame, V3},
     model::*,
     project::Project,
+    screen::{Profile, ScreenAnalysis},
     trace::{trace, Report, TraceOptions},
     zemax,
 };
@@ -18,12 +19,43 @@ const BLUE: Color32 = Color32::from_rgb(40, 90, 180);
 const INK: Color32 = Color32::from_rgb(34, 45, 62);
 const MUTED: Color32 = Color32::from_rgb(105, 117, 132);
 const LINE: Color32 = Color32::from_rgb(221, 226, 234);
+const HALF_COLOR: Color32 = Color32::from_rgb(188, 48, 92);
+
+#[derive(Clone, Copy, Default, PartialEq)]
+enum ScreenNormalization {
+    #[default]
+    Peak,
+    Reference,
+}
+#[derive(Clone, Copy, Default, PartialEq)]
+enum ScreenScale {
+    #[default]
+    Linear,
+    SquareRoot,
+}
+struct ScreenDisplay {
+    normalization: ScreenNormalization,
+    scale: ScreenScale,
+    half_maximum: bool,
+    profiles: bool,
+}
+impl Default for ScreenDisplay {
+    fn default() -> Self {
+        Self {
+            normalization: ScreenNormalization::Peak,
+            scale: ScreenScale::Linear,
+            half_maximum: true,
+            profiles: false,
+        }
+    }
+}
 
 struct ResultView {
     scene: Scene,
     report: Report,
     seconds: f64,
     texture: Option<egui::TextureHandle>,
+    screen: Option<ScreenAnalysis>,
 }
 enum Job {
     Added(ComponentKind, Result<Box<Project>, String>),
@@ -40,6 +72,7 @@ struct App {
     source: usize,
     detector: usize,
     projection: usize,
+    screen_display: ScreenDisplay,
     threads: usize,
     preview_limit: Option<usize>,
     status: String,
@@ -49,6 +82,7 @@ struct App {
     catalogs: Vec<PathBuf>,
     smoke: Option<PathBuf>,
     smoke_frames: usize,
+    smoke_ready_at: Option<Instant>,
     screenshot_requested: bool,
 }
 impl App {
@@ -87,6 +121,7 @@ impl App {
             source: 0,
             detector: 0,
             projection: 0,
+            screen_display: ScreenDisplay::default(),
             threads: 4,
             preview_limit: None,
             status: "準備完了".into(),
@@ -96,6 +131,7 @@ impl App {
             catalogs: Vec::new(),
             smoke: None,
             smoke_frames: 0,
+            smoke_ready_at: None,
             screenshot_requested: false,
         };
         let mut input = None;
@@ -103,6 +139,11 @@ impl App {
         while i < args.len() {
             match args[i].as_str() {
                 "--assembly-demo" => (),
+                "--screen-profiles" => app.screen_display.profiles = true,
+                "--screen-reference" => {
+                    app.screen_display.normalization = ScreenNormalization::Reference
+                }
+                "--screen-sqrt" => app.screen_display.scale = ScreenScale::SquareRoot,
                 "--smoke" => {
                     i += 1;
                     app.smoke = args.get(i).map(PathBuf::from);
@@ -269,6 +310,7 @@ impl App {
                     report,
                     seconds,
                     texture: None,
+                    screen: None,
                 }))
             })();
             let _ = tx.send(Job::Traced(result));
@@ -1211,8 +1253,16 @@ impl App {
                                 });
                             if old != self.detector {
                                 r.texture = None;
+                                r.screen = None;
                             }
-                            draw_detector(ui, ctx, r, self.detector, height - 32.0);
+                            draw_detector(
+                                ui,
+                                ctx,
+                                r,
+                                self.detector,
+                                height - 32.0,
+                                &mut self.screen_display,
+                            );
                         } else {
                             ui.label("検出器のないモデルです。");
                         }
@@ -1285,11 +1335,22 @@ impl App {
         self.smoke_frames += 1;
         if self.job.is_none()
             && (self.result.is_some() || self.error.is_some() || self.smoke_frames > 60)
+        {
+            self.smoke_ready_at.get_or_insert_with(Instant::now);
+        } else {
+            self.smoke_ready_at = None;
+        }
+        if self.job.is_none()
+            && (self.result.is_some() || self.error.is_some() || self.smoke_frames > 60)
             && !self.screenshot_requested
             && self.smoke_frames > 5
+            && self
+                .smoke_ready_at
+                .is_some_and(|at| at.elapsed() >= Duration::from_millis(350))
         {
             let _ = std::fs::create_dir_all(dir);
-            let status = serde_json::json!({"scene":self.project.scene.name,"components":self.project.assembly.as_ref().map(|a|a.components.len()),"sources":self.project.scene.sources.len(),"surfaces":self.project.scene.surfaces.len(),"issues":self.project.issues,"error":self.error,"trace_seconds":self.result.as_ref().map(|r|r.seconds),"budget":self.result.as_ref().map(|r|&r.report.budget)});
+            let screen = self.result.as_ref().and_then(|r| r.screen.as_ref()).map(|a| serde_json::json!({"peak_weight":a.peak_weight,"peak_position_mm":a.peak_position_mm,"pixel_pitch_mm":a.pixel_pitch_mm,"fwhm_x_mm":a.x_profile.as_ref().and_then(|p|p.half_maximum.width_mm()),"fwhm_y_mm":a.y_profile.as_ref().and_then(|p|p.half_maximum.width_mm())}));
+            let status = serde_json::json!({"scene":self.project.scene.name,"components":self.project.assembly.as_ref().map(|a|a.components.len()),"sources":self.project.scene.sources.len(),"surfaces":self.project.scene.surfaces.len(),"issues":self.project.issues,"error":self.error,"trace_seconds":self.result.as_ref().map(|r|r.seconds),"budget":self.result.as_ref().map(|r|&r.report.budget),"screen":screen});
             let _ = std::fs::write(
                 dir.join("gui_smoke.json"),
                 serde_json::to_vec_pretty(&status).unwrap(),
@@ -1663,23 +1724,58 @@ fn draw_detector(
     result: &mut ResultView,
     index: usize,
     height: f32,
+    display: &mut ScreenDisplay,
 ) {
+    let old_scale = display.scale;
+    ui.horizontal_wrapped(|ui| {
+        egui::ComboBox::from_id_salt("screen_normalization")
+            .width(125.0)
+            .selected_text(match display.normalization {
+                ScreenNormalization::Peak => "ピーク = 1",
+                ScreenNormalization::Reference => "基準光量比 [%]",
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut display.normalization, ScreenNormalization::Peak, "ピーク = 1");
+                ui.selectable_value(&mut display.normalization, ScreenNormalization::Reference, "基準光量比 [%]");
+            });
+        egui::ComboBox::from_id_salt("screen_scale")
+            .width(65.0)
+            .selected_text(match display.scale {
+                ScreenScale::Linear => "線形",
+                ScreenScale::SquareRoot => "平方根",
+            })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut display.scale, ScreenScale::Linear, "線形");
+                ui.selectable_value(&mut display.scale, ScreenScale::SquareRoot, "平方根");
+            });
+        ui.checkbox(&mut display.half_maximum, "半値幅")
+            .on_hover_text("最大画素を通るX・Y断面の半値交点を表示します。複数の山がある場合は主ピーク周囲の幅です。");
+        if ui.button("断面…").clicked() {
+            display.profiles = true;
+        }
+    });
+    if old_scale != display.scale {
+        result.texture = None;
+    }
     let map = &result.report.detectors[index];
-    let max = map.weights.iter().copied().fold(0.0, f64::max).max(1e-300);
+    if result.screen.is_none() {
+        match ScreenAnalysis::from_detector(map) {
+            Ok(analysis) => result.screen = Some(analysis),
+            Err(error) => {
+                ui.label(error);
+                return;
+            }
+        }
+    }
+    let analysis = result.screen.as_ref().unwrap();
+    let peak = analysis.peak_weight;
     if result.texture.is_none() {
         let pixels = map
             .weights
             .chunks(map.pixels[0])
             .rev()
             .flatten()
-            .map(|w| {
-                let t = (w / max).sqrt() as f32;
-                Color32::from_rgb(
-                    (247.0 - 212.0 * t) as u8,
-                    (250.0 - 158.0 * t) as u8,
-                    (254.0 - 78.0 * t) as u8,
-                )
-            })
+            .map(|w| screen_color(w / peak.max(1e-300), display.scale))
             .collect();
         result.texture = Some(ctx.load_texture(
             "detector",
@@ -1692,30 +1788,300 @@ fn draw_detector(
     }
     let [hx, hy] = map.half_extent_mm;
     let aspect = (hx / hy) as f32;
-    let width = ui.available_width().min((height - 34.0) * aspect).max(30.0);
-    ui.vertical_centered(|ui| {
-        ui.add(egui::Image::new((
-            result.texture.as_ref().unwrap().id(),
-            Vec2::new(width, width / aspect),
-        )));
-    });
+    let width = (ui.available_width() - 90.0)
+        .min((height - 116.0).max(80.0) * aspect)
+        .max(30.0);
+    let size = Vec2::new(width, width / aspect);
+    let (area, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), size.y + 14.0),
+        egui::Sense::hover(),
+    );
+    let rect = egui::Rect::from_min_size(
+        Pos2::new(area.center().x - (size.x + 80.0) * 0.5, area.top() + 7.0),
+        size,
+    );
+    let painter = ui.painter_at(area);
+    painter.image(
+        result.texture.as_ref().unwrap().id(),
+        rect,
+        egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+        Color32::WHITE,
+    );
+    let colorbar = egui::Rect::from_min_size(
+        Pos2::new(rect.right() + 12.0, rect.top()),
+        Vec2::new(10.0, size.y),
+    );
+    for i in 0..64 {
+        let fraction = i as f64 / 63.0;
+        painter.rect_filled(
+            egui::Rect::from_min_max(
+                Pos2::new(
+                    colorbar.left(),
+                    colorbar.bottom() - size.y * (i + 1) as f32 / 64.0,
+                ),
+                Pos2::new(
+                    colorbar.right(),
+                    colorbar.bottom() - size.y * i as f32 / 64.0,
+                ),
+            ),
+            0.0,
+            screen_color(if peak > 0.0 { fraction } else { 0.0 }, display.scale),
+        );
+    }
+    let reference = result.report.budget.launched.max(1e-300);
+    for fraction in [0.0, 0.5, 1.0] {
+        let value = match display.normalization {
+            ScreenNormalization::Peak => {
+                if peak > 0.0 {
+                    fraction
+                } else {
+                    0.0
+                }
+            }
+            ScreenNormalization::Reference => fraction * 100.0 * peak / reference,
+        };
+        let label = match display.normalization {
+            ScreenNormalization::Peak => format!("{value:.1}"),
+            ScreenNormalization::Reference => format!("{value:.3}%"),
+        };
+        painter.text(
+            Pos2::new(
+                colorbar.right() + 5.0,
+                colorbar.bottom() - size.y * fraction as f32,
+            ),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(9.0),
+            MUTED,
+        );
+    }
+    if display.half_maximum {
+        draw_half_width_guides(&painter, rect, analysis, [hx, hy]);
+    }
     ui.label(
         egui::RichText::new(format!(
-            "この検出器 {:.3}%  ·  幅 {:.3} × {:.3} mm",
-            100.0 * map.weights.iter().sum::<f64>() / result.report.budget.launched,
-            hx * 2.0,
-            hy * 2.0
+            "X ±{hx:.3} / Y ±{hy:.3} mm  ·  画素 {:.4} × {:.4} mm",
+            analysis.pixel_pitch_mm[0], analysis.pixel_pitch_mm[1],
         ))
-        .size(11.0)
+        .size(10.0)
         .color(MUTED),
     );
     ui.label(
         egui::RichText::new(format!(
-            "1画素 0 〜 {:.5}%（色は平方根目盛）",
-            100.0 * max / result.report.budget.launched
+            "このスクリーン {:.3}%  ·  最大画素 {:.5}%（基準光量比）",
+            100.0 * map.weights.iter().sum::<f64>() / reference,
+            100.0 * peak / reference,
         ))
-        .size(10.0)
+        .size(11.0)
         .color(MUTED),
+    );
+    if display.half_maximum {
+        let width = |axis: &str, p: &Option<Profile>| match p {
+            None => format!("{axis}: 受光なし"),
+            Some(p) => match p.half_maximum.width_mm() {
+                Some(v) => format!("{axis}: {v:.4} mm"),
+                None => format!("{axis}: 半値交点不足"),
+            },
+        };
+        ui.label(egui::RichText::new(format!(
+            "FWHM  {}  /  {}",
+            width("X", &analysis.x_profile), width("Y", &analysis.y_profile)
+        )).size(11.0).color(HALF_COLOR))
+            .on_hover_text("画素中心の値を線形補間した幅です。平滑化は行いません。半値の交点が両側で得られると幅を表示します。");
+        if [&analysis.x_profile, &analysis.y_profile]
+            .iter()
+            .any(|p| p.as_ref().is_some_and(|p| p.half_maximum.multiple_lobes))
+        {
+            ui.label(
+                egui::RichText::new("複数の山：主ピーク周囲の半値幅")
+                    .size(10.0)
+                    .color(MUTED),
+            );
+        }
+    }
+    if display.profiles {
+        let mut open = true;
+        egui::Window::new("ピークを通る断面")
+            .open(&mut open)
+            .default_width(620.0)
+            .show(ctx, |ui| {
+                if let Some([x, y]) = analysis.peak_position_mm {
+                    ui.label(format!("ピーク位置 X={x:.4}, Y={y:.4} mm"));
+                    ui.columns(2, |cols| {
+                        draw_profile(
+                            &mut cols[0],
+                            analysis.x_profile.as_ref().unwrap(),
+                            "X",
+                            hx,
+                            peak,
+                            display,
+                            reference,
+                        );
+                        draw_profile(
+                            &mut cols[1],
+                            analysis.y_profile.as_ref().unwrap(),
+                            "Y",
+                            hy,
+                            peak,
+                            display,
+                            reference,
+                        );
+                    });
+                    ui.label(
+                        egui::RichText::new(
+                            "赤破線：ピークの50%とその交点。画素中心の値を線形補間。",
+                        )
+                        .size(11.0)
+                        .color(MUTED),
+                    );
+                } else {
+                    ui.label("受光がありません。");
+                }
+            });
+        display.profiles = open;
+    }
+}
+
+fn screen_color(fraction: f64, scale: ScreenScale) -> Color32 {
+    let t = match scale {
+        ScreenScale::Linear => fraction,
+        ScreenScale::SquareRoot => fraction.sqrt(),
+    }
+    .clamp(0.0, 1.0) as f32;
+    Color32::from_rgb(
+        (247.0 - 212.0 * t) as u8,
+        (250.0 - 158.0 * t) as u8,
+        (254.0 - 78.0 * t) as u8,
+    )
+}
+
+fn dashed_line(painter: &egui::Painter, a: Pos2, b: Pos2) {
+    let distance = a.distance(b);
+    if distance <= 0.0 {
+        return;
+    }
+    let direction = (b - a) / distance;
+    for i in 0..(distance / 7.0).ceil() as usize {
+        let start = i as f32 * 7.0;
+        painter.line_segment(
+            [
+                a + direction * start,
+                a + direction * (start + 4.0).min(distance),
+            ],
+            Stroke::new(1.0_f32, HALF_COLOR),
+        );
+    }
+}
+
+fn draw_half_width_guides(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    a: &ScreenAnalysis,
+    half: [f64; 2],
+) {
+    if let Some(p) = &a.x_profile {
+        for value in [p.half_maximum.lower_mm, p.half_maximum.upper_mm]
+            .into_iter()
+            .flatten()
+        {
+            let x = rect.left() + ((value + half[0]) / (2.0 * half[0])) as f32 * rect.width();
+            dashed_line(
+                painter,
+                Pos2::new(x, rect.top()),
+                Pos2::new(x, rect.bottom()),
+            );
+        }
+    }
+    if let Some(p) = &a.y_profile {
+        for value in [p.half_maximum.lower_mm, p.half_maximum.upper_mm]
+            .into_iter()
+            .flatten()
+        {
+            let y = rect.bottom() - ((value + half[1]) / (2.0 * half[1])) as f32 * rect.height();
+            dashed_line(
+                painter,
+                Pos2::new(rect.left(), y),
+                Pos2::new(rect.right(), y),
+            );
+        }
+    }
+    if let Some([x, y]) = a.peak_position_mm {
+        let p = Pos2::new(
+            rect.left() + ((x + half[0]) / (2.0 * half[0])) as f32 * rect.width(),
+            rect.bottom() - ((y + half[1]) / (2.0 * half[1])) as f32 * rect.height(),
+        );
+        painter.line_segment(
+            [p - Vec2::new(4.0, 0.0), p + Vec2::new(4.0, 0.0)],
+            Stroke::new(1.0_f32, HALF_COLOR),
+        );
+        painter.line_segment(
+            [p - Vec2::new(0.0, 4.0), p + Vec2::new(0.0, 4.0)],
+            Stroke::new(1.0_f32, HALF_COLOR),
+        );
+    }
+}
+
+fn draw_profile(
+    ui: &mut egui::Ui,
+    profile: &Profile,
+    axis: &str,
+    half_extent: f64,
+    peak: f64,
+    display: &ScreenDisplay,
+    reference: f64,
+) {
+    let top = match display.normalization {
+        ScreenNormalization::Peak => "1.0".into(),
+        ScreenNormalization::Reference => format!("{:.5}%", peak * 100.0 / reference),
+    };
+    ui.label(format!("{axis}断面 · 上端 {top}"));
+    let (rect, _) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 170.0), egui::Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, Color32::from_rgb(248, 250, 253));
+    let inner = rect.shrink2(Vec2::new(10.0, 16.0));
+    let x =
+        |v: f64| inner.left() + ((v + half_extent) / (2.0 * half_extent)) as f32 * inner.width();
+    let y = |v: f64| {
+        let fraction = v / peak;
+        let t = match display.scale {
+            ScreenScale::Linear => fraction,
+            ScreenScale::SquareRoot => fraction.sqrt(),
+        };
+        inner.bottom() - t as f32 * inner.height()
+    };
+    painter.add(egui::Shape::line(
+        profile
+            .weights
+            .iter()
+            .enumerate()
+            .map(|(i, w)| Pos2::new(x(profile.coordinate_mm(i)), y(*w)))
+            .collect(),
+        Stroke::new(1.5_f32, BLUE),
+    ));
+    if display.half_maximum {
+        dashed_line(
+            &painter,
+            Pos2::new(inner.left(), y(peak * 0.5)),
+            Pos2::new(inner.right(), y(peak * 0.5)),
+        );
+        for value in [profile.half_maximum.lower_mm, profile.half_maximum.upper_mm]
+            .into_iter()
+            .flatten()
+        {
+            dashed_line(
+                &painter,
+                Pos2::new(x(value), inner.top()),
+                Pos2::new(x(value), inner.bottom()),
+            );
+        }
+    }
+    painter.text(
+        Pos2::new(rect.center().x, rect.bottom()),
+        egui::Align2::CENTER_BOTTOM,
+        format!("{axis} [{:.3} … {half_extent:.3}] mm", -half_extent),
+        egui::FontId::proportional(10.0),
+        MUTED,
     );
 }
 pub fn main() {

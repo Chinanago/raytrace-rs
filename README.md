@@ -36,6 +36,14 @@ cargo run --release --example assembly_demo -- results/assembly_demo.json
 ./target/release/raytrace-rs.exe results/assembly_demo.json --threads 4 --output results/assembly_trace.json
 ```
 
+## スクリーンの表示
+
+検出器マップは「ピーク = 1」と「基準光量比 [%]」を切り替えられます。基準光量比は発射基準面の光量に対する各画素の積算光量です。色目盛は線形／平方根から選びます。表示の変更は再追跡を必要とせず、元の光量と光量収支を保持します。
+
+「半値幅」で、最大画素を通るX・Y断面の半値交点を赤い破線で示し、FWHMをmmで表示します。「断面…」で両方向のプロファイルを開けます。座標はスクリーンの局所座標です。
+
+半値交点は画素中心の値を線形補間して求めます。断面に複数の山がある場合は、最大ピークの両側で最初に半値へ達する位置を採ります。同じ最大値が複数ある場合は、画素配列の先頭（Yの小さい行、Xの小さい列）を選びます。交点が両側に揃わない方向は「半値交点不足」、受光ゼロは「受光なし」と表示します。幅の解釈には表示された画素寸法を併せて確認してください。
+
 ## コマンドライン
 
 GUIなしで使う場合は `cargo build --release --locked` でビルドします。
@@ -145,7 +153,7 @@ STEPの初回読込にはFreeCADのPythonが必要です。`RAYTRACE_FREECAD_PYT
 
 ## OpticStudioと比べた主な未対応機能
 
-[OpticStudioの公式機能一覧](https://www.ansys.com/products/optics/ansys-zemax-opticstudio)、[面型](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Summary_Table_of_Sequential_Surface_Types.html)、[光源モデル](https://optics.ansys.com/hc/en-us/articles/42661687233939-Light-sources-used-in-illumination-design)と比較した、v0.4の主な制約です。
+[OpticStudioの公式機能一覧](https://www.ansys.com/products/optics/ansys-zemax-opticstudio)、[面型](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Summary_Table_of_Sequential_Surface_Types.html)、[光源モデル](https://optics.ansys.com/hc/en-us/articles/42661687233939-Light-sources-used-in-illumination-design)と比較した、v0.5の主な制約です。
 
 | 分野 | 未対応の機能 |
 |---|---|
@@ -170,6 +178,8 @@ cargo clippy --all-targets --all-features --locked -- -D warnings
 
 組立はZMXの別読込、材料番号の統合、側面との交差、剛体変換による位置・方向・光学距離の対応、保存・復元、GUIのドラッグ操作を検証します。
 
+スクリーン解析はGaussianの既知の半値幅、複数ピーク、画面端で欠けた分布、受光ゼロ、光量を変えた場合の幅の不変性を検証します。
+
 OpticStudioとの光線比較には `examples/exchange_check.rs` と `scripts/zemax_exchange_probe.py` を使えます。入力はダミー平面・レンズ2面・像面からなるZMXです。中心厚を0.25 mm増やして書き出し、同じ7本の光線を比較します。Python側にはpythonnetと有効なOpticStudio APIライセンスが必要で、インストール先は `RAYTRACE_ZEMAX_ROOT` で指定できます。
 
 ```powershell
@@ -177,4 +187,4 @@ cargo run --release --example exchange_check -- lens.zmx results/exchange
 python scripts/zemax_exchange_probe.py --input results/exchange/lens_edited.zmx --rays results/exchange/reference.json --output results/zemax_exchange
 ```
 
-計算核は `src/geometry.rs` と `src/trace.rs`、光源生成は `src/model.rs` と `src/sampling.rs`、ZMX交換は `src/zemax.rs`、部品の組立は `src/assembly.rs` にあります。Rustライブラリとしても利用できます。
+計算核は `src/geometry.rs` と `src/trace.rs`、光源生成は `src/model.rs` と `src/sampling.rs`、ZMX交換は `src/zemax.rs`、部品の組立は `src/assembly.rs`、追跡後のスクリーン解析は `src/screen.rs` にあります。Rustライブラリとしても利用できます。
