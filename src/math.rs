@@ -75,6 +75,36 @@ pub struct Frame {
 }
 
 impl Frame {
+    /// Intrinsic local X, then new Y, then new Z, as used by Zemax's default objects.
+    pub fn from_intrinsic_xyz(pose: &Pose) -> Self {
+        let inverse = Self::new(&Pose {
+            translation_mm: V3::default(),
+            rotation_deg: -pose.rotation_deg,
+        });
+        Self {
+            origin: pose.translation_mm,
+            axes: std::array::from_fn(|i| V3(inverse.axes.map(|a| a.0[i]))),
+        }
+    }
+    pub fn pose(&self) -> Pose {
+        Self::pose_from_axes(self.origin, self.axes)
+    }
+    pub fn intrinsic_xyz_pose(&self) -> Pose {
+        let cy = self.axes[0].0[0].hypot(self.axes[1].0[0]);
+        let y = self.axes[2].0[0].atan2(cy);
+        let (x, z) = if cy > 1e-12 {
+            (
+                (-self.axes[2].0[1]).atan2(self.axes[2].0[2]),
+                (-self.axes[1].0[0]).atan2(self.axes[0].0[0]),
+            )
+        } else {
+            (self.axes[1].0[2].atan2(self.axes[1].0[1]), 0.)
+        };
+        Pose {
+            translation_mm: self.origin,
+            rotation_deg: V3([x, y, z].map(f64::to_degrees)),
+        }
+    }
     fn pose_from_axes(origin: V3, axes: [V3; 3]) -> Pose {
         let cy = axes[0].0[0].hypot(axes[0].0[1]);
         let y = (-axes[0].0[2]).atan2(cy);

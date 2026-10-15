@@ -47,8 +47,29 @@ impl History {
     }
 }
 // Geometry vectors dominate CAD snapshot size. No serialization or triangle walk is needed.
+fn coating_bytes(c: &crate::coating::Coating) -> usize {
+    let size = |m: &crate::coating::CoatingModel| match m {
+        crate::coating::CoatingModel::Table {
+            wavelengths_um,
+            angles_deg,
+            coefficients,
+            ..
+        } => (wavelengths_um.len() + angles_deg.len()) * 8 + coefficients.len() * 16,
+        _ => 0,
+    };
+    c.name.len()
+        + c.zemax_definition.as_ref().map_or(0, |s| s.len())
+        + size(&c.front)
+        + c.back.as_ref().map_or(0, size)
+}
 fn scene_bytes(scene: &Scene) -> usize {
     scene.sources.len() * std::mem::size_of::<Source>()
+        + scene
+            .sources
+            .iter()
+            .filter_map(|s| s.spectrum.as_ref())
+            .map(|s| s.samples.len() * 16)
+            .sum::<usize>()
         + scene.materials.len() * 1024
         + scene
             .surfaces
@@ -56,6 +77,7 @@ fn scene_bytes(scene: &Scene) -> usize {
             .map(|s| {
                 std::mem::size_of::<Surface>()
                     + s.name.len()
+                    + s.coating.as_ref().map_or(0, coating_bytes)
                     + match &s.shape {
                         Shape::TriangleMesh {
                             vertices,
@@ -77,7 +99,15 @@ fn project_bytes(p: &Project) -> usize {
             .as_ref()
             .map_or(0, |z| z.text.len() + scene_bytes(&z.baseline_scene))
         + p.assembly.as_ref().map_or(0, |a| {
-            a.components.iter().map(|c| project_bytes(&c.project)).sum()
+            a.components
+                .iter()
+                .map(|c| {
+                    project_bytes(&c.project)
+                        + c.rod
+                            .as_ref()
+                            .map_or(0, |r| r.coatings.values().map(coating_bytes).sum::<usize>())
+                })
+                .sum()
         })
 }
 impl App {
@@ -210,6 +240,7 @@ mod tests {
             seconds: 0.0,
             texture: None,
             screen: None,
+            roi_cache: None,
         });
         for _ in 0..3 {
             app.project.assembly.as_mut().unwrap().components[2]

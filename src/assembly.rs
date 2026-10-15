@@ -36,6 +36,9 @@ pub struct RodSize {
     pub width_mm: f64,
     pub height_mm: f64,
     pub length_mm: f64,
+    /// Optional power coatings on entrance, exit, or sides.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub coatings: std::collections::BTreeMap<String, crate::coating::Coating>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -95,6 +98,19 @@ impl Component {
             project.scene.sources.clear();
         }
         if kind != ComponentKind::System {
+            for source in &mut project.scene.sources {
+                if let Some(p) = &mut source.pupil {
+                    if let Some(i) = p.surface.take() {
+                        p.pose = project
+                            .scene
+                            .surfaces
+                            .get(i)
+                            .ok_or("Invalid pupil surface")?
+                            .pose
+                            .clone();
+                    }
+                }
+            }
             project.scene.surfaces.retain(|s| match s.interaction {
                 Interaction::Detector { .. } => false,
                 Interaction::Dielectric {
@@ -107,7 +123,9 @@ impl Component {
         }
         project.issues.retain(|i| {
             i.code != "illumination"
-                && (kind.includes_sources() || !["source", "spectrum"].contains(&i.code.as_str()))
+                && (kind.includes_sources()
+                    || !["source", "spectrum", "illumination_definition"]
+                        .contains(&i.code.as_str()))
         });
         if project.scene.mode == Mode::Sequential {
             let sides = close_sequential_lens(&project.scene.surfaces)?;
@@ -178,6 +196,7 @@ impl Component {
             anchor_mm: V3::default(),
             project: Box::new(project),
             rod: Some(RodSize {
+                coatings: Default::default(),
                 width_mm: 1.0,
                 height_mm: 1.0,
                 length_mm: 30.0,
@@ -188,6 +207,7 @@ impl Component {
     pub fn detector() -> Self {
         let mut scene = empty_scene("スクリーン");
         scene.surfaces.push(Surface {
+            coating: None,
             name: "検出面".into(),
             pose: Pose::default(),
             shape: Shape::Plane,
@@ -219,7 +239,21 @@ impl Component {
             return Err("ロッドの寸法は正の有限値で指定してください".into());
         }
         let (x, y, z) = (r.width_mm / 2.0, r.height_mm / 2.0, r.length_mm);
+        if r.coatings
+            .keys()
+            .any(|k| !["entrance", "exit", "sides"].contains(&k.as_str()))
+        {
+            return Err("ロッドのコーティング対象はentrance/exit/sidesで指定してください".into());
+        }
         let make = |name: &str, p, rot, hx, hy, minus, plus| Surface {
+            coating: r
+                .coatings
+                .get(match name {
+                    "入口" => "entrance",
+                    "出口" => "exit",
+                    _ => "sides",
+                })
+                .cloned(),
             name: name.into(),
             pose: Pose {
                 translation_mm: V3(p),
@@ -298,10 +332,11 @@ fn close_sequential_lens(surfaces: &[Surface]) -> Result<Vec<Surface>, String> {
         {
             return Err("レンズの媒質が連続していません".into());
         }
-        if a.pose.rotation_deg.norm() > 1e-10
-            || b.pose.rotation_deg.norm() > 1e-10
-            || (a.pose.translation_mm.0[0] - b.pose.translation_mm.0[0]).abs() > 1e-10
-            || (a.pose.translation_mm.0[1] - b.pose.translation_mm.0[1]).abs() > 1e-10
+        let frame = Frame::new(&a.pose);
+        let relative = frame.inverse_pose(&b.pose);
+        if relative.rotation_deg.norm() > 1e-10
+            || relative.translation_mm.0[0].abs() > 1e-10
+            || relative.translation_mm.0[1].abs() > 1e-10
         {
             return Err("偏心した逐次レンズの側面生成は未対応です".into());
         }
@@ -310,11 +345,10 @@ fn close_sequential_lens(surfaces: &[Surface]) -> Result<Vec<Surface>, String> {
         else {
             return Err("逐次レンズの部品読込は円形口径に対応しています".into());
         };
-        let za = a.pose.translation_mm.0[2]
-            + sag(&a.shape, *ra, 0.0)
-                .ok_or("レンズ口径端の形状が不正です")?
-                .0;
-        let zb = b.pose.translation_mm.0[2]
+        let za = sag(&a.shape, *ra, 0.0)
+            .ok_or("レンズ口径端の形状が不正です")?
+            .0;
+        let zb = relative.translation_mm.0[2]
             + sag(&b.shape, *rb, 0.0)
                 .ok_or("レンズ口径端の形状が不正です")?
                 .0;
@@ -322,11 +356,12 @@ fn close_sequential_lens(surfaces: &[Surface]) -> Result<Vec<Surface>, String> {
             return Err("レンズ口径端で厚みが正になる形状が必要です".into());
         }
         sides.push(Surface {
+            coating: None,
             name: format!("側面 {}", i + 1),
-            pose: Pose {
-                translation_mm: V3([a.pose.translation_mm.0[0], a.pose.translation_mm.0[1], za]),
+            pose: frame.transform_pose(&Pose {
+                translation_mm: V3([0., 0., za]),
                 ..Pose::default()
-            },
+            }),
             shape: Shape::ConicalSide {
                 radius_start_mm: *ra,
                 radius_end_mm: *rb,
@@ -412,7 +447,11 @@ impl Assembly {
                 };
                 map[id] = global;
             }
+            let surface_offset = scene.surfaces.len();
             for mut s in surfaces {
+                if c.project.allow_uncoated {
+                    s.coating = None;
+                }
                 s.name = format!("{}:{} / {}", index + 1, c.name, s.name);
                 s.pose = c.place(&s.pose);
                 if let Interaction::Dielectric {
@@ -432,6 +471,12 @@ impl Assembly {
                     s.origin_mm = c.frame().world_point(s.origin_mm - c.anchor_mm);
                     s.direction = c.frame().world_vector(s.direction);
                     s.medium = map[s.medium];
+                    if let Some(p) = &mut s.pupil {
+                        p.pose = c.place(&p.pose);
+                        if let Some(i) = &mut p.surface {
+                            *i += surface_offset;
+                        }
+                    }
                     if let Some(d) = &mut s.diode {
                         d.rotation_deg = c
                             .frame()
@@ -443,6 +488,7 @@ impl Assembly {
                     }
                     if let Some(w) = c.project.monochromatic_override_um {
                         s.wavelength_um = w;
+                        s.spectrum = None;
                     }
                     scene.sources.push(s);
                 }
@@ -476,10 +522,16 @@ impl Assembly {
                     return;
                 };
                 let medium = source.medium;
+                let pupil_surface = source.pupil.as_ref().and_then(|p| p.surface);
                 *source = flat.clone();
                 source.medium = medium;
                 source.origin_mm = frame.local_point(source.origin_mm) + c.anchor_mm;
                 source.direction = frame.local_vector(source.direction);
+                if let Some(p) = &mut source.pupil {
+                    p.pose = frame.inverse_pose(&p.pose);
+                    p.pose.translation_mm = p.pose.translation_mm + c.anchor_mm;
+                    p.surface = pupil_surface;
+                }
                 if let Some(d) = &mut source.diode {
                     d.rotation_deg = frame
                         .inverse_pose(&Pose {

@@ -263,6 +263,8 @@ impl App {
         let dir = dir.to_path_buf();
         let reference = r.report.budget.launched;
         let plane = r.scene.reference_plane.clone();
+        let cursor = self.screen_display.cursor_mm;
+        let roi = self.screen_display.roi;
         let display = crate::export::DisplaySettings {
             peak_normalized: self.screen_display.normalization == ScreenNormalization::Peak,
             square_root: self.screen_display.scale == ScreenScale::SquareRoot,
@@ -277,6 +279,7 @@ impl App {
         std::thread::spawn(move || {
             let result = (|| -> Result<PathBuf, String> {
                 crate::export::write_screen(&dir, &map, &plane, reference, display)?;
+                crate::export::write_postprocessing(&dir, &map, reference, cursor, roi)?;
                 std::fs::write(
                     dir.join("conditions.json"),
                     serde_json::to_vec_pretty(&conditions).map_err(|e| e.to_string())?,
@@ -556,10 +559,9 @@ impl App {
                 for (i, s) in self.project.scene.sources.iter().enumerate() {
                     if ui
                         .add(
-                            egui::Button::new(format!(
-                                "光源 {} · {:.0} nm",
-                                i + 1,
-                                s.wavelength_um * 1000.0
+                            egui::Button::new(s.spectrum.as_ref().map_or_else(
+                                || format!("光源 {} · {:.0} nm", i + 1, s.wavelength_um * 1000.),
+                                |sp| format!("光源 {} · {}波長", i + 1, sp.samples.len()),
                             ))
                             .min_size(Vec2::new(ui.available_width(), 25.0))
                             .selected(self.source_selected && self.source == i)
@@ -821,6 +823,9 @@ impl App {
             if old != self.detector {
                 r.texture = None;
                 r.screen = None;
+                r.roi_cache = None;
+                self.screen_display.cursor_mm = None;
+                self.screen_display.roi = None;
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("光量の内訳").clicked() {
@@ -993,7 +998,7 @@ impl App {
         ui.add_enabled_ui(self.job.is_none(), |ui| {
             let mut changed = false;
             section_label(ui, "計算に使う条件");
-            if self.project.issues.iter().any(|i| i.code == "coating") {
+            if self.project.issues.iter().any(|i| i.code == "coating") || self.project.scene.surfaces.iter().any(|s| s.coating.is_some()) {
                 changed |= ui.checkbox(&mut self.project.allow_uncoated, "未コートFresnelで計算").changed();
                 ui.label(egui::RichText::new("元のコーティング名を保持し、界面の反射率は未コートとして計算します。").size(11.0).color(MUTED));
             }
@@ -1034,8 +1039,8 @@ impl App {
                     });
                 });
             }
-            section_label(ui, "材料カタログ");
-            if ui.button("AGFフォルダーを追加…").clicked() {
+            section_label(ui, "材料・コーティングカタログ");
+            if ui.button("カタログフォルダーを追加…").clicked() {
                 if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                     self.catalogs.push(dir);
                     self.status = "材料カタログを追加しました。次のファイル読込から使います".into();
@@ -1369,10 +1374,30 @@ fn source_controls(
             )
             .changed();
     });
-    let mut nm = s.wavelength_um * 1000.0;
-    if number_row(ui, "波長", &mut nm, " nm", 1.0, 100.0..=20000.0) {
-        s.wavelength_um = nm / 1000.0;
-        changed = true;
+    if let Some(sp) = &s.spectrum {
+        if let Some((first, last)) = sp.samples.first().zip(sp.samples.last()) {
+            ui.label(format!(
+                "スペクトル：{}波長 · {:.1}〜{:.1} nm",
+                sp.samples.len(),
+                first[0] * 1000.,
+                last[0] * 1000.
+            ));
+        }
+        egui::CollapsingHeader::new("波長と光量重み").show(ui, |ui| {
+            for &[w, weight] in &sp.samples {
+                ui.label(format!("{:.3} nm · 相対重み {:.6}", w * 1000., weight));
+            }
+        });
+        if ui.small_button("単色に切り替える").clicked() {
+            s.spectrum = None;
+            changed = true;
+        }
+    } else {
+        let mut nm = s.wavelength_um * 1000.;
+        if number_row(ui, "波長", &mut nm, " nm", 1., 100.0..=20000.0) {
+            s.wavelength_um = nm / 1000.;
+            changed = true;
+        }
     }
     if let Some(value) = mono {
         ui.label(
@@ -1408,6 +1433,15 @@ fn source_controls(
                     0.1,
                     0.0..=179.0,
                 );
+            }
+        } else if let Some(p) = &s.pupil {
+            ui.label(if p.finite_object {
+                "有限距離の物点 → 瞳の面積一様照射"
+            } else {
+                "無限遠の視野 → 瞳の面積一様照射"
+            });
+            if let Some(i) = p.surface {
+                ui.label(format!("瞳の配置は面 {} に追従", i + 1));
             }
         } else {
             changed |= number_row(ui, "円板半径", &mut s.disk_radius_mm, " mm", 0.1, 0.0..=1e9);
@@ -1643,6 +1677,7 @@ mod tests {
             seconds: 0.1,
             texture: None,
             screen: None,
+            roi_cache: None,
         });
         app.details = Some(Details::Budget);
         frame(&mut app, &ctx, vec![]);

@@ -11,6 +11,159 @@ use std::{
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
 };
+#[test]
+fn two_axes_and_reversed_dependency_order_preserve_gaps_and_resume() {
+    use raytrace_rs::scan::{ParameterLink, ScanAxis};
+    let dir = folder();
+    let base = lens();
+    let x = Parameter::SurfacePosition {
+        surface: 0,
+        axis: 2,
+    };
+    let y = Parameter::SurfacePosition {
+        surface: 1,
+        axis: 2,
+    };
+    let z = Parameter::SurfacePosition {
+        surface: 2,
+        axis: 2,
+    };
+    let plan = ScanPlan {
+        parameter: x.clone(),
+        values: vec![0., 1.],
+        secondary: Some(ScanAxis {
+            parameter: Parameter::Wavelength,
+            values: vec![0.45, 0.635],
+        }),
+        links: vec![
+            ParameterLink {
+                source: y.clone(),
+                target: z.clone(),
+                scale: 1.,
+                offset: 60.,
+            },
+            ParameterLink {
+                source: x.clone(),
+                target: y.clone(),
+                scale: 1.,
+                offset: 5.,
+            },
+        ],
+        rays_per_source: Some(256),
+        threads: 2,
+    };
+    let original = serde_json::to_value(&base).unwrap();
+    let mut m = ScanManifest::new(&base, plan).unwrap();
+    assert_eq!(m.cases.len(), 4);
+    let control = TraceControl::default();
+    m.execute(&dir, &control, |m| {
+        if m.cases[1].state == "completed" {
+            control.cancel.store(true, Ordering::Relaxed);
+        }
+    })
+    .unwrap();
+    let bytes = fs::read(dir.join("case_0000.raytrace-run.json")).unwrap();
+    let mut resumed = ScanManifest::open(&dir).unwrap();
+    resumed
+        .execute(&dir, &TraceControl::default(), |_| {})
+        .unwrap();
+    assert!(resumed.cases.iter().all(|c| c.state == "completed"));
+    assert_eq!(
+        bytes,
+        fs::read(dir.join("case_0000.raytrace-run.json")).unwrap()
+    );
+    let mut launch_signatures = Vec::new();
+    for (i, c) in resumed.cases.iter().enumerate() {
+        let r = RunRecord::open(&dir.join(c.run_file.as_ref().unwrap())).unwrap();
+        let p = &r.calculation.project;
+        assert_eq!(x.value(p).unwrap(), (i / 2) as f64);
+        assert_eq!(y.value(p).unwrap() - x.value(p).unwrap(), 5.);
+        assert_eq!(z.value(p).unwrap() - y.value(p).unwrap(), 60.);
+        let prepared = r.calculation.scene.clone().prepare().unwrap();
+        let rays = prepared.generate_rays().unwrap();
+        launch_signatures.push(
+            rays.iter()
+                .map(|r| (r.position_mm, r.direction))
+                .collect::<Vec<_>>(),
+        );
+    }
+    assert!(launch_signatures.windows(2).all(|v| v[0] == v[1]));
+    assert_eq!(original, serde_json::to_value(&base).unwrap());
+    resumed.cases[0].secondary_value = Some(0.55);
+    resumed.save(&dir).unwrap();
+    assert!(ScanManifest::open(&dir).is_err());
+}
+#[test]
+fn cyclic_links_duplicate_targets_axis_conflicts_and_case_explosion_are_rejected() {
+    use raytrace_rs::scan::{ParameterLink, ScanAxis};
+    let base = lens();
+    let a = Parameter::SurfacePosition {
+        surface: 0,
+        axis: 0,
+    };
+    let b = Parameter::SurfacePosition {
+        surface: 1,
+        axis: 0,
+    };
+    let link = ParameterLink {
+        source: a.clone(),
+        target: b.clone(),
+        scale: 1.,
+        offset: 2.,
+    };
+    for links in [
+        vec![
+            link.clone(),
+            ParameterLink {
+                source: b.clone(),
+                target: a.clone(),
+                scale: 1.,
+                offset: 0.,
+            },
+        ],
+        vec![link.clone(), link.clone()],
+    ] {
+        assert!(ScanManifest::new(
+            &base,
+            ScanPlan {
+                links,
+                ..ScanPlan::default()
+            }
+        )
+        .is_err());
+    }
+    assert!(ScanManifest::new(
+        &base,
+        ScanPlan {
+            parameter: b.clone(),
+            links: vec![link],
+            ..ScanPlan::default()
+        }
+    )
+    .is_err());
+    assert!(ScanManifest::new(
+        &base,
+        ScanPlan {
+            secondary: Some(ScanAxis {
+                parameter: a,
+                values: (0..100).map(|x| x as f64).collect()
+            }),
+            ..ScanPlan::default()
+        }
+    )
+    .is_err());
+    assert!(ScanManifest::new(
+        &base,
+        ScanPlan {
+            secondary: Some(ScanAxis {
+                parameter: Parameter::Wavelength,
+                values: vec![0.55]
+            }),
+            ..ScanPlan::default()
+        }
+    )
+    .is_err());
+}
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 fn folder() -> PathBuf {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -63,6 +216,8 @@ fn cancelled_scan_resumes_from_embedded_inputs_without_rewriting_completed_cases
         values: vec![67.0, 68.5, 70.0],
         threads: 2,
         rays_per_source: None,
+        secondary: None,
+        links: Vec::new(),
     };
     let original = serde_json::to_value(&base).unwrap();
     let mut m = ScanManifest::new(&base, plan).unwrap();

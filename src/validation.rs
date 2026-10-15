@@ -87,6 +87,8 @@ pub fn cases() -> Vec<ValidationCase> {
     lens.sources = [0.45, 0.55, 0.635]
         .into_iter()
         .map(|w| Source {
+            pupil: None,
+            spectrum: None,
             count: 1,
             wavelength_um: w,
             ..source.clone()

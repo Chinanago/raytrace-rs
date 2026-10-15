@@ -58,6 +58,8 @@ enum ScreenScale {
     SquareRoot,
 }
 struct ScreenDisplay {
+    cursor_mm: Option<[f64; 2]>,
+    roi: Option<crate::screen::ScreenRoi>,
     maximum_percent: Option<f64>,
     normalization: ScreenNormalization,
     scale: ScreenScale,
@@ -67,6 +69,8 @@ struct ScreenDisplay {
 impl Default for ScreenDisplay {
     fn default() -> Self {
         Self {
+            cursor_mm: None,
+            roi: None,
             normalization: ScreenNormalization::Peak,
             maximum_percent: None,
             scale: ScreenScale::Linear,
@@ -95,6 +99,10 @@ struct ResultView {
     seconds: f64,
     texture: Option<egui::TextureHandle>,
     screen: Option<ScreenAnalysis>,
+    roi_cache: Option<(
+        crate::screen::ScreenRoi,
+        Result<crate::screen::RoiIntegral, String>,
+    )>,
 }
 enum Job {
     Exported(Result<PathBuf, String>),
@@ -190,6 +198,29 @@ impl App {
                 "--import-report" => app.details = Some(Details::Import),
                 "--zoom-selected" => app.camera.request = Some(CameraRequest::Selected),
                 "--screen-profiles" => app.screen_display.profiles = true,
+                "--screen-cursor-mm" => {
+                    app.screen_display.cursor_mm = args
+                        .get(i + 1)
+                        .zip(args.get(i + 2))
+                        .and_then(|(x, y)| Some([x.parse().ok()?, y.parse().ok()?]));
+                    app.screen_display.profiles = true;
+                    i += 2;
+                }
+                "--screen-roi-mm" => {
+                    app.screen_display.roi = (|| {
+                        Some(crate::screen::ScreenRoi {
+                            minimum_mm: [
+                                args.get(i + 1)?.parse().ok()?,
+                                args.get(i + 2)?.parse().ok()?,
+                            ],
+                            maximum_mm: [
+                                args.get(i + 3)?.parse().ok()?,
+                                args.get(i + 4)?.parse().ok()?,
+                            ],
+                        })
+                    })();
+                    i += 4;
+                }
                 "--screen-reference" => {
                     app.screen_display.normalization = ScreenNormalization::Reference
                 }
@@ -465,6 +496,7 @@ impl App {
                     seconds,
                     texture: None,
                     screen: None,
+                    roi_cache: None,
                 })))
             })();
             let message = match result {
@@ -1193,6 +1225,15 @@ fn draw_detector(
         display.normalization,
         display.maximum_percent,
     );
+    let old_cursor = display.cursor_mm;
+    if let Some(c) = &mut display.cursor_mm {
+        for (a, v) in c.iter_mut().enumerate() {
+            *v = v.clamp(
+                -result.report.detectors[index].half_extent_mm[a],
+                result.report.detectors[index].half_extent_mm[a],
+            );
+        }
+    }
     ui.horizontal_wrapped(|ui| {
         egui::ComboBox::from_id_salt("screen_normalization")
             .width(125.0)
@@ -1222,7 +1263,22 @@ fn draw_detector(
             if ui.checkbox(&mut fixed,"基準光量比の上端を固定").changed() {display.maximum_percent=fixed.then_some(1.0);display.normalization=ScreenNormalization::Reference;}
             if let Some(v)=&mut display.maximum_percent {ui.add(egui::DragValue::new(v).range(1e-10..=100.0).speed(0.01).suffix(" %"));}
         });
+        ui.menu_button("断面位置・ROI",|ui| {
+            let map=&result.report.detectors[index];
+            let [hx,hy]=map.half_extent_mm;
+            let mut cursor=display.cursor_mm.is_some();
+            if ui.checkbox(&mut cursor,"断面位置を指定").changed() {display.cursor_mm=cursor.then_some([0.,0.]);display.profiles=true;}
+            if let Some(c)=&mut display.cursor_mm {ui.horizontal(|ui|{ui.label("X");ui.add(egui::DragValue::new(&mut c[0]).range(-hx..=hx).speed(hx/100.).suffix(" mm"));ui.label("Y");ui.add(egui::DragValue::new(&mut c[1]).range(-hy..=hy).speed(hy/100.).suffix(" mm"));});ui.label("最も近い画素列を表示します。");}
+            let mut roi=display.roi.is_some();
+            if ui.checkbox(&mut roi,"ROIの光量を表示").changed() {display.roi=roi.then_some(crate::screen::ScreenRoi{minimum_mm:[-hx/2.,-hy/2.],maximum_mm:[hx/2.,hy/2.]});}
+            if let Some(r)=&mut display.roi {
+                for a in 0..2 {ui.horizontal(|ui|{ui.label(["X","Y"][a]);ui.add(egui::DragValue::new(&mut r.minimum_mm[a]).speed(map.half_extent_mm[a]/100.).suffix(" mm"));ui.label("〜");ui.add(egui::DragValue::new(&mut r.maximum_mm[a]).speed(map.half_extent_mm[a]/100.).suffix(" mm"));});}
+            }
+        });
     });
+    if old_cursor != display.cursor_mm {
+        result.screen = None;
+    }
     if old_display
         != (
             display.scale,
@@ -1234,7 +1290,7 @@ fn draw_detector(
     }
     let map = &result.report.detectors[index];
     if result.screen.is_none() {
-        match ScreenAnalysis::from_detector(map) {
+        match ScreenAnalysis::at(map, display.cursor_mm) {
             Ok(analysis) => result.screen = Some(analysis),
             Err(error) => {
                 ui.label(error);
@@ -1276,27 +1332,25 @@ fn draw_detector(
                 display,
             );
             let ui = &mut cols[1];
-            if let Some([x, y]) = analysis.peak_position_mm {
-                ui.label(format!("ピーク位置 X={x:.4}, Y={y:.4} mm"));
+            if let Some([x, y]) = analysis.slice_position_mm {
+                ui.label(format!("断面位置 X={x:.4}, Y={y:.4} mm"));
                 for (axis, profile, half) in [
-                    (
-                        "X",
-                        analysis.x_profile.as_ref().unwrap(),
-                        map.half_extent_mm[0],
-                    ),
-                    (
-                        "Y",
-                        analysis.y_profile.as_ref().unwrap(),
-                        map.half_extent_mm[1],
-                    ),
+                    ("X", analysis.x_profile.as_ref(), map.half_extent_mm[0]),
+                    ("Y", analysis.y_profile.as_ref(), map.half_extent_mm[1]),
                 ] {
-                    draw_profile(ui, profile, axis, half, peak, display, reference);
+                    if let Some(profile) = profile {
+                        draw_profile(ui, profile, axis, half, peak, display, reference);
+                    } else {
+                        ui.label(format!("{axis}断面：受光なし"));
+                    }
                     ui.add_space(10.0);
                 }
                 ui.label(
-                    egui::RichText::new("赤破線：ピークの50%とその交点。画素中心の値を線形補間。")
-                        .size(11.0)
-                        .color(MUTED),
+                    egui::RichText::new(
+                        "赤破線：各断面の最大値の50%とその交点。画素中心の値を線形補間。",
+                    )
+                    .size(11.0)
+                    .color(MUTED),
                 );
             } else {
                 ui.label("受光がありません。");
@@ -1304,6 +1358,29 @@ fn draw_detector(
         });
     } else {
         draw_detector_map(ui, map, analysis, texture, reference, height, display);
+    }
+    if let Some(roi) = display.roi {
+        if result.roi_cache.as_ref().is_none_or(|(r, _)| *r != roi) {
+            result.roi_cache = Some((roi, roi.integrate(map, reference)));
+        }
+        match &result.roi_cache.as_ref().unwrap().1 {
+            Ok(r) => {
+                ui.label(format!(
+                    "ROI {:.5}%（基準光量比） · 面積 {:.4} mm² · 平均 {:.5} %/mm²",
+                    r.percent_of_reference, r.area_mm2, r.percent_of_reference_per_mm2
+                ));
+                ui.label(
+                    egui::RichText::new(
+                        "ROI端の画素は重なる面積で按分。画素内の光量密度を一定とする後処理です。",
+                    )
+                    .size(10.)
+                    .color(MUTED),
+                );
+            }
+            Err(e) => {
+                ui.label(e);
+            }
+        }
     }
 }
 
@@ -1388,6 +1465,28 @@ fn draw_detector_map(
     }
     if display.half_maximum {
         draw_half_width_guides(&painter, rect, analysis, [hx, hy]);
+    }
+    if let Some(roi) = display.roi {
+        if roi
+            .minimum_mm
+            .iter()
+            .chain(&roi.maximum_mm)
+            .all(|v| v.is_finite())
+            && (0..2).all(|a| roi.minimum_mm[a] < roi.maximum_mm[a])
+        {
+            let pos = |v: [f64; 2]| {
+                Pos2::new(
+                    rect.left() + ((v[0].clamp(-hx, hx) + hx) / (2. * hx)) as f32 * rect.width(),
+                    rect.bottom() - ((v[1].clamp(-hy, hy) + hy) / (2. * hy)) as f32 * rect.height(),
+                )
+            };
+            painter.rect_stroke(
+                egui::Rect::from_two_pos(pos(roi.minimum_mm), pos(roi.maximum_mm)),
+                0.,
+                Stroke::new(1.5_f32, Color32::from_rgb(46, 139, 87)),
+                egui::StrokeKind::Inside,
+            );
+        }
     }
     ui.label(
         egui::RichText::new(format!(
@@ -1487,7 +1586,7 @@ fn draw_half_width_guides(
             );
         }
     }
-    if let Some([x, y]) = a.peak_position_mm {
+    if let Some([x, y]) = a.slice_position_mm {
         let p = Pos2::new(
             rect.left() + ((x + half[0]) / (2.0 * half[0])) as f32 * rect.width(),
             rect.bottom() - ((y + half[1]) / (2.0 * half[1])) as f32 * rect.height(),
@@ -1545,8 +1644,8 @@ fn draw_profile(
     if display.half_maximum {
         dashed_line(
             &painter,
-            Pos2::new(inner.left(), y(peak * 0.5)),
-            Pos2::new(inner.right(), y(peak * 0.5)),
+            Pos2::new(inner.left(), y(profile.peak_weight() * 0.5)),
+            Pos2::new(inner.right(), y(profile.peak_weight() * 0.5)),
         );
         for value in [profile.half_maximum.lower_mm, profile.half_maximum.upper_mm]
             .into_iter()

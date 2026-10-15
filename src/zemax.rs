@@ -1,4 +1,6 @@
 //! Native ZMX/AGF parsing. Unknown data stays in the original document.
+mod exchange;
+mod illumination;
 use crate::{
     math::{Pose, V3},
     model::*,
@@ -98,6 +100,7 @@ pub struct ZmxDocument {
 }
 #[derive(Clone, Debug)]
 struct Glass {
+    errors: Vec<String>,
     name: String,
     formula: usize,
     coefficients: Vec<f64>,
@@ -107,12 +110,17 @@ struct Glass {
 }
 impl Glass {
     fn material(&self) -> Result<Material, String> {
+        if !self.errors.is_empty() {
+            return Err(format!("{}: {}", self.name, self.errors.join("; ")));
+        }
         let range = self
             .range
             .or_else(|| Some([self.transmission.first()?[0], self.transmission.last()?[0]]))
             .filter(|r| r[0] > 0.0 && r[1] > r[0])
             .ok_or_else(|| format!("{}: AGFの有効波長範囲LDがありません", self.name))?;
-        if self.coefficients.len() < 6 {
+        let required = crate::dispersion::coefficient_count(self.formula)
+            .ok_or_else(|| format!("{}: AGF分散式{}は未対応です", self.name, self.formula))?;
+        if self.coefficients.len() < required || self.coefficients.iter().any(|v| !v.is_finite()) {
             return Err(format!("{}: AGF係数が不足しています", self.name));
         }
         let c = &self.coefficients;
@@ -128,11 +136,28 @@ impl Glass {
                 valid_range_um: range,
                 absorption_per_mm: 0.0,
             },
-            n => return Err(format!("{}: AGF分散式{n}は未対応です", self.name)),
+            formula => Material::Catalog {
+                formula,
+                coefficients: c[..required].to_vec(),
+                valid_range_um: range,
+                absorption_per_mm: 0.0,
+            },
         };
         if self.transmission.is_empty() {
             Ok(base)
         } else {
+            if !self.transmission.iter().all(|v| {
+                v.iter().all(|v| v.is_finite())
+                    && v[0] > 0.
+                    && v[2] > 0.
+                    && (0.0..=1.0).contains(&v[1])
+            }) || !self.transmission.windows(2).all(|w| w[0][0] < w[1][0])
+            {
+                return Err(format!(
+                    "{}: ITの波長順序・透過率・厚さが不正です",
+                    self.name
+                ));
+            }
             let samples = self
                 .transmission
                 .iter()
@@ -253,8 +278,12 @@ fn catalogs(path: &Path, extra: &[PathBuf], declared: &[String]) -> BTreeMap<Str
                         result.insert(glass.name.to_uppercase(), glass);
                     }
                     current = Some(Glass {
+                        errors: Vec::new(),
                         name: w[1].into(),
-                        formula: w[2].parse().unwrap_or(0),
+                        formula: number(w[2])
+                            .ok()
+                            .filter(|v| v.is_finite() && *v > 0. && v.fract() == 0.)
+                            .map_or(0, |v| v as usize),
                         coefficients: Vec::new(),
                         range: None,
                         transmission: Vec::new(),
@@ -264,16 +293,29 @@ fn catalogs(path: &Path, extra: &[PathBuf], declared: &[String]) -> BTreeMap<Str
                 if let Some(glass) = current.as_mut() {
                     glass.text.push_str(line);
                     glass.text.push('\n');
-                    let vals: Vec<_> = w.iter().skip(1).filter_map(|s| number(s).ok()).collect();
+                    let vals: Vec<_> = if ["CD", "LD", "IT"].contains(&w[0]) {
+                        match w
+                            .iter()
+                            .skip(1)
+                            .map(|s| number(s))
+                            .collect::<Result<Vec<_>, _>>()
+                        {
+                            Ok(values) => values,
+                            Err(e) => {
+                                glass.errors.push(e);
+                                continue;
+                            }
+                        }
+                    } else {
+                        Vec::new()
+                    };
                     match w[0] {
                         "CD" => glass.coefficients = vals,
-                        "LD" if vals.len() >= 2 => glass.range = Some([vals[0], vals[1]]),
-                        "IT" if vals.len() >= 3
-                            && vals[2] > 0.0
-                            && (0.0..=1.0).contains(&vals[1]) =>
-                        {
+                        "LD" if vals.len() == 2 => glass.range = Some([vals[0], vals[1]]),
+                        "IT" if vals.len() == 3 => {
                             glass.transmission.push([vals[0], vals[1], vals[2]])
                         }
+                        "LD" | "IT" => glass.errors.push(format!("{}の列数が不正です", w[0])),
                         _ => (),
                     }
                 }
@@ -446,6 +488,7 @@ pub fn read_zmx_with_cad_tolerance(
     } else {
         read_sequential(
             &all,
+            (path, extra),
             wavelength,
             &mut project,
             &glasses,
@@ -464,14 +507,56 @@ pub fn read_zmx_with_cad_tolerance(
     Ok(project)
 }
 
+fn read_coating(
+    path: &Path,
+    extra: &[PathBuf],
+    selected: Option<&str>,
+    name: &str,
+) -> Result<crate::coating::Coating, String> {
+    let mut dirs = vec![path.parent().unwrap_or(Path::new(".")).to_path_buf()];
+    dirs.extend_from_slice(extra);
+    if let Some(user) = std::env::var_os("USERPROFILE") {
+        dirs.push(PathBuf::from(user).join("Documents/Zemax/Coatings"));
+    }
+    for dir in dirs {
+        let Ok(entries) = fs::read_dir(dir) else {
+            continue;
+        };
+        let mut files: Vec<_> = entries
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|s| s.eq_ignore_ascii_case("dat")))
+            .filter(|p| {
+                selected.is_none_or(|s| {
+                    p.file_name()
+                        .is_some_and(|n| n.eq_ignore_ascii_case(s.trim_matches('"')))
+                })
+            })
+            .collect();
+        files.sort();
+        for file in files {
+            if fs::metadata(&file).map_or(true, |m| m.len() > 32 * 1024 * 1024) {
+                continue;
+            }
+            let bytes = fs::read(&file).map_err(|e| e.to_string())?;
+            if let Some(c) = crate::coating::parse_zemax(&decode(&bytes).0, name)? {
+                return Ok(c);
+            }
+        }
+    }
+    Err("IDEAL/TABLE定義が見つかりません。コーティングDATをZMXと同じフォルダー、または追加カタログへ配置してください".into())
+}
+
 fn read_sequential(
     all: &[String],
+    location: (&Path, &[PathBuf]),
     wavelength: f64,
     project: &mut Project,
     glasses: &BTreeMap<String, Glass>,
     records: &mut BTreeMap<String, String>,
     bindings: &mut Vec<usize>,
 ) -> Result<(), String> {
+    let (path, extra) = location;
     let mut blocks: Vec<(usize, Vec<String>)> = Vec::new();
     for line in all {
         if let Some(tail) = line.trim().strip_prefix("SURF ") {
@@ -487,9 +572,19 @@ fn read_sequential(
         return Err("ZMXに面データがありません".into());
     }
     let pupil = scalar(all, "ENPD", 10.0)?.abs() / 2.0;
-    let mut z = 0.0;
+    let mut frame_pose = Pose::default();
     let mut medium = 0;
-    let last = blocks.last().unwrap().0;
+    let mut forward = true;
+    let last = blocks
+        .iter()
+        .rev()
+        .find(|(i, lines)| {
+            *i != 0
+                && field(lines, "TYPE").and_then(|s| s.split_whitespace().next())
+                    != Some("COORDBRK")
+        })
+        .ok_or("ZMXに光学面がありません")?
+        .0;
     for (id, lines) in blocks.iter().skip(1) {
         let typ = field(lines, "TYPE")
             .unwrap_or("STANDARD")
@@ -499,6 +594,66 @@ fn read_sequential(
         let curvature = scalar(lines, "CURV", 0.0)?;
         let conic = scalar(lines, "CONI", 0.0)?;
         let coeff = checked_parameters(lines, "PARM")?;
+        if typ == "COORDBRK" {
+            if coeff.iter().any(|(i, v)| *i > 6 && *v != 0.) {
+                project.issue(
+                    "reference",
+                    format!("面{id}: Coordinate Breakの追加パラメーターは未対応です"),
+                    true,
+                );
+            }
+            let value = |k| *coeff.get(&k).unwrap_or(&0.);
+            let decenter = V3([value(1), value(2), 0.]);
+            let tilt = V3([value(3), value(4), value(5)]);
+            let local = if value(6) == 0. {
+                crate::math::Frame::from_intrinsic_xyz(&Pose {
+                    translation_mm: decenter,
+                    rotation_deg: tilt,
+                })
+                .pose()
+            } else {
+                let f = crate::math::Frame::new(&Pose {
+                    translation_mm: V3::default(),
+                    rotation_deg: tilt,
+                });
+                Pose {
+                    translation_mm: f.world_vector(decenter),
+                    rotation_deg: tilt,
+                }
+            };
+            for line in lines {
+                let w = words(line);
+                if w.first().is_some_and(|k| {
+                    ![
+                        "TYPE", "COMM", "CURV", "CONI", "PARM", "DISZ", "DIAM", "HIDE", "SLAB",
+                        "MEMA", "POPS", "FIMP", "NOTE",
+                    ]
+                    .contains(k)
+                }) {
+                    project.issue(
+                        "reference",
+                        format!("面{id}: Coordinate Breakの{}は未対応です", w[0]),
+                        true,
+                    );
+                }
+            }
+            frame_pose = crate::math::Frame::new(&frame_pose).transform_pose(&local);
+            let distance = scalar(lines, "DISZ", 0.)?;
+            if !distance.is_finite() {
+                return Err("Coordinate Breakの厚さは有限値が必要です".into());
+            }
+            frame_pose.translation_mm =
+                crate::math::Frame::new(&frame_pose).world_point(V3([0., 0., distance]));
+            if distance != 0. {
+                forward = distance > 0.;
+            }
+            project.issue(
+                "coordinate_break",
+                format!("面{id}: Coordinate Breakの変換順序と厚さを適用"),
+                false,
+            );
+            continue;
+        }
         if coeff.iter().any(|(i, v)| *i > 9 && *v != 0.0) {
             project.issue(
                 "surface",
@@ -565,19 +720,55 @@ fn read_sequential(
         let glass = field(lines, "GLAS")
             .and_then(|s| s.split_whitespace().next())
             .unwrap_or("");
-        let after = material_id(project, glasses, glass, records);
+        let mirror = glass.eq_ignore_ascii_case("MIRROR");
+        let after = if mirror {
+            medium
+        } else {
+            material_id(project, glasses, glass, records)
+        };
         let interaction = if *id == last {
             Interaction::Detector { pixels: [128, 128] }
+        } else if mirror {
+            Interaction::Mirror { reflectance: 1. }
         } else {
             Interaction::Dielectric {
-                minus_medium: medium,
-                plus_medium: after,
+                minus_medium: if forward { medium } else { after },
+                plus_medium: if forward { after } else { medium },
                 reflectance: None,
             }
         };
-        if let Some(coat) = field(lines, "COAT").filter(|s| !s.is_empty() && *s != "_NONE_") {
-            project.issue("coating",format!("面{id}: コーティング{coat}は元ファイルに保持します。未コートFresnelでの計算には下の明示設定が必要です"),true);
-        }
+        let coating =
+            if let Some(coat) = field(lines, "COAT").filter(|s| !s.is_empty() && *s != "_NONE_") {
+                let name = coat
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("")
+                    .trim_matches('"');
+                match read_coating(path, extra, field(all, "COFN"), name) {
+                    Ok(c)
+                        if matches!(
+                            interaction,
+                            Interaction::Dielectric { .. } | Interaction::Mirror { .. }
+                        ) =>
+                    {
+                        Some(c)
+                    }
+                    Ok(_) => {
+                        project.issue(
+                            "coating",
+                            format!("面{id}: 検出器・吸収面へのコーティング適用は未対応です"),
+                            true,
+                        );
+                        None
+                    }
+                    Err(e) => {
+                        project.issue("coating", format!("面{id}: {name}: {e}"), true);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
         for line in lines {
             let w = words(line);
             if w.is_empty() {
@@ -605,11 +796,9 @@ fn read_sequential(
             }
         }
         project.scene.surfaces.push(Surface {
+            coating,
             name: format!("S{id} {}", field(lines, "COMM").unwrap_or(typ)),
-            pose: Pose {
-                translation_mm: V3([0.0, 0.0, z]),
-                ..Pose::default()
-            },
+            pose: frame_pose.clone(),
             shape,
             aperture,
             interaction,
@@ -619,7 +808,13 @@ fn read_sequential(
         if !distance.is_finite() {
             project.issue("surface", format!("面{id}: 無限の面間隔は未対応です"), true);
         } else {
-            z += distance;
+            frame_pose.translation_mm =
+                crate::math::Frame::new(&frame_pose).world_point(V3([0., 0., distance]));
+            if distance != 0. {
+                forward = distance > 0.;
+            } else if mirror {
+                forward = !forward;
+            }
         }
         medium = after;
     }
@@ -627,11 +822,21 @@ fn read_sequential(
         .scene
         .surfaces
         .first()
-        .unwrap()
+        .ok_or("ZMXに追跡可能な光学面がありません")?
         .pose
         .translation_mm
         .0[2];
-    project.scene.sources.push(Source {
+    let spectrum = match read_source_spectrum(path, all, &[], 0.) {
+        Ok(Some(s)) if s.samples.len() > 1 => Some(s),
+        Ok(_) => None,
+        Err(e) => {
+            project.issue("spectrum", e, true);
+            None
+        }
+    };
+    let base = Source {
+        pupil: None,
+        spectrum,
         sampling: Sampling::Sobol,
         count: 8192,
         origin_mm: V3([0.0, 0.0, first - 1.0]),
@@ -643,9 +848,159 @@ fn read_sequential(
         total_weight: 1.0,
         seed: 42,
         diode: None,
-    });
-    project.issue("illumination","逐次ZMXの形状・材料を読込。照射条件は主波長の軸上平行光です。視野・瞳の設定は照射条件で調整してください",false);
+    };
+    match illumination::sources(all, &blocks, &project.scene, bindings, base.clone()) {
+        Ok(sources) => project.scene.sources = sources,
+        Err(e) => {
+            project.scene.sources.push(base);
+            project.issue("illumination_definition", e, true);
+        }
+    }
+    project.issue("illumination","逐次ZMXの波長表・視野の相対重みを使用。光量の分母は発射光線の重みの合計です。瞳は面積に一様なサンプルで照射します",false);
     Ok(())
+}
+
+fn read_source_spectrum(
+    path: &Path,
+    all: &[String],
+    lines: &[String],
+    wave_index: f64,
+) -> Result<Option<crate::spectrum::Spectrum>, String> {
+    use crate::spectrum::Spectrum;
+    let settings = lines.iter().find(|l| {
+        let w = words(l);
+        w.starts_with(&["NSCS", "7", "3"])
+    });
+    let parts = settings.map(|l| words(l));
+    if parts.as_ref().is_some_and(|w| w.len() < 10) {
+        return Err("NSCS 7 3のスペクトル条件が不足しています".into());
+    }
+    let mode = parts
+        .as_ref()
+        .map(|w| number(w[3]))
+        .transpose()?
+        .unwrap_or(0.);
+    let mut samples = match mode {
+        0. => {
+            let waves = parameters(all, "WAVM");
+            if !wave_index.is_finite() || wave_index < 0. || wave_index.fract() != 0. {
+                return Err("光源の波長番号が不正です".into());
+            }
+            if wave_index > 0. {
+                if !waves.contains_key(&(wave_index as usize)) {
+                    return Err("光源の指定波長番号が波長表にありません".into());
+                }
+                return Ok(None);
+            }
+            let mut v = Vec::new();
+            for line in all {
+                let w = words(line);
+                if w.first() == Some(&"WAVM") && w.len() >= 3 {
+                    v.push([
+                        number(w[2])?,
+                        w.get(3).map(|s| number(s)).transpose()?.unwrap_or(1.),
+                    ]);
+                }
+            }
+            v.sort_by(|a, b| a[0].total_cmp(&b[0]));
+            let mut merged: Vec<[f64; 2]> = Vec::new();
+            for point in v {
+                if let Some(last) = merged.last_mut().filter(|v| v[0] == point[0]) {
+                    last[1] += point[1];
+                } else {
+                    merged.push(point);
+                }
+            }
+            merged
+        }
+        8. => {
+            let line = settings.unwrap();
+            let name = line
+                .split('"')
+                .nth(1)
+                .ok_or("SPCDのファイル名が不足しています")?;
+            let mut files = vec![path.parent().unwrap_or(Path::new(".")).join(name)];
+            if let Some(user) = std::env::var_os("USERPROFILE") {
+                files.push(
+                    PathBuf::from(user)
+                        .join("Documents/Zemax/Objects/Sources/Spectrum Files")
+                        .join(name),
+                );
+            }
+            let file = files
+                .iter()
+                .find(|p| p.is_file())
+                .ok_or_else(|| format!("参照スペクトル{name}が見つかりません"))?;
+            return Spectrum::read(file).map(Some);
+        }
+        4. | 7. => {
+            let w = parts.as_ref().unwrap();
+            let lo = number(w[7])?;
+            let hi = number(w[8])?;
+            let steps = number(w[9])?;
+            if !lo.is_finite()
+                || lo <= 0.
+                || !hi.is_finite()
+                || hi <= lo
+                || !(2.0..=200.0).contains(&steps)
+                || steps.fract() != 0.
+            {
+                return Err("スペクトルの範囲・点数が不正です".into());
+            }
+            let mut v: Vec<_> = (0..steps as usize)
+                .map(|i| [lo + (hi - lo) * i as f64 / (steps - 1.), 1.])
+                .collect();
+            if mode == 7. {
+                let temperature = number(w[4])?;
+                if !temperature.is_finite() || temperature <= 0. {
+                    return Err("黒体温度は正の有限値[K]で指定してください".into());
+                }
+                let logs: Vec<_> = v
+                    .iter()
+                    .map(|v| {
+                        let x = 14387.768775039337 / (v[0] * temperature);
+                        -5. * v[0].ln() - if x > 700. { x } else { x.exp_m1().ln() }
+                    })
+                    .collect();
+                let peak = logs.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                for (sample, log) in v.iter_mut().zip(logs) {
+                    sample[1] = (log - peak).exp();
+                }
+            }
+            v
+        }
+        _ => {
+            return Err(format!(
+                "光源の色・スペクトルモデル{mode}は未対応です。単色波長を明示できます"
+            ))
+        }
+    };
+    if samples.is_empty() {
+        return Err("光源に波長と重みがありません".into());
+    }
+    let spectrum = Spectrum {
+        samples: std::mem::take(&mut samples),
+    };
+    spectrum.validate()?;
+    Ok(Some(spectrum))
+}
+
+fn nsc_reference(value: &str, row: usize) -> Result<usize, String> {
+    let v = number(value)?;
+    if !v.is_finite() || v.fract() != 0. || v.abs() > 1_000_000. {
+        return Err("参照番号は範囲内の整数で指定してください".into());
+    }
+    let target = if v < 0. {
+        row as i64 + v as i64
+    } else {
+        v as i64
+    };
+    if target < 0 || target >= row as i64 {
+        return Err(
+            "参照先はこのオブジェクトより前にある必要があります（前方・自己・循環参照）".into(),
+        );
+    }
+    Ok(target as usize)
 }
 
 fn read_nsc(
@@ -666,10 +1021,13 @@ fn read_nsc(
             block.push(line.clone());
         }
     }
+    let mut object_poses = vec![Pose::default()];
+    let mut object_media = vec![0usize];
+    let mut volumes = vec![false];
     for (i, lines) in objects.iter().enumerate() {
         let head = words(field(lines, "NSOH").unwrap_or(""));
         if head.is_empty() {
-            continue;
+            return Err("NSOHオブジェクト型がありません".into());
         }
         let typ = head[0];
         let reference = head
@@ -678,10 +1036,38 @@ fn read_nsc(
             .join(" ")
             .trim_matches('"')
             .to_owned();
-        let (pose, glass) = pose_from(field(lines, "NSOP").unwrap_or("0 0 0 0 0 0"))?;
+        let (local_pose, glass) = pose_from(field(lines, "NSOP").unwrap_or("0 0 0 0 0 0"))?;
         let p = checked_parameters(lines, "NSOD")?;
         let param = |k, default| *p.get(&k).unwrap_or(&default);
         let label = format!("O{} {typ}", i + 1);
+        let mut resolve = |slot| match nsc_reference(head.get(slot).copied().unwrap_or("0"), i + 1)
+        {
+            Ok(id) => id,
+            Err(e) => {
+                project.issue("reference", format!("{label}: {e}"), true);
+                0
+            }
+        };
+        let reference_id = resolve(1);
+        let inside_id = resolve(2);
+        let pose = crate::math::Frame::new(&object_poses[reference_id])
+            .transform_pose(&crate::math::Frame::from_intrinsic_xyz(&local_pose).pose());
+        object_poses.push(pose.clone());
+        if inside_id != 0 && !volumes[inside_id] {
+            project.issue(
+                "reference",
+                format!("{label}: Inside Ofは先行する屈折体を指定してください"),
+                true,
+            );
+        }
+        let surrounding_medium = object_media[inside_id];
+        let object_medium = if typ == "NSC_IMPT" && !glass.is_empty() {
+            material_id(project, glasses, &glass, records)
+        } else {
+            0
+        };
+        object_media.push(object_medium);
+        volumes.push(typ == "NSC_IMPT" && !glass.is_empty());
         for line in lines {
             let w = words(line);
             let Some(key) = w.first() else {
@@ -728,16 +1114,6 @@ fn read_nsc(
                 true,
             );
         }
-        if let Some(ns) = field(lines, "NSOH") {
-            let h = words(ns);
-            if h.get(1..3).is_some_and(|v| v.iter().any(|s| *s != "0")) {
-                project.issue(
-                    "reference",
-                    format!("{label}: 参照オブジェクトに対する配置は未対応です"),
-                    true,
-                );
-            }
-        }
         if field(lines, "NSOO").is_some_and(|s| {
             s.split_whitespace()
                 .filter_map(|v| number(v).ok())
@@ -751,19 +1127,6 @@ fn read_nsc(
         }
         match typ {
             "NSC_SDIO" => {
-                if lines.iter().any(|line| {
-                    let w = words(line);
-                    w.first() == Some(&"NSCS") && w.get(1) == Some(&"7") && w.get(2) != Some(&"0")
-                }) && !lines
-                    .iter()
-                    .any(|line| line.to_uppercase().contains(".SPCD"))
-                {
-                    project.issue(
-                        "spectrum",
-                        format!("{label}: 光源スペクトル定義NSCS 7の追跡は未対応です。計算波長を明示してください"),
-                        true,
-                    );
-                }
                 if [8, 10, 17, 20]
                     .iter()
                     .any(|k| (param(*k, 1.0) - 1.0).abs() > 1e-12)
@@ -778,10 +1141,16 @@ fn read_nsc(
                 let frame = crate::math::Frame::new(&pose);
                 let waves = parameters(all, "WAVM");
                 let source_wave = *waves.get(&(param(4, 1.0) as usize)).unwrap_or(&wavelength);
-                if param(4, 1.0).fract() != 0.0 || !waves.contains_key(&(param(4, 1.0) as usize)) {
-                    project.issue("spectrum", format!("{label}: 指定した波長番号が波長表にありません。計算波長を明示してください"), true);
-                }
+                let spectrum = match read_source_spectrum(path, all, lines, param(4, 1.)) {
+                    Ok(spectrum) => spectrum,
+                    Err(e) => {
+                        project.issue("spectrum", format!("{label}: {e}"), true);
+                        None
+                    }
+                };
                 project.scene.sources.push(Source {
+                    pupil: None,
+                    spectrum,
                     sampling: Sampling::Sobol,
                     count: param(2, 1000.0).max(1.0) as usize,
                     origin_mm: pose.translation_mm,
@@ -789,7 +1158,7 @@ fn read_nsc(
                     disk_radius_mm: 0.0,
                     cone_half_angle_deg: 0.0,
                     wavelength_um: source_wave,
-                    medium: 0,
+                    medium: surrounding_medium,
                     total_weight: param(3, 1.0),
                     seed: 42 + i as u64,
                     diode: Some(Diode {
@@ -801,19 +1170,9 @@ fn read_nsc(
                         gaussian_width_mm: [param(16, 0.0), param(19, 0.0)],
                     }),
                 });
-                for line in lines {
-                    if line.to_uppercase().contains(".SPCD") {
-                        let name = line
-                            .split('"')
-                            .find(|s| s.to_uppercase().ends_with(".SPCD"))
-                            .unwrap_or("SPCD");
-                        let exists = path.parent().unwrap_or(Path::new(".")).join(name).is_file();
-                        project.issue("spectrum",format!("参照スペクトル {name} ({})。現段階の計算は単色設定を明示してください",if exists{"ファイルあり・分布読込は未対応"}else{"ファイルが不足しています"}),true);
-                        break;
-                    }
-                }
             }
             "NSC_DETC" => project.scene.surfaces.push(Surface {
+                coating: None,
                 name: label.clone(),
                 pose,
                 shape: Shape::Plane,
@@ -834,7 +1193,7 @@ fn read_nsc(
                     );
                     continue;
                 }
-                let medium = material_id(project, glasses, &glass, records);
+                let medium = object_medium;
                 if param(1, 1.0) != 1.0 || param(2, 1.0) != 1.0 {
                     project.issue(
                         "cad",
@@ -845,7 +1204,8 @@ fn read_nsc(
                 let step = path.parent().unwrap_or(Path::new(".")).join(&reference);
                 match crate::cad::load_step_with_tolerance(&step, deflection_mm) {
                     Ok(shape) => project.scene.surfaces.push(Surface {
-                        name: reference,
+                        coating: None,
+                        name: format!("{label} {reference}"),
                         pose,
                         shape,
                         aperture: Aperture::Rectangle {
@@ -854,7 +1214,7 @@ fn read_nsc(
                         },
                         interaction: Interaction::Dielectric {
                             minus_medium: medium,
-                            plus_medium: 0,
+                            plus_medium: surrounding_medium,
                             reflectance: None,
                         },
                     }),
@@ -889,21 +1249,59 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
             "組立光学系はJSONプロジェクトで保存できます。部品を含むZMX書出しは追加予定です".into(),
         );
     }
+    let mut sidecars = exchange::recover(project, path)?;
     if let Some(original) = &project.zemax {
         if serde_json::to_value(&project.scene).map_err(|e| e.to_string())?
             == serde_json::to_value(&original.baseline_scene).map_err(|e| e.to_string())?
         {
             copy_dependencies(original, path)?;
+            exchange::write(&sidecars)?;
             return fs::write(path, encode(&original.text, &original.encoding)?)
                 .map_err(|e| e.to_string());
         }
     }
     let scene = &project.scene;
+    scene.clone().prepare()?;
+    if project
+        .issues
+        .iter()
+        .any(|i| i.blocking && !matches!(i.code.as_str(), "coating" | "spectrum"))
+    {
+        return Err("未対応の光学定義を含むZMXの編集はJSONへ保存してください。元ZMXの無変更保存に対応しています".into());
+    }
+    if project
+        .zemax
+        .as_ref()
+        .is_some_and(|z| z.text.lines().any(|l| l.contains("COORDBRK")))
+    {
+        return Err(
+            "座標連鎖を含むモデルの編集はJSONへ保存してください。元ZMXの無変更保存に対応しています"
+                .into(),
+        );
+    }
+    let baseline = project.zemax.as_ref().map(|z| &z.baseline_scene.surfaces);
+    let coatings_changed = scene.surfaces.iter().enumerate().any(|(i, s)| {
+        serde_json::to_value(&s.coating).ok()
+            != serde_json::to_value(
+                baseline
+                    .and_then(|v| v.get(i))
+                    .and_then(|s| s.coating.as_ref()),
+            )
+            .ok()
+    });
+    if coatings_changed && scene.mode == Mode::NonSequential {
+        return Err(
+            "コーティングを変更したモデルのZMX書出しは追加予定です。JSONには全条件を保存できます"
+                .into(),
+        );
+    }
     if scene.mode == Mode::NonSequential {
         if let Some(original) = &project.zemax {
-            let text = patch_nsc(project, original)?;
+            let text = patch_nsc(project, original, path, &mut sidecars)?;
+            let bytes = encode(&text, &original.encoding)?;
             copy_dependencies(original, path)?;
-            return fs::write(path, encode(&text, &original.encoding)?).map_err(|e| e.to_string());
+            exchange::write(&sidecars)?;
+            return fs::write(path, bytes).map_err(|e| e.to_string());
         }
     }
     if scene.mode != Mode::Sequential {
@@ -918,9 +1316,76 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
         );
     }
     let original = project.zemax.as_ref();
-    if original.is_none()
+    if let Some(z) = original.filter(|z| {
+        z.baseline_scene.sources.len() > 1
+            && z.baseline_scene.sources.iter().any(|s| s.pupil.is_some())
+    }) {
+        let normalized = |sources: &[Source]| {
+            let total = sources.iter().map(|s| s.total_weight).sum::<f64>();
+            sources
+                .iter()
+                .map(|s| s.total_weight / total)
+                .collect::<Vec<_>>()
+        };
+        if normalized(&scene.sources) != normalized(&z.baseline_scene.sources) {
+            return Err("視野別の光量重みの編集はJSONへ保存してください".into());
+        }
+        let spectrum = |s: &Source| {
+            let mut samples = s
+                .spectrum
+                .as_ref()
+                .map_or(vec![[s.wavelength_um, 1.]], |s| s.samples.clone());
+            let total = samples.iter().map(|v| v[1]).sum::<f64>();
+            for v in &mut samples {
+                v[1] /= total;
+            }
+            samples
+        };
+        if scene
+            .sources
+            .windows(2)
+            .any(|w| spectrum(&w[0]) != spectrum(&w[1]))
+        {
+            return Err(
+                "視野別に異なるスペクトルは単一のWAVM表で表現できません。JSONへ保存してください"
+                    .into(),
+            );
+        }
+    }
+    let same_illumination = original.is_some_and(|z| {
+        let signature = |s: &Scene| {
+            s.sources
+                .iter()
+                .map(|s| {
+                    serde_json::to_value((
+                        &s.pupil,
+                        s.origin_mm,
+                        s.direction,
+                        s.disk_radius_mm,
+                        s.cone_half_angle_deg,
+                        &s.diode,
+                    ))
+                    .ok()
+                })
+                .collect::<Vec<_>>()
+        };
+        signature(scene) == signature(&z.baseline_scene)
+    });
+    if !same_illumination
+        && scene
+            .sources
+            .windows(2)
+            .any(|s| s[0].disk_radius_mm != s[1].disk_radius_mm || s[0].origin_mm != s[1].origin_mm)
+    {
+        return Err(
+            "異なる照射面・瞳径の光源を1つの逐次照射へ変換できません。JSONへ保存してください"
+                .into(),
+        );
+    }
+    if !same_illumination
         && scene.sources.iter().any(|s| {
-            s.diode.is_some()
+            s.pupil.is_some()
+                || s.diode.is_some()
                 || s.cone_half_angle_deg != 0.0
                 || s.origin_mm.0[0] != 0.0
                 || s.origin_mm.0[1] != 0.0
@@ -932,14 +1397,26 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
     if original.is_some_and(|z| z.surface_numbers.len() != scene.surfaces.len()) {
         return Err("元ZMXの面数が変わっています。JSONプロジェクトに保存してください".into());
     }
+    if original.is_some_and(|z| {
+        scene
+            .surfaces
+            .first()
+            .zip(z.baseline_scene.surfaces.first())
+            .is_some_and(|(a, b)| (a.pose.translation_mm - b.pose.translation_mm).norm() > 1e-12)
+    }) {
+        return Err(
+            "最初の基準面の移動はこのZMXで表現できません。配置を含むJSONで保存してください".into(),
+        );
+    }
     let catalog = path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("RAYTRACE")
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect::<String>();
-    let mut agf = String::from("CC Raytrace material exchange\n");
+        .collect::<String>()
+        + "_RAYTRACE";
+    let mut agf = exchange::generated_header(path, "CC");
     let custom_catalog = original.is_none_or(|z| {
         serde_json::to_value(&z.baseline_scene.materials).ok()
             != serde_json::to_value(&scene.materials).ok()
@@ -964,42 +1441,43 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
             agf.push_str(record);
             continue;
         }
-        let (formula, coeff, range) = match material {
-            Material::Constant {
-                n,
-                absorption_per_mm,
-            } if *absorption_per_mm == 0.0 => {
-                (1, vec![n * n, 0.0, 0.0, 0.0, 0.0, 0.0], [0.001, 1000.0])
-            }
-            Material::Schott {
-                coefficients,
-                valid_range_um,
-                absorption_per_mm,
-            } if *absorption_per_mm == 0.0 => (1, coefficients.to_vec(), *valid_range_um),
-            Material::Sellmeier {
-                b,
-                c_um2,
-                valid_range_um,
-                absorption_per_mm,
-            } if *absorption_per_mm == 0.0 => (
-                2,
-                vec![b[0], c_um2[0], b[1], c_um2[1], b[2], c_um2[2]],
-                *valid_range_um,
-            ),
-            _ => return Err("編集した吸収表・表形式材料のZemax書出しは未対応です".into()),
-        };
-        agf.push_str(&format!(
-            "NM {name} {formula} 0 1.5 50 0 0\nCD {}\nLD {} {}\n",
-            coeff
-                .iter()
-                .map(|v| format!("{v:.17e}"))
-                .collect::<Vec<_>>()
-                .join(" "),
-            range[0],
-            range[1]
-        ));
+        agf.push_str(&exchange::material_record(&name, material)?);
     }
+    let coating_file = if coatings_changed && scene.surfaces.iter().any(|s| s.coating.is_some()) {
+        if project
+            .issues
+            .iter()
+            .any(|i| i.blocking && i.code == "coating")
+        {
+            return Err(
+                "未対応コーティングを含むファイルのコーティング編集はJSONへ保存してください".into(),
+            );
+        }
+        let mut definitions = BTreeMap::new();
+        for c in scene.surfaces.iter().filter_map(|s| s.coating.as_ref()) {
+            let definition = c.to_zemax()?;
+            if definitions.get(&c.name).is_some_and(|v| *v != definition) {
+                return Err("同じコーティング名に異なる定義があります".into());
+            }
+            definitions.insert(c.name.clone(), definition);
+        }
+        let filename = format!(
+            "{}.raytrace-coatings.DAT",
+            path.file_stem().unwrap_or_default().to_string_lossy()
+        );
+        let text = exchange::generated_header(path, "!")
+            + &definitions.into_values().collect::<Vec<_>>().join("\n");
+        exchange::put(
+            &mut sidecars,
+            path.with_file_name(&filename),
+            text.into_bytes(),
+        )?;
+        Some(filename)
+    } else {
+        None
+    };
     let mut replacements: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+    let mut forward = true;
     for (i, s) in scene.surfaces.iter().enumerate() {
         let id = original.map_or(i + 2, |z| z.surface_numbers[i]);
         let (typ, curvature, conic, coeff) = match &s.shape {
@@ -1021,9 +1499,6 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
         let gap = scene.surfaces.get(i + 1).map_or(0.0, |next| {
             next.pose.translation_mm.0[2] - s.pose.translation_mm.0[2]
         });
-        if gap < 0.0 {
-            return Err("ZMX書出しには面位置を昇順にしてください".into());
-        }
         let mut lines = vec![
             format!("SURF {id}"),
             format!("  COMM {}", s.name.replace(['\r', '\n'], " ")),
@@ -1033,17 +1508,25 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
             format!("  DISZ {gap:.17e}"),
             format!("  DIAM {semi:.17e} 0 0 0 1 \"\""),
         ];
+        if let Some(coating) = &s.coating {
+            lines.push(format!("  COAT {}", coating.name));
+        }
         match s.interaction {
             Interaction::Dielectric {
+                minus_medium,
                 plus_medium,
                 reflectance: None,
                 ..
             } => {
-                if plus_medium != 0 {
-                    lines.push(format!("  GLAS {} 0 0 1.5 50 0 0", names[plus_medium]));
+                let after = if forward { plus_medium } else { minus_medium };
+                if after != 0 {
+                    lines.push(format!("  GLAS {} 0 0 1.5 50 0 0", names[after]));
                 }
             }
             Interaction::Detector { .. } if i + 1 == scene.surfaces.len() => (),
+            Interaction::Mirror { reflectance } if reflectance == 1. || s.coating.is_some() => {
+                lines.push("  GLAS MIRROR 0 0".into())
+            }
             _ => return Err("固定反射率・ミラー・中間検出器のZMX書出しは未対応です".into()),
         }
         if let Aperture::Rectangle { .. } = s.aperture {
@@ -1055,6 +1538,11 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
             lines.push(format!("  PARM {} {c:.17e}", j + 2));
         }
         replacements.insert(id, lines);
+        if gap != 0. {
+            forward = gap > 0.;
+        } else if matches!(s.interaction, Interaction::Mirror { .. }) {
+            forward = !forward;
+        }
     }
     let text = if let Some(original) = original {
         let mut output = Vec::new();
@@ -1068,6 +1556,16 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
                 }
             }
             let key = words(line).first().copied().unwrap_or("");
+            if key == "COAT"
+                && active
+                    .and_then(|id| original.surface_numbers.iter().position(|n| *n == id))
+                    .is_some_and(|i| {
+                        scene.surfaces[i].coating.is_some()
+                            || original.baseline_scene.surfaces[i].coating.is_some()
+                    })
+            {
+                continue;
+            }
             if active.is_some_and(|id| replacements.contains_key(&id))
                 && [
                     "SURF", "COMM", "TYPE", "CURV", "CONI", "DISZ", "DIAM", "GLAS", "SQAP", "CLAP",
@@ -1088,14 +1586,14 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
         }
         output.join("\r\n") + "\r\n"
     } else {
-        let waves: Vec<_> = scene.sources.iter().map(|s| s.wavelength_um).collect();
+        let waves = exchange::sequential_waves(scene)?;
         let pupil = scene
             .sources
             .first()
             .map_or(1.0, |s| 2.0 * s.disk_radius_mm.max(0.01));
         let mut head=format!("VERS 260000 0 0\r\nMODE SEQ\r\nNAME {}\r\nUNIT MM X W X CM MR CPMM\r\nENPD {pupil}\r\nENVD 20 1 0\r\nGCAT {catalog}\r\nFTYP 0 0 1 1 0 0 0\r\nXFLN 0\r\nYFLN 0\r\nPWAV 1\r\n",scene.name.replace(['\r','\n']," "));
-        for (i, w) in waves.iter().enumerate() {
-            head.push_str(&format!("WAVM {} {w:.17e} 1\r\n", i + 1));
+        for (i, [w, weight]) in waves.iter().enumerate() {
+            head.push_str(&format!("WAVM {} {w:.17e} {weight:.17e}\r\n", i + 1));
         }
         if waves.is_empty() {
             head.push_str("WAVM 1 0.55 1\r\n");
@@ -1115,20 +1613,70 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
         }
         head
     };
+    let spectra_changed = original.is_some_and(|o| {
+        let signature = |s: &Scene| {
+            s.sources
+                .iter()
+                .map(|s| serde_json::to_value((s.wavelength_um, &s.spectrum, s.total_weight)).ok())
+                .collect::<Vec<_>>()
+        };
+        signature(scene) != signature(&o.baseline_scene)
+    });
+    let text = if spectra_changed {
+        let waves = exchange::sequential_waves(scene)?;
+        let primary = scene
+            .sources
+            .first()
+            .and_then(|s| waves.iter().position(|w| w[0] == s.wavelength_um))
+            .map_or(1, |i| i + 1);
+        let header = format!(
+            "PWAV {primary}\r\n{}\r\n",
+            waves
+                .iter()
+                .enumerate()
+                .map(|(i, [w, p])| format!("WAVM {} {w:.17e} {p:.17e}", i + 1))
+                .collect::<Vec<_>>()
+                .join("\r\n")
+        );
+        header
+            + &text
+                .lines()
+                .filter(|l| {
+                    let w = words(l);
+                    !matches!(w.first(), Some(&"WAVM") | Some(&"PWAV"))
+                })
+                .collect::<Vec<_>>()
+                .join("\r\n")
+    } else {
+        text
+    };
+    let text = if let Some(filename) = coating_file {
+        format!(
+            "COFN {filename}\r\n{}",
+            text.lines()
+                .filter(|l| !l.trim_start().starts_with("COFN "))
+                .collect::<Vec<_>>()
+                .join("\r\n")
+        )
+    } else {
+        text
+    };
+    let bytes = encode(
+        &text,
+        original.map_or(&TextEncoding::Utf16Le, |z| &z.encoding),
+    )?;
     if let Some(original) = original {
         copy_dependencies(original, path)?;
     }
     if custom_catalog {
-        fs::write(path.with_extension("AGF"), agf).map_err(|e| e.to_string())?;
+        exchange::put(
+            &mut sidecars,
+            path.with_file_name(format!("{catalog}.AGF")),
+            agf.into_bytes(),
+        )?;
     }
-    fs::write(
-        path,
-        encode(
-            &text,
-            original.map_or(&TextEncoding::Utf16Le, |z| &z.encoding),
-        )?,
-    )
-    .map_err(|e| e.to_string())
+    exchange::write(&sidecars)?;
+    fs::write(path, bytes).map_err(|e| e.to_string())
 }
 
 fn copy_dependencies(original: &ZmxDocument, output: &Path) -> Result<(), String> {
@@ -1204,9 +1752,21 @@ fn copy_dependencies(original: &ZmxDocument, output: &Path) -> Result<(), String
     Ok(())
 }
 
-fn patch_nsc(project: &Project, original: &ZmxDocument) -> Result<String, String> {
+fn patch_nsc(
+    project: &Project,
+    original: &ZmxDocument,
+    output: &Path,
+    sidecars: &mut exchange::Sidecars,
+) -> Result<String, String> {
     let a = &project.scene;
     let b = &original.baseline_scene;
+    if a.sources
+        .iter()
+        .zip(&b.sources)
+        .any(|(s, t)| s.medium != t.medium)
+    {
+        return Err("Inside Ofによる初期媒質を変えたモデルはJSONで保存してください".into());
+    }
     if a.sources.len() != b.sources.len()
         || a.surfaces.len() != b.surfaces.len()
         || serde_json::to_value(&a.materials).ok() != serde_json::to_value(&b.materials).ok()
@@ -1223,19 +1783,13 @@ fn patch_nsc(project: &Project, original: &ZmxDocument) -> Result<String, String
             return Err("NSCの形状・材質の変更はJSONプロジェクトに保存してください".into());
         }
     }
-    if a.sources
-        .iter()
-        .zip(&b.sources)
-        .any(|(s, t)| s.wavelength_um != t.wavelength_um)
-    {
-        return Err("NSCの波長設定の変更はJSONプロジェクトに保存してください。ZMXの波長表更新は追加予定です".into());
-    }
+    let spectral = exchange::nsc_spectra(a, original, output, sidecars)?;
+    let local_poses = exchange::nsc_local_poses(a, original)?;
     let mut source_index = 0;
     let mut current_source = None;
-    let mut current_surface = None;
     let mut object_index = 0usize;
     let mut lines = Vec::new();
-    let values: Vec<BTreeMap<usize, f64>> = a
+    let mut values: Vec<BTreeMap<usize, f64>> = a
         .sources
         .iter()
         .map(|s| {
@@ -1259,41 +1813,39 @@ fn patch_nsc(project: &Project, original: &ZmxDocument) -> Result<String, String
             ]))
         })
         .collect::<Result<_, String>>()?;
+    for (source, index) in &spectral.wave_indices {
+        values[*source].insert(4, *index as f64);
+    }
     let mut seen = std::collections::BTreeSet::new();
+    let mut saw_spectrum = false;
+    let mut inserted_waves = false;
     for line in original.text.lines() {
         let w = words(line);
         if matches!(w.first(), Some(&"NSOH") | Some(&"SURF")) {
             append_missing_parameters(&mut lines, current_source, &seen, &values);
+            if !saw_spectrum {
+                if let Some(row) = current_source.and_then(|i| spectral.settings[i].as_ref()) {
+                    lines.push(row.clone());
+                }
+            }
+            saw_spectrum = false;
             seen.clear();
             current_source = None;
-            current_surface = None;
+        }
+        if !inserted_waves && w.first() == Some(&"SURF") {
+            lines.extend(spectral.new_waves.clone());
+            inserted_waves = true;
         }
         if w.first() == Some(&"NSOH") {
             object_index += 1;
             current_source = None;
-            current_surface = None;
             if w.get(1) == Some(&"NSC_SDIO") {
                 current_source = Some(source_index);
                 source_index += 1;
-            } else if w.get(1) == Some(&"NSC_IMPT") {
-                let name = w.get(4..).unwrap_or(&[]).join(" ");
-                current_surface = a.surfaces.iter().position(|s| s.name == name);
-            } else if w.get(1) == Some(&"NSC_DETC") {
-                let name = format!("O{object_index} NSC_DETC");
-                current_surface = a.surfaces.iter().position(|s| s.name == name);
             }
         }
         if w.first() == Some(&"NSOP") {
-            let pose = if let Some(i) = current_source {
-                let s = &a.sources[i];
-                Some(Pose {
-                    translation_mm: s.origin_mm,
-                    rotation_deg: s.diode.as_ref().map_or(V3::default(), |d| d.rotation_deg),
-                })
-            } else {
-                current_surface.map(|i| a.surfaces[i].pose.clone())
-            };
-            if let Some(pose) = pose {
+            if let Some(pose) = object_index.checked_sub(1).and_then(|i| local_poses.get(i)) {
                 lines.push(format!(
                     "  NSOP {} {} {} {} {} {} {}",
                     pose.translation_mm.0[0],
@@ -1304,6 +1856,13 @@ fn patch_nsc(project: &Project, original: &ZmxDocument) -> Result<String, String
                     pose.rotation_deg.0[2],
                     w.get(7..).unwrap_or(&[]).join(" ")
                 ));
+                continue;
+            }
+        }
+        if w.starts_with(&["NSCS", "7", "3"]) {
+            saw_spectrum = true;
+            if let Some(row) = current_source.and_then(|i| spectral.settings[i].as_ref()) {
+                lines.push(row.clone());
                 continue;
             }
         }
@@ -1326,6 +1885,11 @@ fn patch_nsc(project: &Project, original: &ZmxDocument) -> Result<String, String
         lines.push(line.into());
     }
     append_missing_parameters(&mut lines, current_source, &seen, &values);
+    if !saw_spectrum {
+        if let Some(row) = current_source.and_then(|i| spectral.settings[i].as_ref()) {
+            lines.push(row.clone());
+        }
+    }
     Ok(lines.join("\r\n") + "\r\n")
 }
 

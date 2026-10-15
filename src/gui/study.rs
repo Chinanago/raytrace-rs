@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     record::RunRecord,
-    scan::{linear_values, Parameter, ScanCase, ScanManifest, ScanPlan},
+    scan::{linear_values, Parameter, ParameterLink, ScanAxis, ScanCase, ScanManifest, ScanPlan},
 };
 
 pub(super) struct Study {
@@ -10,8 +10,12 @@ pub(super) struct Study {
     pub comparison_open: bool,
     pub comparison_max: f64,
     pair: [usize; 2],
+    comparison_detectors: [usize; 2],
     pub open: bool,
     pub parameter: Option<Parameter>,
+    secondary: Option<Parameter>,
+    secondary_values: String,
+    links: Vec<ParameterLink>,
     start: f64,
     end: f64,
     count: usize,
@@ -34,8 +38,12 @@ impl Default for Study {
             comparison_open: false,
             comparison_max: 1.0,
             pair: [0, 1],
+            comparison_detectors: [0, 0],
             open: false,
             parameter: None,
+            secondary: None,
+            secondary_values: String::new(),
+            links: Vec::new(),
             start: 0.0,
             end: 1.0,
             count: 7,
@@ -104,6 +112,33 @@ fn unit(parameter: &Parameter) -> &str {
     } else {
         parameter.unit()
     }
+}
+fn parameter_choice(
+    ui: &mut egui::Ui,
+    id: &str,
+    value: &mut Parameter,
+    options: &[Parameter],
+    project: &Project,
+) {
+    egui::ComboBox::from_id_salt(id)
+        .width(390.)
+        .selected_text(value.label(project))
+        .show_ui(ui, |ui| {
+            for p in options {
+                ui.selectable_value(value, p.clone(), p.label(project));
+            }
+        });
+}
+fn case_label(c: &ScanCase, plan: &ScanPlan) -> String {
+    let mut label = format!(
+        "{:.5} {}",
+        c.value * scale(&plan.parameter),
+        unit(&plan.parameter)
+    );
+    if let Some((s, v)) = plan.secondary.as_ref().zip(c.secondary_value) {
+        label += &format!(" / {:.5} {}", v * scale(&s.parameter), unit(&s.parameter));
+    }
+    label
 }
 
 impl App {
@@ -187,6 +222,26 @@ impl App {
             let plan = ScanPlan {
                 parameter,
                 values,
+                secondary: self
+                    .study
+                    .secondary
+                    .clone()
+                    .map(|parameter| -> Result<ScanAxis, String> {
+                        let values = self
+                            .study
+                            .secondary_values
+                            .split(|c: char| c == ',' || c == ';' || c.is_whitespace())
+                            .filter(|v| !v.is_empty())
+                            .map(|v| {
+                                v.parse::<f64>()
+                                    .map(|v| v / scale(&parameter))
+                                    .map_err(|_| "第2軸の値を確認してください".into())
+                            })
+                            .collect::<Result<Vec<_>, String>>()?;
+                        Ok(ScanAxis { parameter, values })
+                    })
+                    .transpose()?,
+                links: self.study.links.clone(),
                 threads: self.threads,
                 rays_per_source: (!self.study.use_current).then_some(self.study.rays),
             };
@@ -297,6 +352,7 @@ impl App {
             seconds: record.trace_seconds,
             texture: None,
             screen: None,
+            roi_cache: None,
         });
         self.stale = false;
         self.view = View::Screen;
@@ -361,6 +417,7 @@ impl App {
                                         );
                                     }
                                 });
+
                             if old != self.study.parameter {
                                 if let Some(p) = self.study.parameter.clone() {
                                     self.set_study_parameter(p);
@@ -386,6 +443,110 @@ impl App {
                                     );
                                 });
                             }
+                            egui::CollapsingHeader::new("2軸の走査・値の連動").show(ui, |ui| {
+                                let options = parameters(&self.project);
+                                let mut enabled = self.study.secondary.is_some();
+                                if ui.checkbox(&mut enabled, "第2軸を追加").changed() {
+                                    self.study.secondary = if enabled {
+                                        options
+                                            .iter()
+                                            .find(|p| Some(*p) != self.study.parameter.as_ref())
+                                            .cloned()
+                                    } else {
+                                        None
+                                    };
+                                    if let Some(p) = &self.study.secondary {
+                                        self.study.secondary_values = format!(
+                                            "{:.6}",
+                                            p.value(&self.project).unwrap_or(0.) * scale(p)
+                                        );
+                                    }
+                                }
+                                if let Some(p) = &mut self.study.secondary {
+                                    let previous = p.clone();
+                                    parameter_choice(
+                                        ui,
+                                        "secondary_axis",
+                                        p,
+                                        &options,
+                                        &self.project,
+                                    );
+                                    if *p != previous {
+                                        self.study.secondary_values = format!(
+                                            "{:.6}",
+                                            p.value(&self.project).unwrap_or(0.) * scale(p)
+                                        );
+                                    }
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!("値一覧 ({})", unit(p)));
+                                        ui.text_edit_singleline(&mut self.study.secondary_values);
+                                    });
+                                    ui.label("2軸の全組合せを計算します（合計256ケースまで）。");
+                                }
+                                let mut remove = None;
+                                for (i, l) in self.study.links.iter_mut().enumerate() {
+                                    ui.push_id(i, |ui| {
+                                        ui.separator();
+                                        ui.label("連動元");
+                                        parameter_choice(
+                                            ui,
+                                            "link_source",
+                                            &mut l.source,
+                                            &options,
+                                            &self.project,
+                                        );
+                                        ui.label("連動先");
+                                        parameter_choice(
+                                            ui,
+                                            "link_target",
+                                            &mut l.target,
+                                            &options,
+                                            &self.project,
+                                        );
+                                        ui.horizontal(|ui| {
+                                            ui.label("先 = 元 ×");
+                                            ui.add(egui::DragValue::new(&mut l.scale).speed(0.01));
+                                            ui.label("+");
+                                            ui.add(egui::DragValue::new(&mut l.offset).speed(0.1));
+                                            ui.label(l.target.unit());
+                                            if ui.small_button("削除").clicked() {
+                                                remove = Some(i);
+                                            }
+                                        });
+                                    });
+                                }
+                                if let Some(i) = remove {
+                                    self.study.links.remove(i);
+                                }
+                                if ui.small_button("距離・差分を保つ連動を追加").clicked()
+                                {
+                                    if let Some(source) = self.study.parameter.clone() {
+                                        if let Some(target) = options
+                                            .iter()
+                                            .find(|p| {
+                                                **p != source
+                                                    && p.unit() == source.unit()
+                                                    && Some(*p) != self.study.secondary.as_ref()
+                                                    && !self
+                                                        .study
+                                                        .links
+                                                        .iter()
+                                                        .any(|l| l.target == **p)
+                                            })
+                                            .cloned()
+                                        {
+                                            let offset = target.value(&self.project).unwrap_or(0.)
+                                                - source.value(&self.project).unwrap_or(0.);
+                                            self.study.links.push(ParameterLink {
+                                                source,
+                                                target,
+                                                scale: 1.,
+                                                offset,
+                                            });
+                                        }
+                                    }
+                                }
+                            });
                             ui.checkbox(&mut self.study.use_current, "現在の光源本数を使用");
                             if !self.study.use_current {
                                 ui.horizontal(|ui| {
@@ -424,6 +585,9 @@ impl App {
                         m.plan.parameter.label(&m.base),
                         m.cases.len()
                     ));
+                    if let Some(s) = &m.plan.secondary {
+                        ui.label(format!("第2軸：{}", s.parameter.label(&m.base)));
+                    }
                     let done = m
                         .cases
                         .iter()
@@ -473,11 +637,7 @@ impl App {
                                 }
                                 ui.end_row();
                                 for (i, c) in m.cases.iter().enumerate() {
-                                    ui.label(format!(
-                                        "{:.5} {}",
-                                        c.value * scale(&m.plan.parameter),
-                                        unit(&m.plan.parameter)
-                                    ));
+                                    ui.label(case_label(c, &m.plan));
                                     let d = c.detectors.get(self.study.detector);
                                     ui.label(d.map_or("—".into(), |d| {
                                         format!("{:.5}", d.received_percent)
@@ -538,15 +698,28 @@ impl App {
                                         ui.selectable_value(
                                             &mut self.study.pair[axis],
                                             i,
-                                            format!(
-                                                "{}: {:.4} {}",
-                                                i + 1,
-                                                c.value * scale(&m.plan.parameter),
-                                                unit(&m.plan.parameter)
-                                            ),
+                                            format!("{}: {}", i + 1, case_label(c, &m.plan)),
                                         );
                                     }
                                 });
+                            if let Some(c) = m.cases.get(self.study.pair[axis]) {
+                                egui::ComboBox::from_id_salt(("compare_screen", axis))
+                                    .width(140.)
+                                    .selected_text(
+                                        c.detectors
+                                            .get(self.study.comparison_detectors[axis])
+                                            .map_or("スクリーン", |d| d.name.as_str()),
+                                    )
+                                    .show_ui(ui, |ui| {
+                                        for (i, d) in c.detectors.iter().enumerate() {
+                                            ui.selectable_value(
+                                                &mut self.study.comparison_detectors[axis],
+                                                i,
+                                                &d.name,
+                                            );
+                                        }
+                                    });
+                            }
                         }
                         if ui
                             .add_enabled(self.job.is_none(), egui::Button::new("2ケースを比較"))
@@ -583,13 +756,14 @@ impl App {
     }
 
     pub(super) fn load_comparison(&mut self, ctx: &egui::Context) {
-        let request = (|| -> Result<Vec<(PathBuf, String)>, String> {
+        let request = (|| -> Result<Vec<(PathBuf, String, usize)>, String> {
             let m = self.study.manifest.as_ref().ok_or("走査結果がありません")?;
             let dir = self.study.directory.as_ref().ok_or("保存先がありません")?;
             self.study
                 .pair
                 .iter()
-                .map(|&i| {
+                .enumerate()
+                .map(|(slot, &i)| {
                     let c = m.cases.get(i).ok_or("比較するケースを選んでください")?;
                     let file = c
                         .run_file
@@ -597,11 +771,8 @@ impl App {
                         .ok_or("完了したケースを選んでください")?;
                     Ok((
                         dir.join(file),
-                        format!(
-                            "{:.5} {}",
-                            c.value * scale(&m.plan.parameter),
-                            unit(&m.plan.parameter)
-                        ),
+                        case_label(c, &m.plan),
+                        self.study.comparison_detectors[slot],
                     ))
                 })
                 .collect()
@@ -613,14 +784,13 @@ impl App {
                 return;
             }
         };
-        let detector = self.study.detector;
         let (tx, rx) = mpsc::channel();
         self.job = Some(rx);
         let context = ctx.clone();
         std::thread::spawn(move || {
             let result = (|| -> Result<Vec<Comparison>, String> {
                 let mut images = Vec::new();
-                for (path, label) in request {
+                for (path, label, detector) in request {
                     let r = RunRecord::open(&path)?;
                     let map = r
                         .report
@@ -785,9 +955,42 @@ fn study_plot(
             area.bottom() - (y / maxy) as f32 * area.height(),
         )
     };
+    let series = |i: usize| {
+        m.cases[i]
+            .secondary_value
+            .and_then(|v| {
+                m.plan
+                    .secondary
+                    .as_ref()
+                    .and_then(|s| s.values.iter().position(|x| *x == v))
+            })
+            .unwrap_or(0)
+    };
+    let palette = [
+        BLUE,
+        Color32::from_rgb(201, 78, 75),
+        Color32::from_rgb(49, 143, 101),
+        Color32::from_rgb(149, 89, 183),
+        Color32::from_rgb(203, 137, 38),
+        Color32::from_rgb(45, 146, 166),
+    ];
+    for k in 0..m.plan.secondary.as_ref().map_or(1, |s| s.values.len()) {
+        let mut line = points
+            .iter()
+            .filter(|p| series(p.0) == k)
+            .map(|p| pos(p.1, p.2))
+            .collect::<Vec<_>>();
+        line.sort_by(|a, b| a.x.total_cmp(&b.x));
+        if line.len() > 1 {
+            painter.add(egui::Shape::line(
+                line,
+                Stroke::new(1.0_f32, palette[k % palette.len()]),
+            ));
+        }
+    }
     for &(i, x, y) in &points {
         let p = pos(x, y);
-        painter.circle_filled(p, 3.5, BLUE);
+        painter.circle_filled(p, 3.5, palette[series(i) % palette.len()]);
         if response.clicked()
             && response
                 .interact_pointer_pos()
@@ -803,6 +1006,16 @@ fn study_plot(
         egui::FontId::proportional(10.0),
         MUTED,
     );
+    if let Some(s) = &m.plan.secondary {
+        ui.horizontal_wrapped(|ui| {
+            for (i, v) in s.values.iter().enumerate() {
+                ui.colored_label(
+                    palette[i % palette.len()],
+                    format!("● {:.4} {}", v * scale(&s.parameter), unit(&s.parameter)),
+                );
+            }
+        });
+    }
     painter.text(
         Pos2::new(area.left(), rect.bottom() - 2.0),
         egui::Align2::LEFT_BOTTOM,

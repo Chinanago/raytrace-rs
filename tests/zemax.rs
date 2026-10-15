@@ -142,7 +142,7 @@ fn missing_spectrum_and_unknown_object_cannot_silently_trace() {
     let path = dir.join("spectrum.zmx");
     let text = diode().replace(
         " NSOP 0 0 0 0 0 0",
-        " NSCS 7 3 0 0 0 0 0.4 0.7 3 \"missing.SPCD\"\n NSOP 0 0 0 0 0 0",
+        " NSCS 7 3 8 0 0 0 0.4 0.7 3 \"missing.SPCD\"\n NSOP 0 0 0 0 0 0",
     );
     fs::write(&path, text).unwrap();
     let mut p = Project::open(&path, &[]).unwrap();
@@ -283,6 +283,7 @@ fn mesh_bvh_and_absorbing_medium_match_planar_solution() {
         sources: Vec::new(),
         surfaces: vec![
             Surface {
+                coating: None,
                 name: "slab".into(),
                 pose: Default::default(),
                 shape,
@@ -297,6 +298,7 @@ fn mesh_bvh_and_absorbing_medium_match_planar_solution() {
                 },
             },
             Surface {
+                coating: None,
                 name: "screen".into(),
                 pose: raytrace_rs::math::Pose {
                     translation_mm: V3([0.0, 0.0, 2.0]),

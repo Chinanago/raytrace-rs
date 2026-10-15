@@ -44,21 +44,37 @@ cargo run --release --example assembly_demo -- results/assembly_demo.json
 ./target/release/raytrace-rs.exe results/assembly_demo.json --threads 4 --output results/assembly_trace.json
 ```
 
+## コーティング・スペクトル・材料
+
+逐次ZMXの `COAT` は、ZMXと同じフォルダーのDAT、追加カタログ、標準のZemax CoatingsフォルダーからIDEAL／TABLE定義を読み込みます。ファイルを指定する `COFN` がある場合はその名前を使います。「読込レポート → カタログフォルダーを追加…」で検索先を追加できます。
+
+IDEALは透過・反射・全反射時の反射率、TABLEは波長・入射角ごとの光量係数を扱います。TABLEは波長方向に線形補間、角度方向にcos補間し、高屈折率側からの入射では低屈折率側の角度を使います。各界面のS/P強度を平均する幾何光学モデルで、偏光状態・位相は追跡しません。透過・反射の残りを界面吸収として記録します。多層膜の処方やNSCの面別コーティングは読込レポートで計算を止めます。「未コートFresnelで計算」を選ぶと、保存されたコーティングを保持して未コート条件を採用します。[IDEAL形式](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/The_IDEAL_Data_Section.html)、[TABLE形式](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v25101/en/OpticStudio_User_Guide/OpticStudio_Help/topics/The_TABLE_Data_Section.html)
+
+NSC光源のSPCDファイルは、昇順の波長[μm]と相対光量の2列（3〜200点）を読み込みます。System Wavelengths、Uniform Power Spectrum、Black Body Spectrumにも対応します。各光線の波長を相対光量で選び、発射光量の合計を保ちます。波長選択は位置・方向・ダイオード配列とは独立したSobolの次元を使います。スペクトルをプロジェクト・計算記録へ保存するため、保存後の追跡には元のSPCDを必要としません。CIE色座標からのスペクトル推定は未対応です。[SPCD形式](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Defining_a_spectrum_file.html)
+
+AGFの分散式1〜13と内部透過率ITを扱います。ITの指定厚さから吸収係数[1/mm]へ変換し、吸収係数を波長方向に線形補間します。材料・内部透過率・コーティングの有効波長範囲を外れる光源は、計算前に理由を示して停止します。「全光源の計算波長を単色で指定」でスペクトルと比較できます。[AGF形式と分散式番号](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/The_AGF_BGF_File_Formats.html)
+
+Coordinate Breakは、変換順序と変換後の軸に沿った厚さを順番に適用します。NSCの正・負の参照番号、参照の連鎖、Inside Ofによる初期媒質と外側媒質も保持します。Zemax既定の局所X→Y→Z回転を、配置画面の座標へ変換して読み込みます。座標リターン・ソルブ・NSOOの追加設定は読込レポートで対応範囲を示します。NSCの参照関係は、編集後の局所配置へ逆変換して書き戻します。Coordinate Breakを含む編集はJSONへ保存でき、ZMXは無変更保存に対応します。[座標系と参照関係](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v25101/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Object_Placement.html)
+
 ## スクリーンの表示
 
 「スクリーン」タブで観測面を選び、「ピーク = 1」と「基準光量比 [%]」を切り替えられます。基準光量比は発射基準面の光量に対する各画素の積算光量です。色目盛は線形／平方根から選びます。表示の変更は再追跡を必要とせず、元の光量と光量収支を保持します。配置・条件を変更した後は前回の結果であることを表示します。
 
-「半値幅」で、最大画素を通るX・Y断面の半値交点を赤い破線で示し、FWHMをmmで表示します。「断面」で両方向のプロファイルを同じ画面内に表示します。座標はスクリーンの局所座標です。
+「半値幅」で、X・Y断面の半値交点を赤い破線で示し、FWHMをmmで表示します。初期の断面は最大画素を通ります。「断面位置・ROI」で任意の局所座標を指定すると、最も近い画素列へ移ります。半値は各断面の最大値の50%です。「断面」で両方向のプロファイルを同じ画面内に表示します。座標はスクリーンの局所座標です。
 
 「表示範囲」で基準光量比の上端を固定できます。「ファイル → スクリーンを書き出す…」は、元の画素光量・基準光量比・mm²当たりの光量比をCSVへ、X/Y断面を別CSVへ、分布をPNGへ保存します。基準面・座標・正規化・表示範囲・計算条件も同じフォルダーに記録します。
 
 半値交点は画素中心の値を線形補間して求めます。断面に複数の山がある場合は、最大ピークの両側で最初に半値へ達する位置を採ります。同じ最大値が複数ある場合は、画素配列の先頭（Yの小さい行、Xの小さい列）を選びます。交点が両側に揃わない方向は「半値交点不足」、受光ゼロは「受光なし」と表示します。幅の解釈には表示された画素寸法を併せて確認してください。
 
+ROIは指定基準面の光量に対する割合を先に表示し、面積[mm²]と平均光量比[%/mm²]を併記します。指定矩形をスクリーン内へ切り詰め、端の画素は重なる面積で按分します。画素内で密度が一定とする後処理です。出力の `postprocessing.json` に範囲・計算法・実際の断面位置を、`selected_x_profile.csv`／`selected_y_profile.csv` に選択断面を保存します。元の画素CSVも保持します。
+
 ## パラメーター走査
 
 選択部品の「操作 → この部品の値を走査…」、または「ファイル → パラメーター走査…」で専用画面を開きます。部品の位置・角度、ロッドの幅・長さ、単体モデルの面の位置・角度、全光源の計算波長から1項目を選び、範囲と点数または値の一覧を指定します。GUIの波長単位はnm、計画JSONではμmです。
 
-各ケースは同じ光源方式とseedを使い、受光量・半値幅・追跡時間・失敗理由を記録します。完了ケースの「表示」で、保存した結果と配置を開けます。「2ケースを比較」では分布とX/Y断面を並べ、共通の基準光量比と表示上端で比較します。半値幅や表示設定の変更は追跡後の処理です。
+「2軸の走査・値の連動」を開くと、第2軸の値一覧と、`連動先 = 連動元 × 係数 + 差分` を設定できます。差分は計画JSONの単位（mm・deg・μm）で指定します。「距離・差分を保つ連動を追加」は現在の差分を初期値に使います。連動は同じ単位の項目間で設定でき、循環・連動先の重複・走査軸との競合を計算前に検査します。2軸は全組合せを計算します。
+
+各ケースは同じ光源方式とseedを使い、受光量・半値幅・追跡時間・失敗理由を記録します。完了ケースの「表示」で、保存した結果と配置を開けます。「2ケースを比較」では分布とX/Y断面を並べ、共通の基準光量比と表示上端で比較します。比較するスクリーンはA/Bそれぞれで選べます。半値幅や表示設定の変更は追跡後の処理です。
 
 計算中は完了した発射光線数を表示し、「中止」で停止できます。単発計算では前回の完了結果を保持します。走査は完了したケースを保存し、計算途中だったケースを未完了へ戻します。「走査記録を開く… → 未完了のケースを再開」で続行でき、完了・失敗が確定したケースを維持します。走査記録は同じソフトの版で再開します。各ケースは合計200万光線、計画全体は256ケースが上限です。
 
@@ -73,6 +89,8 @@ cargo run --release --example assembly_demo -- results/assembly_demo.json
 {
   "parameter": { "type": "surface_position", "surface": 2, "axis": 2 },
   "values": [65.0, 68.5, 72.0],
+  "secondary": { "parameter": { "type": "wavelength" }, "values": [0.45, 0.635] },
+  "links": [],
   "threads": 4,
   "rays_per_source": 4096
 }
@@ -170,22 +188,24 @@ GUIなしで使う場合は `cargo build --release --locked` でビルドしま�
 | NSC Source Diode | 位置・回転・光量・波長番号・X/Y発散・発光領域・Gaussian幅・配列 |
 | NSC Detector Rectangle | 位置・回転・寸法・ピクセル数 |
 | NSC CAD Import | STEPで参照された単一の閉じたソリッド |
-| AGF | GCAT指定カタログのSchott式1・Sellmeier 1式2、LD波長範囲、IT内部透過率 |
+| AGF | GCAT指定カタログの分散式1〜13、LD波長範囲、IT内部透過率 |
 
-Source DiodeはGaussian係数Gx/Gy/Hx/Hyが1、非点収差0の範囲に対応します。Sequential ZMXの初期照射は主波長の軸上平行光です。視野・瞳・有限距離物体は照射条件の追加が必要です。
+Source DiodeはGaussian係数Gx/Gy/Hx/Hyが1、非点収差0の範囲に対応します。Sequential ZMXはWAVMの相対重み、Angle／Object Heightの視野とFWGNを読み込みます。有限距離の物点は、瞳の面積に一様に選んだ点へ向けて照射します。無限遠の視野は瞳を通る平行束です。無回転・軸上のSTOP、その前に屈折・反射面がない構成、ENPDによる瞳径に対応します。入射瞳の結像、Ray Aiming、視野のビネッティング補正が必要な照射は読込時に停止します。光量の分母はこの条件で発射した光線の合計で、物点の全放射光量への換算は行いません。[視野型の定義](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v251/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Field_Type.html)
 
-材料カタログはGUIの「読込レポート → AGFフォルダーを追加…」から指定できます。追加後に部品を読み込むか、「現在のファイルを読み直す」を使います。
+材料カタログはGUIの「読込レポート → カタログフォルダーを追加…」から指定できます。追加後に部品を読み込むか、「現在のファイルを読み直す」を使います。
 
-読込レポートは部品単位で、計算対応・原文のみ保持・条件指定待ち・条件指定済み・未対応を表示します。計算波長ごとの屈折率と吸収係数も確認できます。コーティングは名前を保持し、未コートFresnelで計算するには明示設定が必要です。SPCDスペクトルを使う光源は、単色の計算波長を指定して追跡します。未定義の波長番号、未知の面・オブジェクト属性、未対応の環境条件は読込時に明示します。
+読込レポートは部品単位で、計算対応・原文のみ保持・条件指定待ち・条件指定済み・未対応を表示します。計算波長ごとの屈折率と吸収係数も確認できます。対応するコーティングとスペクトルを計算に使用し、未コート・単色の明示設定も記録します。未定義の波長番号、未知の面・オブジェクト属性、未対応の環境条件は読込時に明示します。
 
 STEPの初回読込にはFreeCADのPythonが必要です。`RAYTRACE_FREECAD_PYTHON` で実行ファイルを指定できます。Windowsの既定値は `%LOCALAPPDATA%/Programs/FreeCAD 1.1/bin/python.exe` です。0.02 mm設定で分割したメッシュをデータ保存先の `cad_cache` に置き、追跡はRustで行います。CADの精度はメッシュ分割を変えた収束確認が必要です。
 
 「保存…」は元のZMX全文と編集状態をJSONプロジェクトへ保存します。「ZMX書出し…」は次の編集をZemaxへ返します。
 
-- Sequential：軸上の面形状・間隔・口径・材料。
-- NSC：既存オブジェクトの位置・回転、Source Diodeの本数・光量・発散・配列・発光領域。
+- Sequential：軸上の面形状・正負の間隔・口径・ミラー・材料と内部透過率、波長表、IDEAL／TABLEコーティング。対応する物体・視野条件は、照射配置の変更を伴わない編集で保持します。
+- NSC：参照関係を含む既存オブジェクトの位置・回転、Source Diodeの本数・光量・発散・配列・発光領域、単色波長・SPCDスペクトル。
 
-変更のないZMXは元の文字コードとレコードを保って書き出します。参照ファイルも保存先へコピーし、同名で内容が異なるファイルがあれば上書きを止めます。NSCの新規部品、形状・材料・波長表の変更、座標ブレークを伴う編集はJSONプロジェクトで保存します。
+変更のないZMXは元の文字コードとレコードを保って書き出します。参照ファイルも保存先へコピーし、保存済みの材料・コーティング・スペクトルからテキスト参照ファイルを復元できます。同名で内容が異なるファイルがあれば上書きを止めます。独自のAGF／DAT／SPCDには出力名を付けます。NSCの新規部品・形状・材料・面別コーティングの変更、座標ブレークを伴う編集、視野ごとに異なるスペクトル・光量比の編集はJSONプロジェクトで保存します。
+
+光線数・seed・発射基準面・単色／未コートの上書き条件まで含む再計算には、JSONプロジェクトと計算記録を使います。
 
 ## 光量の読み方
 
@@ -236,20 +256,24 @@ CAD分割精度を比較する場合はSTEP参照を持つ元のZMXを指定し�
 
 ## OpticStudioと比べた主な未対応機能
 
-[OpticStudioの公式機能一覧](https://www.ansys.com/products/optics/ansys-zemax-opticstudio)、[面型](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Summary_Table_of_Sequential_Surface_Types.html)、[光源モデル](https://optics.ansys.com/hc/en-us/articles/42661687233939-Light-sources-used-in-illumination-design)と比較した、v0.8の主な制約です。
+[OpticStudioの公式機能一覧](https://www.ansys.com/products/optics/ansys-zemax-opticstudio)、[面型](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Summary_Table_of_Sequential_Surface_Types.html)、[光源モデル](https://optics.ansys.com/hc/en-us/articles/42661687233939-Light-sources-used-in-illumination-design)と比較した、v0.9の主な制約です。
 
 | 分野 | 未対応の機能 |
 |---|---|
-| ファイル・配置 | ZMX全定義の計算再現、任意の編集の再書出し、ZOS/ZBB/ZRD、Coordinate Break連鎖、NSC参照階層 |
-| 面・照射 | 円筒レンズ・トロイド・自由曲面・回折面、視野・瞳・有限距離物体・Ray Aimingの自動再現 |
-| 光源・材料 | IES/SDF/SPCD、Source Diodeの非点収差・超Gaussian、追加AGF分散式、温度依存、GRIN、複屈折 |
-| 界面・散乱 | 偏光追跡、多層薄膜、実コーティング、BRDF/BSDF表面散乱、体積散乱、迷光経路の分類 |
+| ファイル・配置 | ZMX全定義の計算再現、任意の編集の再書出し、ZOS/ZBB/ZRD、座標リターン、NSOOの追加設定 |
+| 面・照射 | 円筒レンズ・トロイド・自由曲面・回折面、屈折面を介した入射瞳の計算、Ray Aiming、像高指定の視野、ビネッティング補正 |
+| 光源・材料 | IES/SDF、CIE色座標からのスペクトル推定、Source Diodeの非点収差・超Gaussian、温度依存、GRIN、複屈折 |
+| 界面・散乱 | 偏光・位相の追跡、多層薄膜の処方、NSC面別コーティング、BRDF/BSDF表面散乱、体積散乱、迷光経路の分類 |
 | 評価・設計 | 収差図・MTF/PSF、自動最適化、ソルブ／ピックアップ、複数構成、公差・歩留まり解析 |
 | GUI | 3Dビューでの操作、部品カタログ。部品の追加・配置・ロッド編集は2D投影と数値入力に対応 |
 
 POPによる波動伝搬、干渉、回折によるビーム拡がり、ファイバーのモード結合は対象外です。
 
 ## 検証
+
+波長・角度・表裏別のコーティング収支、13式のAGFと内部透過率、スペクトル、座標変換、有限物体と視野、ミラー、ZMXの参照ファイル復元、2軸・連動の中止と再開、ROIと任意断面を自作データで検査します。
+
+`cargo run --release --example performance_check` は単色／200波長の各131,072光線を1スレッドで測り、準備・光線生成・追跡を分けて5回の中央値、光線の署名、全画素と光量収支をJSONへ出力します。性能の比較には同じPC・入力・精度を使用してください。
 
 ```powershell
 cargo test --all-features --locked

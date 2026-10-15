@@ -1,8 +1,10 @@
 //! A small geometric-optics kernel. Lengths are mm; wavelengths are micrometres.
 pub mod assembly;
 pub mod cad;
+pub mod coating;
 pub mod compatibility;
 pub mod convergence;
+pub mod dispersion;
 pub mod export;
 pub mod geometry;
 #[cfg(feature = "gui")]
@@ -15,6 +17,7 @@ pub mod record;
 pub mod sampling;
 pub mod scan;
 pub mod screen;
+pub mod spectrum;
 pub mod storage;
 pub mod trace;
 pub mod validation;

@@ -154,6 +154,57 @@ fn component_report(
         status: CompatibilityStatus::Computed,
     }];
     entries.extend(project.issues.iter().map(|i| classify(i, uncoated, mono)));
+    entries.extend(
+        project
+            .scene
+            .sources
+            .iter()
+            .enumerate()
+            .filter_map(|(i, s)| {
+                s.spectrum.as_ref().map(|spectrum| CompatibilityEntry {
+                    code: "spectrum_model".into(),
+                    message: mono.map_or_else(
+                        || {
+                            format!(
+                                "光源{}: {}波長を相対光量でサンプリング。発射光量の合計を維持",
+                                i + 1,
+                                spectrum.samples.len()
+                            )
+                        },
+                        |w| {
+                            format!(
+                                "光源{}: スペクトルを保存し、単色{:.3} nmを使用",
+                                i + 1,
+                                w * 1000.
+                            )
+                        },
+                    ),
+                    status: if mono.is_some() {
+                        CompatibilityStatus::OverrideApplied
+                    } else {
+                        CompatibilityStatus::Computed
+                    },
+                })
+            }),
+    );
+    entries.extend(project.scene.surfaces.iter().filter_map(|s| {
+        s.coating.as_ref().map(|c| CompatibilityEntry {
+            code: "coating_model".into(),
+            message: if uncoated {
+                format!("{} / {}: 未コートFresnelを使用", s.name, c.name)
+            } else {
+                format!(
+                    "{} / {}: 波長・角度・表裏に対応するR/T/Aを使用（各界面でS/P強度を平均）",
+                    s.name, c.name
+                )
+            },
+            status: if uncoated {
+                CompatibilityStatus::OverrideApplied
+            } else {
+                CompatibilityStatus::Computed
+            },
+        })
+    }));
     ComponentCompatibility {
         component: index,
         name: name.into(),
@@ -171,7 +222,7 @@ fn component_report(
                 .scene
                 .sources
                 .iter()
-                .map(|s| mono.unwrap_or(s.wavelength_um)),
+                .flat_map(|s| mono.map_or_else(|| s.wavelengths(), |w| vec![w])),
         ),
         materials,
         entries,
@@ -189,19 +240,17 @@ impl Project {
     pub fn compatibility_report(&self) -> CompatibilityReport {
         let waves = if let Some(a) = &self.assembly {
             unique_waves(a.components.iter().filter(|c| c.enabled).flat_map(|c| {
-                c.project.scene.sources.iter().map(move |s| {
+                c.project.scene.sources.iter().flat_map(move |s| {
                     self.monochromatic_override_um
                         .or(c.project.monochromatic_override_um)
-                        .unwrap_or(s.wavelength_um)
+                        .map_or_else(|| s.wavelengths(), |w| vec![w])
                 })
             }))
         } else {
-            unique_waves(
-                self.scene
-                    .sources
-                    .iter()
-                    .map(|s| self.monochromatic_override_um.unwrap_or(s.wavelength_um)),
-            )
+            unique_waves(self.scene.sources.iter().flat_map(|s| {
+                self.monochromatic_override_um
+                    .map_or_else(|| s.wavelengths(), |w| vec![w])
+            }))
         };
         self.compatibility_report_at_wavelengths(&waves)
     }
@@ -222,10 +271,31 @@ impl Project {
                             .or(c.project.monochromatic_override_um),
                         &waves,
                     );
-                    if c.rod.is_some() {
+                    if let Some(rod) = &c.rod {
                         report.source_format = "generated".into();
                         report.surfaces = 6;
                         report.entries[0].message = "指定寸法と材料からロッドの6面を構成".into();
+                        report
+                            .entries
+                            .extend(rod.coatings.iter().map(|(face, coating)| {
+                                CompatibilityEntry {
+                                    code: "coating_model".into(),
+                                    message: format!(
+                                        "{face} / {}: {}",
+                                        coating.name,
+                                        if self.allow_uncoated || c.project.allow_uncoated {
+                                            "未コートFresnelを使用"
+                                        } else {
+                                            "表裏・波長・角度ごとのR/T/Aを使用"
+                                        }
+                                    ),
+                                    status: if self.allow_uncoated || c.project.allow_uncoated {
+                                        CompatibilityStatus::OverrideApplied
+                                    } else {
+                                        CompatibilityStatus::Computed
+                                    },
+                                }
+                            }));
                     }
                     report
                 })

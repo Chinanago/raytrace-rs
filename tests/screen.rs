@@ -1,4 +1,56 @@
 use raytrace_rs::{screen::ScreenAnalysis, trace::DetectorMap};
+#[test]
+fn arbitrary_slices_use_nearest_rows_and_their_own_half_maximum() {
+    let m = map(401, 401, 4.01, 4.01, |x, y| (-0.5 * (x * x + y * y)).exp());
+    let a = ScreenAnalysis::at(&m, Some([0., 2.])).unwrap();
+    assert!((a.slice_position_mm.unwrap()[1] - 2.).abs() < 1e-12);
+    assert!((a.x_profile.as_ref().unwrap().peak_weight() - (-2f64).exp()).abs() < 1e-12);
+    assert!(
+        (a.x_profile.unwrap().half_maximum.width_mm().unwrap()
+            - 2. * (2. * std::f64::consts::LN_2).sqrt())
+        .abs()
+            < 0.0002
+    );
+    assert!(ScreenAnalysis::at(&m, Some([10., 0.])).is_err());
+}
+#[test]
+fn roi_integrals_clip_and_weight_partial_pixels_without_changing_original_data() {
+    use raytrace_rs::screen::ScreenRoi;
+    let m = map(2, 2, 1., 1., |x, y| if x < 0. && y < 0. { 1. } else { 2. });
+    let original = m.weights.clone();
+    let roi = ScreenRoi {
+        minimum_mm: [-0.5, -0.5],
+        maximum_mm: [0.5, 0.5],
+    };
+    let r = roi.integrate(&m, 10.).unwrap();
+    assert_eq!(r.power_weight, 1.75);
+    assert_eq!(r.percent_of_reference, 17.5);
+    assert_eq!(r.area_mm2, 1.);
+    assert_eq!(r.percent_of_reference_per_mm2, 17.5);
+    let all = ScreenRoi {
+        minimum_mm: [-2., -2.],
+        maximum_mm: [2., 2.],
+    }
+    .integrate(&m, 10.)
+    .unwrap();
+    assert_eq!(all.percent_of_reference, 70.);
+    assert_eq!(all.area_mm2, 4.);
+    let outside = ScreenRoi {
+        minimum_mm: [3., 3.],
+        maximum_mm: [4., 4.],
+    }
+    .integrate(&m, 10.)
+    .unwrap();
+    assert_eq!(outside.power_weight, 0.);
+    assert_eq!(outside.area_mm2, 0.);
+    assert_eq!(m.weights, original);
+    assert!(ScreenRoi {
+        minimum_mm: [1., 0.],
+        maximum_mm: [0., 1.]
+    }
+    .integrate(&m, 10.)
+    .is_err());
+}
 
 fn map(nx: usize, ny: usize, hx: f64, hy: f64, f: impl Fn(f64, f64) -> f64) -> DetectorMap {
     let mut weights = Vec::new();

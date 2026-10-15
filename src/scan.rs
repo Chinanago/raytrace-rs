@@ -1,4 +1,4 @@
-//! One-variable parameter studies with immutable inputs and resumable completed cases.
+//! Parameter studies with immutable inputs, affine links and resumable cases.
 use crate::{
     model::Interaction,
     project::Project,
@@ -163,6 +163,8 @@ pub fn linear_values(start: f64, end: f64, count: usize) -> Result<Vec<f64>, Str
 pub struct ScanPlan {
     pub parameter: Parameter,
     pub values: Vec<f64>,
+    pub secondary: Option<ScanAxis>,
+    pub links: Vec<ParameterLink>,
     pub threads: usize,
     pub rays_per_source: Option<usize>,
 }
@@ -171,9 +173,90 @@ impl Default for ScanPlan {
         Self {
             parameter: Parameter::Wavelength,
             values: vec![0.45, 0.55, 0.635],
+            secondary: None,
+            links: Vec::new(),
             threads: 4,
             rays_per_source: None,
         }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ScanAxis {
+    pub parameter: Parameter,
+    pub values: Vec<f64>,
+}
+/// target = source * scale + offset; scale is dimensionless, offset uses target units.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParameterLink {
+    pub source: Parameter,
+    pub target: Parameter,
+    pub scale: f64,
+    pub offset: f64,
+}
+impl ScanPlan {
+    fn link_order(&self, base: &Project) -> Result<Vec<usize>, String> {
+        if self.links.len() > 64 {
+            return Err("連動条件は64個までです".into());
+        }
+        if self
+            .secondary
+            .as_ref()
+            .is_some_and(|s| s.parameter == self.parameter)
+        {
+            return Err("2軸には異なる対象を指定してください".into());
+        }
+        for (i, l) in self.links.iter().enumerate() {
+            l.source.value(base)?;
+            l.target.value(base)?;
+            if !l.scale.is_finite()
+                || !l.offset.is_finite()
+                || l.source.unit() != l.target.unit()
+                || l.target == self.parameter
+                || self
+                    .secondary
+                    .as_ref()
+                    .is_some_and(|s| s.parameter == l.target)
+                || self.links[..i].iter().any(|p| p.target == l.target)
+            {
+                return Err("連動先の重複・走査軸との競合・単位・係数を確認してください".into());
+            }
+        }
+        let mut order = Vec::new();
+        while order.len() < self.links.len() {
+            let next = (0..self.links.len()).find(|i| {
+                !order.contains(i)
+                    && self
+                        .links
+                        .iter()
+                        .enumerate()
+                        .all(|(j, l)| l.target != self.links[*i].source || order.contains(&j))
+            });
+            order.push(next.ok_or("連動条件に循環があります")?);
+        }
+        Ok(order)
+    }
+    pub fn case_project(
+        &self,
+        base: &Project,
+        value: f64,
+        secondary: Option<f64>,
+    ) -> Result<Project, String> {
+        let order = self.link_order(base)?;
+        let mut p = base.clone();
+        self.parameter.apply(&mut p, value)?;
+        match (&self.secondary, secondary) {
+            (Some(axis), Some(v)) => axis.parameter.apply(&mut p, v)?,
+            (None, None) => (),
+            _ => return Err("第2軸の値が一致しません".into()),
+        }
+        for i in order {
+            let l = &self.links[i];
+            let v = l.source.value(&p)? * l.scale + l.offset;
+            l.target.apply(&mut p, v)?;
+        }
+        Ok(p)
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -185,6 +268,8 @@ pub struct DetectorMetrics {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ScanCase {
     pub value: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secondary_value: Option<f64>,
     pub state: String,
     pub error: Option<String>,
     pub run_file: Option<String>,
@@ -211,24 +296,42 @@ impl ScanManifest {
         {
             return Err("走査の点数・光線数・スレッド数が不正です".into());
         }
-        plan.parameter.value(base)?;
-        for (i, &v) in plan.values.iter().enumerate() {
-            plan.parameter.validate_value(v)?;
-            if !v.is_finite() || plan.values[..i].contains(&v) {
-                return Err("走査値に無効な値・重複があります".into());
+        plan.link_order(base)?;
+        for (parameter, values) in std::iter::once((&plan.parameter, &plan.values))
+            .chain(plan.secondary.iter().map(|s| (&s.parameter, &s.values)))
+        {
+            parameter.value(base)?;
+            if values.is_empty() || values.len() > 256 {
+                return Err("各軸の走査点数は1〜256です".into());
             }
+            for (i, &v) in values.iter().enumerate() {
+                parameter.validate_value(v)?;
+                if values[..i].contains(&v) {
+                    return Err("走査値に重複があります".into());
+                }
+            }
+        }
+        if plan.values.len() * plan.secondary.as_ref().map_or(1, |s| s.values.len()) > 256 {
+            return Err("2軸の組合せは合計256ケースまでです".into());
         }
         let cases = plan
             .values
             .iter()
-            .map(|&value| ScanCase {
-                value,
-                state: "pending".into(),
-                error: None,
-                run_file: None,
-                detected_percent: None,
-                detectors: Vec::new(),
-                trace_seconds: None,
+            .flat_map(|&value| {
+                plan.secondary
+                    .as_ref()
+                    .map_or(vec![None], |s| s.values.iter().map(|v| Some(*v)).collect())
+                    .into_iter()
+                    .map(move |secondary_value| ScanCase {
+                        value,
+                        secondary_value,
+                        state: "pending".into(),
+                        error: None,
+                        run_file: None,
+                        detected_percent: None,
+                        detectors: Vec::new(),
+                        trace_seconds: None,
+                    })
             })
             .collect();
         Ok(Self {
@@ -248,17 +351,13 @@ impl ScanManifest {
         {
             return Err("走査記録は同じソフトの版で再開してください".into());
         }
-        Self::new(&manifest.base, manifest.plan.clone())?;
-        if manifest.cases.len() != manifest.plan.values.len()
-            || manifest
-                .cases
-                .iter()
-                .zip(&manifest.plan.values)
-                .any(|(c, v)| {
-                    c.value != *v
-                        || !["pending", "running", "completed", "failed"]
-                            .contains(&c.state.as_str())
-                })
+        let expected = Self::new(&manifest.base, manifest.plan.clone())?;
+        if manifest.cases.len() != expected.cases.len()
+            || manifest.cases.iter().zip(&expected.cases).any(|(c, v)| {
+                c.value != v.value
+                    || c.secondary_value != v.secondary_value
+                    || !["pending", "running", "completed", "failed"].contains(&c.state.as_str())
+            })
         {
             return Err("走査記録のケースが一致しません".into());
         }
@@ -273,8 +372,19 @@ impl ScanManifest {
                 return Err("走査結果のファイル名が不正です".into());
             }
             let record = RunRecord::open(&dir.join(expected))?;
+            let intended =
+                manifest
+                    .plan
+                    .case_project(&manifest.base, c.value, c.secondary_value)?;
+            let parameters = std::iter::once(&manifest.plan.parameter)
+                .chain(manifest.plan.secondary.iter().map(|s| &s.parameter))
+                .chain(manifest.plan.links.iter().map(|l| &l.target));
             if record.calculation.software_version != manifest.software_version
-                || manifest.plan.parameter.value(&record.calculation.project)? != c.value
+                || parameters
+                    .map(|p| Ok(p.value(&record.calculation.project)? != p.value(&intended)?))
+                    .collect::<Result<Vec<_>, String>>()?
+                    .into_iter()
+                    .any(|v| v)
             {
                 return Err("走査記録とケースの計算条件が一致しません".into());
             }
@@ -315,10 +425,11 @@ impl ScanManifest {
             self.save(dir)?;
             progress(self);
             let outcome = (|| -> Result<Option<ScanCase>, String> {
-                let mut project = self.base.clone();
-                self.plan
-                    .parameter
-                    .apply(&mut project, self.cases[i].value)?;
+                let project = self.plan.case_project(
+                    &self.base,
+                    self.cases[i].value,
+                    self.cases[i].secondary_value,
+                )?;
                 let mut scene = project.trace_scene()?;
                 if let Some(n) = self.plan.rays_per_source {
                     for s in &mut scene.sources {
@@ -367,6 +478,7 @@ impl ScanManifest {
                 .save(&report, seconds, &dir.join(&file))?;
                 Ok(Some(ScanCase {
                     value: self.cases[i].value,
+                    secondary_value: self.cases[i].secondary_value,
                     state: "completed".into(),
                     error: None,
                     run_file: Some(file),

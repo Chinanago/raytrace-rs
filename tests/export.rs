@@ -9,6 +9,38 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 static NEXT: AtomicUsize = AtomicUsize::new(0);
+#[test]
+fn selected_profiles_and_roi_export_include_the_reference_and_actual_pixel_coordinates() {
+    let dir = folder();
+    let m = DetectorMap {
+        name: "test".into(),
+        pixels: [2, 2],
+        half_extent_mm: [1., 1.],
+        weights: vec![1., 2., 3., 4.],
+    };
+    export::write_postprocessing(
+        &dir,
+        &m,
+        10.,
+        Some([0.1, 0.1]),
+        Some(raytrace_rs::screen::ScreenRoi {
+            minimum_mm: [-0.5, -0.5],
+            maximum_mm: [0.5, 0.5],
+        }),
+    )
+    .unwrap();
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("postprocessing.json")).unwrap()).unwrap();
+    assert_eq!(metadata["slice_position_mm"], serde_json::json!([0.5, 0.5]));
+    assert_eq!(metadata["roi_integral"]["percent_of_reference"], 25.);
+    let csv = fs::read_to_string(dir.join("selected_x_profile.csv")).unwrap();
+    assert!(csv
+        .lines()
+        .nth(1)
+        .unwrap()
+        .contains("3.00000000000000000e0"));
+    assert_eq!(m.weights, vec![1., 2., 3., 4.]);
+}
 fn folder() -> PathBuf {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("target/export_tests")

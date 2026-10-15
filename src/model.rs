@@ -7,6 +7,13 @@ use std::collections::HashSet;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Material {
+    Catalog {
+        formula: usize,
+        coefficients: Vec<f64>,
+        valid_range_um: [f64; 2],
+        #[serde(default)]
+        absorption_per_mm: f64,
+    },
     WithAbsorption {
         dispersion: Box<Material>,
         samples: Vec<[f64; 2]>,
@@ -45,6 +52,17 @@ impl Material {
             return None;
         }
         let n = match self {
+            Self::Catalog {
+                formula,
+                coefficients,
+                valid_range_um,
+                ..
+            } => {
+                if !(valid_range_um[0]..=valid_range_um[1]).contains(&wavelength_um) {
+                    return None;
+                }
+                crate::dispersion::index(*formula, coefficients, wavelength_um)?
+            }
             Self::WithAbsorption { dispersion, .. } => dispersion.index(wavelength_um)?,
             Self::Constant { n, .. } => *n,
             Self::Sellmeier {
@@ -99,6 +117,9 @@ impl Material {
         match self {
             Self::WithAbsorption { .. } => 0.0,
             Self::Constant {
+                absorption_per_mm, ..
+            }
+            | Self::Catalog {
                 absorption_per_mm, ..
             }
             | Self::Sellmeier {
@@ -224,6 +245,8 @@ pub enum Interaction {
 #[serde(deny_unknown_fields)]
 pub struct Surface {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coating: Option<crate::coating::Coating>,
     #[serde(default)]
     pub pose: Pose,
     pub shape: Shape,
@@ -270,6 +293,10 @@ impl Default for Settings {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Source {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pupil: Option<PupilIllumination>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spectrum: Option<crate::spectrum::Spectrum>,
     #[serde(default)]
     pub sampling: Sampling,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -287,6 +314,31 @@ pub struct Source {
     pub total_weight: f64,
     #[serde(default)]
     pub seed: u64,
+}
+/// Uniform area samples on a pupil. Finite objects emit from a point; infinite
+/// objects launch a parallel bundle whose intersections fill the pupil.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PupilIllumination {
+    pub pose: Pose,
+    pub aperture: Aperture,
+    pub finite_object: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<usize>,
+}
+impl Source {
+    pub fn wavelengths(&self) -> Vec<f64> {
+        self.spectrum.as_ref().map_or_else(
+            || vec![self.wavelength_um],
+            |s| {
+                s.samples
+                    .iter()
+                    .filter(|v| v[1] > 0.)
+                    .map(|v| v[0])
+                    .collect()
+            },
+        )
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -342,7 +394,7 @@ pub struct Ray {
 }
 
 impl Ray {
-    pub fn validate(&mut self, scene: &PreparedScene) -> Result<(), String> {
+    fn validate_geometry(&mut self, scene: &PreparedScene) -> Result<(), String> {
         if !self.position_mm.finite()
             || !self.direction.finite()
             || self.direction.norm() < 1e-15
@@ -357,11 +409,28 @@ impl Ray {
             return Err(format!("Invalid launch ray {}", self.id));
         }
         self.direction = self.direction.unit();
+        Ok(())
+    }
+    pub fn validate(&mut self, scene: &PreparedScene) -> Result<(), String> {
+        self.validate_geometry(scene)?;
         for (i, material) in scene.spec.materials.iter().enumerate() {
             if material.index(self.wavelength_um).is_none()
                 || material.absorption_at(self.wavelength_um).is_none()
             {
                 return Err(format!("Material {i} is undefined at {} um for launch {}; check the valid wavelength range", self.wavelength_um, self.id));
+            }
+        }
+        for surface in &scene.surfaces {
+            if surface
+                .spec
+                .coating
+                .as_ref()
+                .is_some_and(|c| !c.covers(self.wavelength_um))
+            {
+                return Err(format!(
+                    "{}: コーティングの有効波長範囲に {} um が含まれません",
+                    surface.spec.name, self.wavelength_um
+                ));
             }
         }
         Ok(())
@@ -391,11 +460,27 @@ impl Scene {
                 return Err("Absorption must be finite and nonnegative".into());
             }
             match m {
+                Material::Catalog {
+                    formula,
+                    coefficients,
+                    valid_range_um,
+                    ..
+                } => {
+                    if crate::dispersion::coefficient_count(*formula)
+                        .is_none_or(|n| coefficients.len() < n)
+                        || !coefficients.iter().all(|v| v.is_finite())
+                        || !positive(valid_range_um[0])
+                        || !positive(valid_range_um[1])
+                        || valid_range_um[0] >= valid_range_um[1]
+                    {
+                        return Err("Invalid AGF dispersion coefficients/range".into());
+                    }
+                }
                 Material::WithAbsorption {
                     dispersion,
                     samples,
                 } => {
-                    if samples.len() < 2
+                    if samples.is_empty()
                         || !samples
                             .iter()
                             .all(|s| positive(s[0]) && s[1].is_finite() && s[1] >= 0.0)
@@ -448,6 +533,23 @@ impl Scene {
         let mut surfaces = Vec::new();
         let mut total_pixels = 0usize;
         for (i, surface) in self.surfaces.iter().enumerate() {
+            if let Some(coating) = &surface.coating {
+                coating.validate()?;
+                match surface.interaction {
+                    Interaction::Dielectric {
+                        reflectance: None, ..
+                    } => (),
+                    Interaction::Mirror { .. }
+                        if coating.front.opaque()
+                            && coating.back.as_ref().is_none_or(|b| b.opaque()) => {}
+                    _ => {
+                        return Err(format!(
+                            "{}: コーティングには屈折界面、または透過率0のミラーを指定してください",
+                            surface.name
+                        ))
+                    }
+                }
+            }
             if !names.insert(surface.name.clone()) {
                 return Err("Surface names must be unique".into());
             }
@@ -558,6 +660,48 @@ impl Scene {
             });
         }
         for source in &self.sources {
+            if let Some(pupil) = &source.pupil {
+                let pose = if let Some(i) = pupil.surface {
+                    &self.surfaces.get(i).ok_or("Invalid pupil surface")?.pose
+                } else {
+                    &pupil.pose
+                };
+                let frame = Frame::new(pose);
+                let distance = frame.local_point(source.origin_mm).0[2];
+                let (hx, hy) = pupil.aperture.bounds();
+                if !pose.translation_mm.finite()
+                    || !pose.rotation_deg.finite()
+                    || !positive(hx)
+                    || !positive(hy)
+                    || source.diode.is_some()
+                    || source.disk_radius_mm != 0.
+                    || source.cone_half_angle_deg != 0.
+                    || distance >= -1e-9
+                    || !pupil.finite_object
+                        && frame.local_vector(source.direction.unit()).0[2] <= 1e-9
+                {
+                    return Err("Invalid pupil illumination: use a launch plane before the pupil and a forward direction".into());
+                }
+            }
+            if let Some(spectrum) = &source.spectrum {
+                spectrum.validate()?;
+            }
+            for w in source.wavelengths() {
+                if self
+                    .materials
+                    .iter()
+                    .any(|m| m.index(w).is_none() || m.absorption_at(w).is_none())
+                    || self
+                        .surfaces
+                        .iter()
+                        .any(|s| s.coating.as_ref().is_some_and(|c| !c.covers(w)))
+                {
+                    return Err(format!(
+                        "光源の {} um が材料・吸収表・コーティングの有効波長範囲に含まれません",
+                        w
+                    ));
+                }
+            }
             if let Some(d) = &source.diode {
                 if !d.rotation_deg.finite()
                     || d.array.contains(&0)
@@ -605,6 +749,10 @@ impl PreparedScene {
                 return Err("Sobol supports at most 2^52 rays per source".into());
             }
             let mut sobol = (source.sampling == Sampling::Sobol).then(|| Sobol::new(source.seed));
+            let spectral_power = source
+                .spectrum
+                .as_ref()
+                .map_or(0., |s| s.samples.iter().map(|v| v[1]).sum());
             let w = source.direction.unit();
             let helper = if w.0[2].abs() < 0.9 {
                 V3([0.0, 0.0, 1.0])
@@ -617,6 +765,10 @@ impl PreparedScene {
                 w.0[2] * u.0[0] - w.0[0] * u.0[2],
                 w.0[0] * u.0[1] - w.0[1] * u.0[0],
             ]);
+            let pupil_frame = source
+                .pupil
+                .as_ref()
+                .map(|p| Frame::new(p.surface.map_or(&p.pose, |i| &self.spec.surfaces[i].pose)));
             for j in 0..source.count {
                 let mut state = source
                     .seed
@@ -628,6 +780,7 @@ impl PreparedScene {
                         uniform(&mut state),
                         uniform(&mut state),
                         uniform(&mut state),
+                        0.0,
                         0.0,
                         0.0,
                     ],
@@ -651,6 +804,31 @@ impl PreparedScene {
                     medium: source.medium,
                     optical_path_mm: 0.0,
                 };
+                if let Some((p, frame)) = source.pupil.as_ref().zip(pupil_frame.as_ref()) {
+                    let xy = match p.aperture {
+                        Aperture::Circle { radius_mm } => {
+                            let r = radius_mm * sample[0].sqrt();
+                            [r * phi.cos(), r * phi.sin()]
+                        }
+                        Aperture::Rectangle {
+                            half_width_mm,
+                            half_height_mm,
+                        } => [
+                            (2. * sample[0] - 1.) * half_width_mm,
+                            (2. * sample[1] - 1.) * half_height_mm,
+                        ],
+                    };
+                    let target = frame.world_point(V3([xy[0], xy[1], 0.]));
+                    if p.finite_object {
+                        ray.position_mm = source.origin_mm;
+                        ray.direction = (target - source.origin_mm).unit();
+                    } else {
+                        let n = frame.world_vector(V3([0., 0., 1.]));
+                        ray.position_mm =
+                            target - w * ((target - source.origin_mm).dot(n) / w.dot(n));
+                        ray.direction = w;
+                    }
+                }
                 if let Some(diode) = &source.diode {
                     let frame = Frame::new(&Pose {
                         translation_mm: source.origin_mm,
@@ -697,7 +875,19 @@ impl PreparedScene {
                         .world_vector(V3([angle[0].tan(), angle[1].tan(), 1.0]).unit())
                         .unit();
                 }
-                ray.validate(self)?;
+                if let Some(spectrum) = &source.spectrum {
+                    ray.wavelength_um = spectrum.sample_with_total(
+                        if sobol.is_some() {
+                            sample[6]
+                        } else {
+                            uniform(&mut state)
+                        },
+                        spectral_power,
+                    );
+                }
+                // prepare() has already checked every generated wavelength against
+                // every material/coating; retain the geometric check and normalization.
+                ray.validate_geometry(self)?;
                 rays.push(ray);
             }
         }

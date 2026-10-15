@@ -13,7 +13,7 @@ use std::{
 };
 
 pub const RUN_FORMAT: &str = "raytrace-run-v1";
-const SAMPLING_REVISION: u32 = 1;
+const SAMPLING_REVISION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -56,7 +56,7 @@ impl RunContext {
     ) -> Self {
         let mut waves: Vec<_> = match explicit {
             Some(rays) => rays.iter().map(|r| r.wavelength_um).collect(),
-            None => scene.sources.iter().map(|s| s.wavelength_um).collect(),
+            None => scene.sources.iter().flat_map(|s| s.wavelengths()).collect(),
         };
         waves.sort_by(f64::total_cmp);
         waves.dedup();
@@ -115,7 +115,14 @@ impl RunContext {
                 sampling_revision,
                 count,
             } => {
-                if *sampling_revision != SAMPLING_REVISION {
+                if *sampling_revision != SAMPLING_REVISION
+                    && !(*sampling_revision == 1
+                        && self
+                            .scene
+                            .sources
+                            .iter()
+                            .all(|s| s.spectrum.is_none() && s.pupil.is_none()))
+                {
                     return Err("この計算記録のサンプリング版は再生に対応していません".into());
                 }
                 let rays = prepared.generate_rays()?;

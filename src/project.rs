@@ -119,9 +119,15 @@ impl Project {
         if !blocked.is_empty() {
             return Err(blocked.join("\n"));
         }
+        if self.allow_uncoated {
+            for surface in &mut scene.surfaces {
+                surface.coating = None;
+            }
+        }
         if let Some(wavelength) = self.monochromatic_override_um {
             for source in &mut scene.sources {
                 source.wavelength_um = wavelength;
+                source.spectrum = None;
             }
         }
         Ok(scene)

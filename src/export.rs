@@ -129,3 +129,46 @@ pub fn write_screen(
     }
     Ok(())
 }
+
+/// Additional selections use the immutable pixel data; the main export retains
+/// its original peak slices so downstream tools can always compare both.
+pub fn write_postprocessing(
+    dir: &Path,
+    map: &DetectorMap,
+    reference: f64,
+    cursor: Option<[f64; 2]>,
+    roi: Option<crate::screen::ScreenRoi>,
+) -> Result<(), String> {
+    if !reference.is_finite() || reference <= 0. {
+        return Err("基準光量は正の有限値が必要です".into());
+    }
+    let a = ScreenAnalysis::at(map, cursor)?;
+    let integral = roi.map(|r| r.integrate(map, reference)).transpose()?;
+    if cursor.is_some() {
+        if let Some(p) = &a.x_profile {
+            profile_csv(
+                &dir.join("selected_x_profile.csv"),
+                p,
+                reference,
+                a.peak_weight,
+            )?;
+        }
+        if let Some(p) = &a.y_profile {
+            profile_csv(
+                &dir.join("selected_y_profile.csv"),
+                p,
+                reference,
+                a.peak_weight,
+            )?;
+        }
+    }
+    let data = serde_json::json!({"cursor_requested_mm":cursor,"slice_position_mm":a.slice_position_mm,
+        "slice_fwhm_mm":[a.x_profile.as_ref().and_then(|p|p.half_maximum.width_mm()),a.y_profile.as_ref().and_then(|p|p.half_maximum.width_mm())],
+        "roi":roi,"roi_integral":integral,"reference_weight":reference,
+        "method":"Slices select the nearest pixel row/column; half maximum uses each slice's own peak. Rectangular ROI clips to the detector and weights boundary pixels by overlap area, assuming constant density within each pixel. Source pixel data are unchanged."});
+    fs::write(
+        dir.join("postprocessing.json"),
+        serde_json::to_vec_pretty(&data).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())
+}

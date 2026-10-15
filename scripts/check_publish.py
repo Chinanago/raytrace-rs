@@ -9,6 +9,7 @@ FILES = {
     ".gitattributes", ".gitignore", "Cargo.toml", "Cargo.lock", "README.md", "LICENSE",
     "Raytraceを起動.cmd", "examples/exchange_check.rs", "examples/assembly_demo.rs",
     "examples/validation_suite.rs",
+    "examples/performance_check.rs",
     "scripts/package_windows.py",
     "scripts/third_party_notices.toml",
     "scripts/check_publish.py", "scripts/step_mesh.py", "scripts/zemax_exchange_probe.py",
@@ -25,7 +26,7 @@ def git(*args):
 
 def embedded_document(value):
     if isinstance(value, dict):
-        if str(value.get("format", "")).startswith("raytrace-project-") or value.get("zemax") is not None:
+        if str(value.get("format", "")).startswith("raytrace-project-") or value.get("zemax") is not None or value.get("zemax_definition") is not None:
             return True
         return any(embedded_document(v) for v in value.values())
     if isinstance(value, list):

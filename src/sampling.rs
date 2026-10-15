@@ -1,4 +1,4 @@
-//! Six-dimensional Sobol points with a seeded linear matrix scramble and digital shift.
+//! Seven-dimensional Sobol points with a seeded linear matrix scramble and digital shift.
 //! Positions, angles, and diode-array indices each use fixed, separate dimensions.
 use serde::{Deserialize, Serialize};
 
@@ -10,7 +10,7 @@ pub enum Sampling {
     Pseudorandom,
 }
 
-const DIMS: usize = 6;
+const DIMS: usize = 7;
 const BITS: usize = 52;
 const SCALE: f64 = 1.0 / (1u64 << BITS) as f64;
 
@@ -31,7 +31,7 @@ fn directions() -> [[u64; BITS]; DIMS] {
     for (j, value) in result[0].iter_mut().enumerate() {
         *value = 1 << (63 - j);
     }
-    // First six Joe-Kuo dimensions, also used by SciPy's unscrambled Sobol engine.
+    // First seven Joe-Kuo dimensions, also used by SciPy's unscrambled Sobol engine.
     // https://web.maths.unsw.edu.au/~fkuo/sobol/
     let parameters = [
         (1, 0, [1, 0, 0, 0]),
@@ -39,6 +39,7 @@ fn directions() -> [[u64; BITS]; DIMS] {
         (3, 1, [1, 3, 1, 0]),
         (3, 2, [1, 1, 1, 0]),
         (4, 1, [1, 1, 3, 3]),
+        (4, 4, [1, 3, 5, 13]),
     ];
     for (dim, (degree, polynomial, initial)) in parameters.into_iter().enumerate() {
         let v = &mut result[dim + 1];
@@ -178,12 +179,24 @@ mod tests {
         let directions = directions();
         for (i, point) in expected.into_iter().enumerate() {
             let gray = i ^ (i >> 1);
-            for d in 0..DIMS {
+            for d in 0..6 {
                 let bits = (0..3)
                     .filter(|j| gray & (1 << j) != 0)
                     .fold(0, |bits, j| bits ^ directions[d][j]);
                 assert_eq!(bits >> 61, point[d]);
             }
+        }
+    }
+
+    #[test]
+    fn spectral_dimension_matches_independent_scipy_reference() {
+        let numbers = directions();
+        for (i, expected) in [0, 4, 2, 6, 3, 7, 1, 5].into_iter().enumerate() {
+            let gray = i ^ (i >> 1);
+            let bits = (0..3)
+                .filter(|j| gray & (1 << j) != 0)
+                .fold(0, |v, j| v ^ numbers[6][j]);
+            assert_eq!(bits >> 61, expected);
         }
     }
 

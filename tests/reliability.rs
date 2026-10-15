@@ -224,6 +224,7 @@ fn diagnostics_identify_medium_and_surface_and_remain_bounded() {
     });
     for i in 0..100 {
         scene.surfaces.push(Surface {
+            coating: None,
             name: format!("plane_{i}"),
             pose: Pose {
                 translation_mm: V3([i as f64 * 2.0, 0.0, 0.0]),
@@ -414,6 +415,7 @@ fn coincident_sequential_stop_and_interface_do_not_discard_the_ray() {
         ("screen", 2.0, Interaction::Detector { pixels: [4, 4] }),
     ] {
         scene.surfaces.push(Surface {
+            coating: None,
             name: name.into(),
             pose: Pose {
                 translation_mm: V3([0.0, 0.0, z]),

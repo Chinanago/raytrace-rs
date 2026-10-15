@@ -298,11 +298,31 @@ fn trace_impl(
         .par_chunks(chunk_size)
         .map(|chunk| {
             let mut report = Report::new(scene);
+            // Bound optical-data caches to ~64 KiB per chunk (at most 31 chunks).
+            // Explicit rays with many distinct wavelengths fall back to direct evaluation.
+            let capacity = (65536
+                / (scene.spec.materials.len().max(1) * std::mem::size_of::<(f64, f64)>()))
+            .clamp(1, 256);
+            let mut cache = std::collections::HashMap::new();
             for ray in chunk {
                 if control.is_some_and(|c| c.cancel.load(Ordering::Relaxed)) {
                     return None;
                 }
-                trace_one(scene, *ray, &mut report, options);
+                let key = ray.wavelength_um.to_bits();
+                if cache.len() < capacity && !cache.contains_key(&key) {
+                    cache.insert(key, evaluate_optics(scene, ray.wavelength_um));
+                }
+                if let Some(optics) = cache.get(&key) {
+                    trace_one(scene, *ray, &mut report, options, optics);
+                } else {
+                    trace_one(
+                        scene,
+                        *ray,
+                        &mut report,
+                        options,
+                        &evaluate_optics(scene, ray.wavelength_um),
+                    );
+                }
                 if let Some(c) = control {
                     c.completed.fetch_add(1, Ordering::Relaxed);
                 }
@@ -324,21 +344,28 @@ struct Work {
     depth: usize,
 }
 
-fn trace_one(scene: &PreparedScene, launch: Ray, report: &mut Report, options: TraceOptions) {
+fn evaluate_optics(scene: &PreparedScene, wavelength: f64) -> Vec<(f64, f64)> {
     // Every branch keeps its launch wavelength; evaluate dispersion and spectral
     // absorption once per material, rather than on every internal reflection.
-    let optics: Vec<_> = scene
+    scene
         .spec
         .materials
         .iter()
         .map(|m| {
             (
-                m.index(launch.wavelength_um).expect("validated wavelength"),
-                m.absorption_at(launch.wavelength_um)
-                    .expect("validated wavelength"),
+                m.index(wavelength).expect("validated wavelength"),
+                m.absorption_at(wavelength).expect("validated wavelength"),
             )
         })
-        .collect();
+        .collect()
+}
+fn trace_one(
+    scene: &PreparedScene,
+    launch: Ray,
+    report: &mut Report,
+    options: TraceOptions,
+    optics: &[(f64, f64)],
+) {
     report.budget.launched += launch.weight;
     let mut stack = vec![Work {
         ray: launch,
@@ -502,6 +529,15 @@ fn trace_one(scene: &PreparedScene, launch: Ray, report: &mut Report, options: T
                 );
             }
             Interaction::Mirror { reflectance } => {
+                let reflectance = surface.spec.coating.as_ref().map_or(reflectance, |c| {
+                    c.side(ray.direction.dot(hit.normal) > 0.0).evaluate(
+                        ray.wavelength_um,
+                        ray.direction.dot(hit.normal).abs(),
+                        n_before,
+                        n_before,
+                        false,
+                    )[0]
+                });
                 let absorbed = ray.weight * (1.0 - reflectance);
                 report.budget.surface_absorbed += absorbed;
                 report.surfaces[index].absorbed_weight += absorbed;
@@ -551,7 +587,24 @@ fn trace_one(scene: &PreparedScene, launch: Ray, report: &mut Report, options: T
                     reflectance.unwrap_or(result.reflectance)
                 };
                 let reflected_weight = ray.weight * r;
-                let transmitted_weight = ray.weight - reflected_weight;
+                let (reflected_weight, transmitted_weight) = if let Some(c) = &surface.spec.coating
+                {
+                    let [r, t] = c.side(ray.direction.dot(hit.normal) > 0.0).evaluate(
+                        ray.wavelength_um,
+                        ray.direction.dot(hit.normal).abs(),
+                        n_before,
+                        n_after,
+                        result.transmitted.is_none(),
+                    );
+                    let rw = ray.weight * r;
+                    let tw = (ray.weight * t).min(ray.weight - rw);
+                    let absorbed = (ray.weight - rw - tw).max(0.0);
+                    report.budget.surface_absorbed += absorbed;
+                    report.surfaces[index].absorbed_weight += absorbed;
+                    (rw, tw)
+                } else {
+                    (reflected_weight, ray.weight - reflected_weight)
+                };
                 report.surfaces[index].reflected_weight += reflected_weight;
                 report.surfaces[index].transmitted_weight += transmitted_weight;
                 if result.transmitted.is_none() {
