@@ -281,3 +281,7 @@ python scripts/zemax_exchange_probe.py --input results/validation/even_asphere/e
 解析解との比較・Rust内のZMX往復保存と、OpticStudio実機との照合は別の検証です。生成したケースの実機照合状態は `not_run` から始まります。Pythonプローブは軸上Standard／Even Asphereの波長別・面別の交点と方向を比較し、許容差を超えると失敗します。Fresnel光量・光学距離・NSC分岐の実機照合は別途必要です。
 
 計算核は `src/geometry.rs` と `src/trace.rs`、光源生成は `src/model.rs` と `src/sampling.rs`、ZMX交換は `src/zemax.rs`、部品の組立は `src/assembly.rs`、追跡後のスクリーン解析は `src/screen.rs` にあります。Rustライブラリとしても利用できます。
+
+## ライセンス
+
+[MIT License](LICENSE)。依存ライブラリとフォントには、それぞれのライセンスが適用されます。Windows版ZIPには、その著作権表示と利用条件を `THIRD_PARTY_LICENSES.txt` に同梱しています。

@@ -14,6 +14,7 @@ FILES = {
     "target/release/raytrace-rs.exe": "raytrace-rs.exe",
     "Raytraceを起動.cmd": "Raytraceを起動.cmd",
     "README.md": "README.md",
+    "LICENSE": "LICENSE",
     "examples/sequential_lens.json": "examples/sequential_lens.json",
     "examples/nonsequential_slab.json": "examples/nonsequential_slab.json",
     "examples/integrator_rod.json": "examples/integrator_rod.json",
@@ -27,20 +28,39 @@ def dependency_notices():
         "--filter-platform", "x86_64-pc-windows-msvc", "--format-version", "1",
     ], cwd=ROOT, text=True, encoding="utf-8"))
     active = {node["id"] for node in metadata["resolve"]["nodes"]}
-    sections = []
+    supplements = tomllib.loads((ROOT / "scripts/third_party_notices.toml").read_text(encoding="utf-8"))["notice"]
+    sections = ["Third-party components retain their respective licenses.\n"]
     for package in sorted(metadata["packages"], key=lambda p: (p["name"], p["version"])):
         if package["id"] not in active or package["name"] == "raytrace-rs":
             continue
         base = Path(package["manifest_path"]).parent
         sections.append(f"\n{'=' * 72}\n{package['name']} {package['version']}\nLicense: {package.get('license')}\nRepository: {package.get('repository')}\n")
+        included = set()
         for path in sorted(base.rglob("*")):
             filename = path.name.lower()
-            if path.is_file() and ("license" in filename or filename.startswith(("copying", "notice", "ofl."))):
+            if path.is_file() and (
+                "license" in filename or "licence" in filename
+                or filename.startswith(("copying", "notice", "ofl.", "ufl."))
+                or (package["name"] == "epaint_default_fonts" and filename == "hack-regular.txt")
+            ):
                 try:
                     content = path.read_text(encoding="utf-8")
                 except UnicodeError:
                     continue
+                if not content.strip():
+                    continue
                 sections.append(f"\n--- {path.relative_to(base).as_posix()} ---\n{content}\n")
+                included.add(path.relative_to(base).as_posix())
+        for notice in supplements:
+            if f"{package['name']} {package['version']}" in notice["packages"]:
+                sections.append(f"\n--- Supplemental {notice['license']} license ---\nSource: {notice['source']}\n{notice['text']}\n")
+                included.add("supplement")
+        if not included:
+            raise ValueError(f"Missing license text: {package['name']} {package['version']}")
+        if package["name"] == "epaint_default_fonts":
+            required = {"fonts/Hack-Regular.txt", "fonts/OFL.txt", "fonts/UFL.txt", "fonts/emoji-icon-font-mit-license.txt"}
+            if required - included:
+                raise ValueError(f"Missing font notices: {sorted(required - included)}")
     return "".join(sections).encode("utf-8")
 
 
@@ -68,7 +88,7 @@ def main():
                 raise ValueError("An example contains an embedded original document")
             archive.writestr(f"{name}/{destination}", data)
             hashes[destination] = hashlib.sha256(data).hexdigest()
-        archive.writestr(f"{name}/package.json", json.dumps({"version": version, "platform": "windows-x64", "sha256": hashes}, indent=2))
+        archive.writestr(f"{name}/package.json", json.dumps({"version": version, "license": "MIT", "platform": "windows-x64", "sha256": hashes}, indent=2))
         archive.writestr(f"{name}/THIRD_PARTY_LICENSES.txt", notices)
         archive.writestr(f"{name}/START_HERE.md", f"""# Raytrace {version}
 
@@ -82,7 +102,7 @@ Visual C++ v14ランタイムを使います。VCRUNTIME140.dllが不足する�
 
 設定・CADキャッシュ・走査記録は `%LOCALAPPDATA%/Raytrace` に保存します。`RAYTRACE_DATA_DIR` を設定すると保存先を変更できます。
 
-操作と対応範囲は `README.md`、版と実行ファイル・サンプル等のSHA-256は `package.json`、依存ライブラリのライセンスは `THIRD_PARTY_LICENSES.txt` に記載しています。
+操作と対応範囲は `README.md`、版と実行ファイル・サンプル等のSHA-256は `package.json` に記載しています。本ソフトはMITライセンスです。本文は `LICENSE`、依存ライブラリとフォントの利用条件は `THIRD_PARTY_LICENSES.txt` に同梱しています。
 """)
     with zipfile.ZipFile(output) as archive:
         if archive.testzip() is not None:
