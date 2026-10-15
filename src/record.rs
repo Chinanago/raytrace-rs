@@ -41,6 +41,12 @@ pub struct RunContext {
     pub compatibility: CompatibilityReport,
 }
 impl RunContext {
+    pub fn input_count(&self) -> usize {
+        match &self.input {
+            LaunchInput::Generated { count, .. } => *count,
+            LaunchInput::Explicit { rays } => rays.len(),
+        }
+    }
     pub fn capture(
         project: &Project,
         scene: &Scene,

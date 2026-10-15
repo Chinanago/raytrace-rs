@@ -7,13 +7,17 @@ use crate::{
     project::Project,
     record::RunContext,
     screen::{Profile, ScreenAnalysis},
-    trace::{trace, Report, TraceOptions},
+    trace::{trace, trace_controlled, Report, TraceControl, TraceOptions},
     zemax,
 };
 use eframe::egui::{self, Color32, Pos2, Stroke, Vec2};
 use std::{
     path::PathBuf,
-    sync::mpsc::{self, Receiver},
+    sync::{
+        atomic::Ordering,
+        mpsc::{self, Receiver},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 const BLUE: Color32 = Color32::from_rgb(40, 90, 180);
@@ -22,7 +26,11 @@ const MUTED: Color32 = Color32::from_rgb(105, 117, 132);
 const LINE: Color32 = Color32::from_rgb(221, 226, 234);
 const HALF_COLOR: Color32 = Color32::from_rgb(188, 48, 92);
 
+mod camera;
+mod history;
+mod study;
 mod workspace;
+use camera::{CameraRequest, LayoutCamera};
 
 #[derive(Clone, Copy, Default, PartialEq, Debug)]
 enum View {
@@ -50,6 +58,7 @@ enum ScreenScale {
     SquareRoot,
 }
 struct ScreenDisplay {
+    maximum_percent: Option<f64>,
     normalization: ScreenNormalization,
     scale: ScreenScale,
     half_maximum: bool,
@@ -59,14 +68,27 @@ impl Default for ScreenDisplay {
     fn default() -> Self {
         Self {
             normalization: ScreenNormalization::Peak,
+            maximum_percent: None,
             scale: ScreenScale::Linear,
             half_maximum: true,
             profiles: false,
         }
     }
 }
+impl ScreenDisplay {
+    fn maximum_weight(&self, peak: f64, reference: f64) -> f64 {
+        if self.normalization == ScreenNormalization::Reference {
+            self.maximum_percent
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .map_or(peak, |v| v * reference / 100.0)
+        } else {
+            peak
+        }
+    }
+}
 
 struct ResultView {
+    revision: u64,
     calculation: RunContext,
     scene: Scene,
     report: Report,
@@ -75,13 +97,27 @@ struct ResultView {
     screen: Option<ScreenAnalysis>,
 }
 enum Job {
+    Exported(Result<PathBuf, String>),
+    Compared(Result<Vec<study::Comparison>, String>),
+    Cancelled,
+    Scanned(Result<Box<crate::scan::ScanManifest>, String>),
+    LoadedRun(Result<Box<crate::record::RunRecord>, String>),
     Added(ComponentKind, Result<Box<Project>, String>),
     Loaded(Result<Box<Project>, String>),
     Traced(Result<Box<ResultView>, String>),
 }
 struct App {
+    viewing_explicit_record: bool,
+    data_directory: PathBuf,
+    export_requested: Option<PathBuf>,
+    preferences: crate::storage::Preferences,
+    control: Option<Arc<TraceControl>>,
+    study: study::Study,
+    camera: LayoutCamera,
+    history: history::History,
     project: Project,
     path: Option<PathBuf>,
+    loading_path: Option<PathBuf>,
     result: Option<ResultView>,
     job: Option<Receiver<Job>>,
     selected: usize,
@@ -134,20 +170,42 @@ impl App {
         style.visuals.selection.bg_fill = BLUE;
         cc.egui_ctx.set_style(style);
         let mut app = Self::demo();
+        app.data_directory = crate::storage::data_dir();
+        app.preferences = crate::storage::Preferences::load(&crate::storage::data_dir());
+        app.study.root = crate::storage::data_dir().join("scans");
         let mut input = None;
+        let mut study_input = None;
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
                 "--assembly-demo" => (),
+                "--study" | "--compare-study" => {
+                    app.study.auto_compare = args[i] == "--compare-study";
+                    i += 1;
+                    study_input = args.get(i).map(PathBuf::from);
+                }
                 "--screen" => app.view = View::Screen,
                 "--settings" => app.details = Some(Details::Calculation),
                 "--diagnostics" => app.details = Some(Details::Budget),
                 "--import-report" => app.details = Some(Details::Import),
+                "--zoom-selected" => app.camera.request = Some(CameraRequest::Selected),
                 "--screen-profiles" => app.screen_display.profiles = true,
                 "--screen-reference" => {
                     app.screen_display.normalization = ScreenNormalization::Reference
                 }
                 "--screen-sqrt" => app.screen_display.scale = ScreenScale::SquareRoot,
+                "--screen-max-percent" => {
+                    i += 1;
+                    app.screen_display.maximum_percent = args
+                        .get(i)
+                        .and_then(|s| s.parse::<f64>().ok())
+                        .filter(|v| v.is_finite() && *v > 0.0);
+                    app.screen_display.normalization = ScreenNormalization::Reference;
+                }
+                "--export-screen" => {
+                    i += 1;
+                    app.export_requested = args.get(i).map(PathBuf::from);
+                }
                 "--smoke" => {
                     i += 1;
                     app.smoke = args.get(i).map(PathBuf::from);
@@ -163,7 +221,10 @@ impl App {
             }
             i += 1;
         }
-        if let Some(path) = input {
+        if let Some(dir) = study_input {
+            app.study.open = true;
+            app.open_study_path(dir, &cc.egui_ctx);
+        } else if let Some(path) = input {
             app.load(path, &cc.egui_ctx);
         } else {
             app.run(&cc.egui_ctx);
@@ -171,9 +232,18 @@ impl App {
         app
     }
     fn demo() -> Self {
-        Self {
+        let mut app = Self {
+            viewing_explicit_record: false,
+            data_directory: PathBuf::from("results/gui_runtime"),
+            export_requested: None,
+            preferences: crate::storage::Preferences::default(),
+            control: None,
+            study: study::Study::default(),
+            camera: LayoutCamera::default(),
+            history: history::History::default(),
             project: assembly::demo_project().expect("assembly demo"),
             path: None,
+            loading_path: None,
             result: None,
             job: None,
             selected: 0,
@@ -198,11 +268,17 @@ impl App {
             smoke_frames: 0,
             smoke_ready_at: None,
             screenshot_requested: false,
-        }
+        };
+        app.reset_history(true);
+        app
     }
     fn changed(&mut self) {
+        self.history.begin();
         self.dirty = true;
-        self.stale = true;
+        self.stale = self
+            .result
+            .as_ref()
+            .is_some_and(|r| r.revision != self.history.revision);
     }
     fn refresh_components(&mut self) {
         if let Err(e) = self.project.refresh_assembly() {
@@ -254,7 +330,6 @@ impl App {
         match self.project.add_component(component) {
             Ok(()) => {
                 self.component = self.project.assembly.as_ref().unwrap().components.len() - 1;
-                self.result = None;
                 self.detector = 0;
                 self.changed();
                 self.status = "部品を追加しました・位置を調整して計算してください".into();
@@ -267,15 +342,31 @@ impl App {
         let catalogs = self.catalogs.clone();
         let context = ctx.clone();
         self.status = "ファイルを読込中…".into();
-        self.path = Some(path.clone());
+        self.loading_path = Some(path.clone());
         self.job = Some(rx);
         std::thread::spawn(move || {
             let result = Project::open(&path, &catalogs).map(Box::new);
-            let _ = tx.send(Job::Loaded(result));
+            let message = if result
+                .as_ref()
+                .err()
+                .is_some_and(|e| e.starts_with("計算記録は"))
+            {
+                Job::LoadedRun(
+                    crate::record::RunRecord::open(&path).and_then(|mut record| {
+                        record.report.paths = record_viewer_paths(&record)?;
+                        Ok(Box::new(record))
+                    }),
+                )
+            } else {
+                Job::Loaded(result)
+            };
+            let _ = tx.send(message);
             context.request_repaint();
         });
     }
     fn run(&mut self, ctx: &egui::Context) {
+        self.commit_edit();
+        let revision = self.history.revision;
         let mut scene = match self.project.trace_scene() {
             Ok(s) => s,
             Err(e) => {
@@ -289,24 +380,44 @@ impl App {
             }
         }
         let threads = self.threads;
+        let control = Arc::new(TraceControl::default());
+        self.control = Some(control.clone());
         let project_snapshot = self.project.clone();
         let (tx, rx) = mpsc::channel();
         let context = ctx.clone();
         self.job = Some(rx);
         self.status = "光線を追跡中…".into();
         std::thread::spawn(move || {
-            let result = (|| -> Result<Box<ResultView>, String> {
+            let result = (|| -> Result<Option<Box<ResultView>>, String> {
+                let total: u128 = scene.sources.iter().map(|s| s.count as u128).sum();
+                if total == 0 || total > 2_000_000 {
+                    return Err("光線数は合計1〜2,000,000本で指定してください".into());
+                }
+                if control.cancel.load(Ordering::Relaxed) {
+                    return Ok(None);
+                }
                 let pool = rayon::ThreadPoolBuilder::new()
                     .num_threads(threads)
                     .build()
                     .map_err(|e| e.to_string())?;
                 let prepared = scene.clone().prepare()?;
+                if control.cancel.load(Ordering::Relaxed) {
+                    return Ok(None);
+                }
                 let rays = prepared.generate_rays()?;
                 if rays.is_empty() || rays.len() > 2_000_000 {
                     return Err("光線数は1〜2,000,000本で指定してください".into());
                 }
+                let power = rays.iter().map(|r| r.weight).sum::<f64>();
+                if !power.is_finite() || power <= 0.0 {
+                    return Err("発射基準光量は正の有限値で指定してください".into());
+                }
                 let started = Instant::now();
-                let mut report = pool.install(|| trace(&prepared, &rays, TraceOptions::default()));
+                let Some(mut report) = pool.install(|| {
+                    trace_controlled(&prepared, &rays, TraceOptions::default(), &control)
+                }) else {
+                    return Ok(None);
+                };
                 let seconds = started.elapsed().as_secs_f64();
                 let n = rays.len().min(64);
                 // Each source contributes a prefix; striding a Sobol sequence destroys its balance.
@@ -340,7 +451,8 @@ impl App {
                         )
                     })
                     .paths;
-                Ok(Box::new(ResultView {
+                Ok(Some(Box::new(ResultView {
+                    revision,
                     calculation: RunContext::capture(
                         &project_snapshot,
                         &scene,
@@ -353,17 +465,55 @@ impl App {
                     seconds,
                     texture: None,
                     screen: None,
-                }))
+                })))
             })();
-            let _ = tx.send(Job::Traced(result));
+            let message = match result {
+                Ok(Some(result)) => Job::Traced(Ok(result)),
+                Ok(None) => Job::Cancelled,
+                Err(error) => Job::Traced(Err(error)),
+            };
+            let _ = tx.send(message);
             context.request_repaint();
         });
     }
     fn poll(&mut self, ctx: &egui::Context) {
+        self.poll_study();
         let message = self.job.as_ref().and_then(|rx| rx.try_recv().ok());
         if let Some(message) = message {
             self.job = None;
+            self.control = None;
+            if let Some(path) = self.loading_path.take() {
+                if matches!(&message, Job::Loaded(Ok(_)) | Job::LoadedRun(Ok(_))) {
+                    self.path = Some(path);
+                }
+            }
             match message {
+                Job::Exported(Ok(dir)) => {
+                    self.status = format!("スクリーンを書き出しました：{}", dir.display())
+                }
+                Job::Compared(Ok(images)) => {
+                    self.study.comparison_max = images
+                        .iter()
+                        .map(|c| c.analysis.peak_weight * 100.0 / c.reference)
+                        .fold(0.0, f64::max)
+                        .max(1e-12);
+                    self.study.comparisons = images;
+                    self.study.comparison_open = true;
+                    self.study.open = false;
+                }
+                Job::Cancelled => {
+                    self.status = "計算を中止しました。完了済みの結果を保持しています".into()
+                }
+                Job::Scanned(Ok(manifest)) => {
+                    self.study.manifest = Some(*manifest);
+                    self.study.open = true;
+                    self.status = "走査の計算記録を保存しました".into();
+                    if self.study.auto_compare {
+                        self.study.auto_compare = false;
+                        self.load_comparison(ctx);
+                    }
+                }
+                Job::LoadedRun(Ok(record)) => self.adopt_record(*record),
                 Job::Added(kind, Ok(p)) => match Component::imported(*p, kind) {
                     Ok(c) => {
                         self.append_component(c);
@@ -379,6 +529,7 @@ impl App {
                     }
                     self.preview_limit = (p.zemax.is_some() || p.assembly.is_some()).then_some(256);
                     self.project = *p;
+                    self.viewing_explicit_record = false;
                     self.result = None;
                     self.selected = 0;
                     self.component = 0;
@@ -387,6 +538,9 @@ impl App {
                     self.detector = 0;
                     self.dirty = false;
                     self.stale = false;
+                    self.camera = LayoutCamera::default();
+                    self.reset_history(true);
+                    self.remember_path();
                     self.status = "読込完了".into();
                     if self.project.trace_scene().is_ok() {
                         self.run(ctx);
@@ -400,10 +554,15 @@ impl App {
                     self.result = Some(*r);
                     self.stale = false;
                 }
-                Job::Loaded(Err(e)) | Job::Traced(Err(e)) => {
+                Job::Loaded(Err(e))
+                | Job::Traced(Err(e))
+                | Job::Scanned(Err(e))
+                | Job::LoadedRun(Err(e))
+                | Job::Compared(Err(e)) => {
                     self.error = Some(e);
                     self.status = "設定を確認してください".into();
                 }
+                Job::Exported(Err(e)) => self.error = Some(e),
             }
         }
     }
@@ -445,6 +604,9 @@ impl App {
                 "calculation_version": self.result.as_ref().map(|r| &r.calculation.software_version),
                 "launch_wavelengths_um": self.result.as_ref().map(|r| &r.calculation.launch_wavelengths_um),
                 "screen": screen,
+                "camera": &self.camera,
+                "scan_cases":self.study.manifest.as_ref().map(|m|&m.cases),
+                "comparison_screens":self.study.comparisons.len(),
             });
             let _ = std::fs::write(
                 dir.join("gui_smoke.json"),
@@ -482,6 +644,12 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll(ctx);
+        if self.job.is_none() && self.result.is_some() && self.error.is_none() {
+            if let Some(dir) = self.export_requested.take() {
+                self.export_current_screen(&dir, ctx);
+            }
+        }
+        self.history_shortcuts(ctx);
         self.toolbar(ctx);
         egui::TopBottomPanel::bottom("status")
             .exact_height(30.0)
@@ -493,12 +661,23 @@ impl eframe::App for App {
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(&self.status).size(11.0).color(MUTED));
+                    if let Some(control) = &self.control {
+                        let total = control.total.load(Ordering::Relaxed);
+                        let completed = control.completed.load(Ordering::Relaxed).min(total);
+                        if total > 0 {
+                            ui.add(
+                                egui::ProgressBar::new(completed as f32 / total as f32)
+                                    .desired_width(170.0)
+                                    .text(format!("{completed} / {total} 本")),
+                            );
+                        }
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if let Some(r) = &self.result {
                             ui.label(
                                 egui::RichText::new(format!(
                                     "{} 本 · {:.2} ms",
-                                    r.scene.sources.iter().map(|s| s.count).sum::<usize>(),
+                                    r.calculation.input_count(),
                                     r.seconds * 1000.0
                                 ))
                                 .size(11.0)
@@ -511,6 +690,8 @@ impl eframe::App for App {
         self.sidebar(ctx);
         self.content(ctx);
         self.details_window(ctx);
+        self.study_window(ctx);
+        self.comparison_window(ctx);
         if let Some(error) = self.error.clone() {
             let mut close = false;
             egui::Window::new("設定・読込の確認")
@@ -530,6 +711,9 @@ impl eframe::App for App {
         if self.job.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
+        if !ctx.input(|i| i.pointer.any_down()) && !ctx.wants_keyboard_input() {
+            self.commit_edit();
+        }
         self.smoke(ctx);
         let dropped = ctx.input(|i| i.raw.dropped_files.first().and_then(|f| f.path.clone()));
         if let Some(path) = dropped {
@@ -548,6 +732,63 @@ fn shape_name(s: &Shape) -> &'static str {
         Shape::TriangleMesh { .. } => "CAD",
     }
 }
+
+fn record_viewer_paths(
+    record: &crate::record::RunRecord,
+) -> Result<Vec<crate::trace::PathEvent>, String> {
+    let scene = &record.calculation.scene;
+    let rays = match &record.calculation.input {
+        crate::record::LaunchInput::Explicit { rays } => rays
+            .iter()
+            .take(64)
+            .enumerate()
+            .map(|(id, r)| Ray {
+                id: id as u64,
+                ..*r
+            })
+            .collect::<Vec<_>>(),
+        crate::record::LaunchInput::Generated { .. } => {
+            let mut preview = scene.clone();
+            for s in &mut preview.sources {
+                s.count = s.count.min(64);
+            }
+            let generated = preview.clone().prepare()?.generate_rays()?;
+            let total = generated.len().min(64);
+            let mut rays = Vec::with_capacity(total);
+            let mut layer = 0;
+            while rays.len() < total {
+                let mut offset = 0;
+                for (i, s) in preview.sources.iter().enumerate() {
+                    if layer < s.count && rays.len() < total {
+                        rays.push(Ray {
+                            id: rays.len() as u64,
+                            weight: scene.sources[i].total_weight / scene.sources[i].count as f64,
+                            ..generated[offset + layer]
+                        });
+                    }
+                    offset += s.count;
+                }
+                layer += 1;
+            }
+            rays
+        }
+    };
+    let mut geometry = scene.clone();
+    for s in &mut geometry.surfaces {
+        if let Interaction::Detector { pixels } = &mut s.interaction {
+            *pixels = [1, 1];
+        }
+    }
+    Ok(trace(
+        &geometry.prepare()?,
+        &rays,
+        TraceOptions {
+            keep_terminals: false,
+            path_launch_count: rays.len() as u64,
+        },
+    )
+    .paths)
+}
 struct PartMarker {
     index: usize,
     label: String,
@@ -565,6 +806,7 @@ fn draw_paths(
     selected: usize,
     editable: bool,
     equal_scale: bool,
+    camera: &mut LayoutCamera,
 ) -> Option<(usize, V3)> {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), height),
@@ -575,7 +817,10 @@ fn draw_paths(
     let axes = [(2, 0), (2, 1), (0, 1)][projection];
     let mut lines: Vec<Vec<V3>> = Vec::new();
     let mut points = Vec::new();
-    for s in &scene.surfaces {
+    let mut focus_points = Vec::new();
+    let selected_prefix = format!("{}:", selected + 1);
+    for (surface_index, s) in scene.surfaces.iter().enumerate() {
+        let point_start = points.len();
         let f = Frame::new(&s.pose);
         let (hx, hy) = s.aperture.bounds();
         if let Shape::ConicalSide {
@@ -660,6 +905,11 @@ fn draw_paths(
             points.extend_from_slice(&line);
             lines.push(line);
         }
+        if (markers.is_empty() && surface_index == selected)
+            || (!markers.is_empty() && s.name.starts_with(&selected_prefix))
+        {
+            focus_points.extend_from_slice(&points[point_start..]);
+        }
     }
     for p in paths {
         points.push(p.start_mm);
@@ -692,16 +942,83 @@ fn draw_paths(
     let inner = rect.shrink2(Vec2::new(44.0, 36.0));
     let grid_id = ui.id().with(("part_grid", projection));
     let active_id = grid_id.with("active");
-    let mut grid = plot_bounds(low, high, inner.size(), equal_scale);
-    if response.dragged() {
+    if focus_points.is_empty() {
+        let center = markers
+            .iter()
+            .find(|m| m.index == selected)
+            .map_or(points[0], |m| m.position);
+        focus_points.extend([center - V3([1.0; 3]), center + V3([1.0; 3])]);
+    }
+    let mut focus_low = [f64::INFINITY; 2];
+    let mut focus_high = [f64::NEG_INFINITY; 2];
+    for p in &focus_points {
+        for (a, k) in [axes.0, axes.1].into_iter().enumerate() {
+            focus_low[a] = focus_low[a].min(p.0[k]);
+            focus_high[a] = focus_high[a].max(p.0[k]);
+        }
+    }
+    let auto = plot_bounds(low, high, inner.size(), equal_scale);
+    let focus = plot_bounds(focus_low, focus_high, inner.size(), equal_scale);
+    let requested_view = camera.request.is_some();
+    let mut grid = camera.grid(projection, auto, focus, inner.size(), equal_scale);
+    let to_screen = |g: [f64; 4], p: V3| {
+        Pos2::new(
+            inner.left() + ((p.0[axes.0] - g[0]) / g[2]) as f32 * inner.width(),
+            inner.bottom() - ((p.0[axes.1] - g[1]) / g[3]) as f32 * inner.height(),
+        )
+    };
+    if response.drag_started_by(egui::PointerButton::Primary) && editable {
+        if let Some(pointer) = ui.ctx().input(|i| i.pointer.press_origin()) {
+            if let Some(m) = markers
+                .iter()
+                .filter(|m| {
+                    m.position.finite() && to_screen(grid, m.position).distance(pointer) < 22.0
+                })
+                .min_by(|a, b| {
+                    to_screen(grid, a.position)
+                        .distance(pointer)
+                        .total_cmp(&to_screen(grid, b.position).distance(pointer))
+                })
+            {
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(active_id, m.index);
+                    d.insert_temp(grid_id, grid);
+                });
+            }
+        }
+    }
+    let active = ui.ctx().data_mut(|d| d.get_temp::<usize>(active_id));
+    if response.dragged_by(egui::PointerButton::Primary) && active.is_some() {
         if let Some(old) = ui.ctx().data_mut(|d| d.get_temp::<[f64; 4]>(grid_id)) {
             grid = old;
         }
-    } else {
+    } else if response.dragged() {
+        let delta = ui.ctx().input(|i| i.pointer.delta());
+        grid[0] -= delta.x as f64 / inner.width() as f64 * grid[2];
+        grid[1] += delta.y as f64 / inner.height() as f64 * grid[3];
+        camera.set(projection, grid, inner.size());
+    }
+    if !response.dragged_by(egui::PointerButton::Primary) {
         ui.ctx().data_mut(|d| {
             d.remove_temp::<[f64; 4]>(grid_id);
             d.remove_temp::<usize>(active_id);
         });
+    }
+    if !requested_view && response.hovered() && !ui.ctx().input(|i| i.pointer.any_down()) {
+        if let Some(pointer) = response.hover_pos().filter(|p| inner.contains(*p)) {
+            let scroll = ui.ctx().input(|i| i.smooth_scroll_delta.y);
+            if scroll != 0.0 {
+                grid = camera::zoom_grid(
+                    grid,
+                    [
+                        (pointer.x - inner.left()) as f64 / inner.width() as f64,
+                        (inner.bottom() - pointer.y) as f64 / inner.height() as f64,
+                    ],
+                    (-scroll as f64 * 0.003).exp(),
+                );
+                camera.set(projection, grid, inner.size());
+            }
+        }
     }
     let map = |p: V3| {
         Pos2::new(
@@ -733,12 +1050,13 @@ fn draw_paths(
         .map(|p| p.incident_weight)
         .fold(0.0, f64::max)
         .max(1e-300);
+    let geometry_painter = painter.with_clip_rect(inner);
     for p in paths {
         let t = p.incident_weight / max;
         if t < 0.002 {
             continue;
         }
-        painter.line_segment(
+        geometry_painter.line_segment(
             [map(p.start_mm), map(p.end_mm)],
             Stroke::new(
                 1.0_f32,
@@ -747,17 +1065,20 @@ fn draw_paths(
         );
     }
     for line in lines {
-        painter.add(egui::Shape::line(
+        geometry_painter.add(egui::Shape::line(
             line.into_iter().map(map).collect(),
             Stroke::new(1.0_f32, Color32::from_rgb(104, 139, 172)),
         ));
     }
     for m in markers.iter().filter(|m| m.position.finite()) {
         let p = map(m.position);
+        if !inner.contains(p) {
+            continue;
+        }
         let color = if m.enabled { BLUE } else { MUTED };
-        painter.circle_filled(p, if m.index == selected { 6.0 } else { 4.0 }, color);
+        geometry_painter.circle_filled(p, if m.index == selected { 6.0 } else { 4.0 }, color);
         if m.index == selected {
-            painter.circle_stroke(p, 9.0, Stroke::new(1.0_f32, BLUE));
+            geometry_painter.circle_stroke(p, 9.0, Stroke::new(1.0_f32, BLUE));
         }
         let label =
             painter.layout_no_wrap(m.label.clone(), egui::FontId::proportional(10.0), color);
@@ -774,12 +1095,12 @@ fn draw_paths(
         }
         .clamp(rect.top() + 22.0, rect.bottom() - 22.0 - size.y);
         let pos = Pos2::new(left, top);
-        painter.rect_filled(
+        geometry_painter.rect_filled(
             egui::Rect::from_min_size(pos, size).expand(2.0),
             2.0,
             Color32::from_rgb(248, 250, 253),
         );
-        painter.galley(pos, label, color);
+        geometry_painter.galley(pos, label, color);
     }
     painter.text(
         Pos2::new(rect.center().x, rect.bottom() - 4.0),
@@ -802,15 +1123,15 @@ fn draw_paths(
     );
     ui.label(
         egui::RichText::new(if markers.is_empty() {
-            "光源と面の設定は左側で編集 · CAD外形線は間引き表示"
+            "ホイールで拡大 · 背景をドラッグして表示を移動"
         } else {
-            "丸印をドラッグして配置 · 位置と傾きは左側で設定"
+            "丸印をドラッグして配置 · ホイールで拡大 · 背景をドラッグして表示を移動"
         })
         .size(10.0)
         .color(MUTED),
     );
     let mut action = None;
-    if editable && (response.clicked() || response.drag_started()) {
+    if editable && response.clicked_by(egui::PointerButton::Primary) {
         let pointer = ui
             .ctx()
             .input(|i| i.pointer.press_origin())
@@ -826,16 +1147,10 @@ fn draw_paths(
                 })
             {
                 action = Some((m.index, V3::default()));
-                if response.drag_started() {
-                    ui.ctx().data_mut(|d| {
-                        d.insert_temp(grid_id, grid);
-                        d.insert_temp(active_id, m.index);
-                    });
-                }
             }
         }
     }
-    if editable && response.dragged() {
+    if editable && response.dragged_by(egui::PointerButton::Primary) {
         if let Some(index) = ui.ctx().data_mut(|d| d.get_temp::<usize>(active_id)) {
             let pixel = ui.ctx().input(|i| i.pointer.delta());
             let mut delta = V3::default();
@@ -857,6 +1172,7 @@ fn plot_bounds(low: [f64; 2], high: [f64; 2], size: Vec2, equal_scale: bool) -> 
             units_per_pixel * size.y as f64,
         ];
     }
+    span = [span[0] * 1.12, span[1] * 1.12];
     [
         (low[0] + high[0] - span[0]) * 0.5,
         (low[1] + high[1] - span[1]) * 0.5,
@@ -872,7 +1188,11 @@ fn draw_detector(
     height: f32,
     display: &mut ScreenDisplay,
 ) {
-    let old_scale = display.scale;
+    let old_display = (
+        display.scale,
+        display.normalization,
+        display.maximum_percent,
+    );
     ui.horizontal_wrapped(|ui| {
         egui::ComboBox::from_id_salt("screen_normalization")
             .width(125.0)
@@ -897,8 +1217,19 @@ fn draw_detector(
         ui.checkbox(&mut display.half_maximum, "半値幅")
             .on_hover_text("最大画素を通るX・Y断面の半値交点を表示します。複数の山がある場合は主ピーク周囲の幅です。");
         ui.checkbox(&mut display.profiles, "断面");
+        ui.menu_button("表示範囲",|ui| {
+            let mut fixed=display.maximum_percent.is_some();
+            if ui.checkbox(&mut fixed,"基準光量比の上端を固定").changed() {display.maximum_percent=fixed.then_some(1.0);display.normalization=ScreenNormalization::Reference;}
+            if let Some(v)=&mut display.maximum_percent {ui.add(egui::DragValue::new(v).range(1e-10..=100.0).speed(0.01).suffix(" %"));}
+        });
     });
-    if old_scale != display.scale {
+    if old_display
+        != (
+            display.scale,
+            display.normalization,
+            display.maximum_percent,
+        )
+    {
         result.texture = None;
     }
     let map = &result.report.detectors[index];
@@ -913,13 +1244,15 @@ fn draw_detector(
     }
     let analysis = result.screen.as_ref().unwrap();
     let peak = analysis.peak_weight;
+    let reference = result.report.budget.launched.max(1e-300);
+    let maximum = display.maximum_weight(peak, reference);
     if result.texture.is_none() {
         let pixels = map
             .weights
             .chunks(map.pixels[0])
             .rev()
             .flatten()
-            .map(|w| screen_color(w / peak.max(1e-300), display.scale))
+            .map(|w| screen_color(w / maximum.max(1e-300), display.scale))
             .collect();
         result.texture = Some(ctx.load_texture(
             "detector",
@@ -930,7 +1263,6 @@ fn draw_detector(
             egui::TextureOptions::NEAREST,
         ));
     }
-    let reference = result.report.budget.launched.max(1e-300);
     let texture = result.texture.as_ref().unwrap();
     if display.profiles {
         ui.columns(2, |cols| {
@@ -985,6 +1317,7 @@ fn draw_detector_map(
     display: &ScreenDisplay,
 ) {
     let peak = analysis.peak_weight;
+    let maximum = display.maximum_weight(peak, reference);
     let [hx, hy] = map.half_extent_mm;
     let aspect = (hx / hy) as f32;
     let width = (ui.available_width() - 90.0)
@@ -1024,7 +1357,7 @@ fn draw_detector_map(
                 ),
             ),
             0.0,
-            screen_color(if peak > 0.0 { fraction } else { 0.0 }, display.scale),
+            screen_color(if maximum > 0.0 { fraction } else { 0.0 }, display.scale),
         );
     }
     for fraction in [0.0, 0.5, 1.0] {
@@ -1036,7 +1369,7 @@ fn draw_detector_map(
                     0.0
                 }
             }
-            ScreenNormalization::Reference => fraction * 100.0 * peak / reference,
+            ScreenNormalization::Reference => fraction * 100.0 * maximum / reference,
         };
         let label = match display.normalization {
             ScreenNormalization::Peak => format!("{value:.1}"),
@@ -1100,16 +1433,8 @@ fn draw_detector_map(
 }
 
 fn screen_color(fraction: f64, scale: ScreenScale) -> Color32 {
-    let t = match scale {
-        ScreenScale::Linear => fraction,
-        ScreenScale::SquareRoot => fraction.sqrt(),
-    }
-    .clamp(0.0, 1.0) as f32;
-    Color32::from_rgb(
-        (247.0 - 212.0 * t) as u8,
-        (250.0 - 158.0 * t) as u8,
-        (254.0 - 78.0 * t) as u8,
-    )
+    let [r, g, b] = crate::export::rgb(fraction, scale == ScreenScale::SquareRoot);
+    Color32::from_rgb(r, g, b)
 }
 
 fn dashed_line(painter: &egui::Painter, a: Pos2, b: Pos2) {
@@ -1187,9 +1512,10 @@ fn draw_profile(
     display: &ScreenDisplay,
     reference: f64,
 ) {
+    let maximum = display.maximum_weight(peak, reference).max(1e-300);
     let top = match display.normalization {
         ScreenNormalization::Peak => "1.0".into(),
-        ScreenNormalization::Reference => format!("{:.5}%", peak * 100.0 / reference),
+        ScreenNormalization::Reference => format!("{:.5}%", maximum * 100.0 / reference),
     };
     ui.label(format!("{axis}断面 · 上端 {top}"));
     let (rect, _) =
@@ -1200,14 +1526,14 @@ fn draw_profile(
     let x =
         |v: f64| inner.left() + ((v + half_extent) / (2.0 * half_extent)) as f32 * inner.width();
     let y = |v: f64| {
-        let fraction = v / peak;
+        let fraction = v / maximum;
         let t = match display.scale {
             ScreenScale::Linear => fraction,
             ScreenScale::SquareRoot => fraction.sqrt(),
         };
         inner.bottom() - t as f32 * inner.height()
     };
-    painter.add(egui::Shape::line(
+    painter.with_clip_rect(inner).add(egui::Shape::line(
         profile
             .weights
             .iter()
@@ -1243,6 +1569,10 @@ fn draw_profile(
 }
 pub fn main() {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.first().is_some_and(|a| a == "--version" || a == "-V") {
+        println!("raytrace-gui {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1320.0, 860.0])
@@ -1293,7 +1623,8 @@ mod tests {
                 enabled: true,
             },
         ];
-        let frame = |events| {
+        let mut camera = LayoutCamera::default();
+        let mut frame = |events| {
             let mut action = None;
             let input = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -1305,7 +1636,18 @@ mod tests {
             };
             let output = ctx.run(input, |ctx| {
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    action = draw_paths(ui, &scene, &[], 0, 300.0, &markers, 0, true, true);
+                    action = draw_paths(
+                        ui,
+                        &scene,
+                        &[],
+                        0,
+                        300.0,
+                        &markers,
+                        0,
+                        true,
+                        true,
+                        &mut camera,
+                    );
                 });
             });
             (output, action)

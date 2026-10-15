@@ -23,29 +23,61 @@ impl App {
                         if self.dirty { " •" } else { "" }
                     );
                     ui.add_sized(
-                        [(ui.available_width() - 360.0).clamp(60.0, 360.0), 24.0],
+                        [(ui.available_width() - 420.0).clamp(60.0, 360.0), 24.0],
                         egui::Label::new(egui::RichText::new(title).size(12.0).color(MUTED))
                             .truncate(),
                     )
-                    .on_hover_text(&self.project.scene.name);
+                    .on_hover_text(self.path.as_ref().map_or_else(
+                        || "保存先：未設定".into(),
+                        |p| format!("保存先：{}", p.display()),
+                    ));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui
                             .add_enabled(
-                                self.job.is_none(),
+                                self.job.is_none() || self.control.is_some(),
                                 egui::Button::new(
-                                    egui::RichText::new("▶  計算する").color(Color32::WHITE),
+                                    egui::RichText::new(if self.control.is_some() {
+                                        "■  中止"
+                                    } else if self.viewing_explicit_record {
+                                        "モデル光源で計算"
+                                    } else {
+                                        "▶  計算する"
+                                    })
+                                    .color(Color32::WHITE),
                                 )
                                 .fill(BLUE)
                                 .min_size(Vec2::new(118.0, 32.0)),
                             )
                             .clicked()
                         {
-                            self.run(ctx);
+                            if let Some(control) = &self.control {
+                                control.cancel.store(true, Ordering::Relaxed);
+                            } else {
+                                if self.viewing_explicit_record {
+                                    self.viewing_explicit_record = false;
+                                    self.changed();
+                                }
+                                self.run(ctx);
+                            }
                         }
                         if ui.button("計算設定").clicked() {
                             self.details = Some(Details::Calculation);
                         }
                         ui.add_enabled_ui(self.job.is_none(), |ui| {
+                            if ui
+                                .add_enabled(self.history.can_redo(), egui::Button::new("↷"))
+                                .on_hover_text("やり直す · Ctrl+Shift+Z / Ctrl+Y")
+                                .clicked()
+                            {
+                                self.redo();
+                            }
+                            if ui
+                                .add_enabled(self.history.can_undo(), egui::Button::new("↶"))
+                                .on_hover_text("元に戻す · Ctrl+Z")
+                                .clicked()
+                            {
+                                self.undo();
+                            }
                             ui.menu_button("ファイル", |ui| self.file_menu(ui, ctx));
                         });
                     });
@@ -66,6 +98,10 @@ impl App {
                         if ui.small_button("読込レポート").clicked() {
                             self.details = Some(Details::Import);
                         }
+                        if self.study.manifest.is_some() && ui.small_button("走査結果").clicked()
+                        {
+                            self.study.open = true;
+                        }
                         if !self.project.issues.is_empty() {
                             ui.label(
                                 egui::RichText::new(format!("{} 件", self.project.issues.len()))
@@ -79,6 +115,10 @@ impl App {
     }
 
     fn file_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        if ui.button("パラメーター走査…").clicked() {
+            self.configure_study();
+            ui.close_menu();
+        }
         if ui.button("新規の光学系").clicked() {
             self.replace_project(Project::new_assembly(), Some(256), 0);
             self.changed();
@@ -91,6 +131,19 @@ impl App {
                 self.load(path, ctx);
             }
         }
+        ui.menu_button("最近開いたファイル", |ui| {
+            for path in self.preferences.recent_files.clone() {
+                let label = path.file_name().unwrap_or_default().to_string_lossy();
+                if ui
+                    .button(label)
+                    .on_hover_text(path.display().to_string())
+                    .clicked()
+                {
+                    self.load(path, ctx);
+                    ui.close_menu();
+                }
+            }
+        });
         if ui.button("保存…").clicked() {
             ui.close_menu();
             if let Some(path) = rfd::FileDialog::new()
@@ -100,7 +153,9 @@ impl App {
             {
                 match self.project.save(&path) {
                     Ok(()) => {
-                        self.dirty = false;
+                        self.mark_saved();
+                        self.path = Some(path);
+                        self.remember_path();
                         self.status = "プロジェクトを保存しました".into();
                     }
                     Err(e) => self.error = Some(e),
@@ -126,6 +181,27 @@ impl App {
                     Ok(()) => self.status = "計算時の条件と結果を保存しました".into(),
                     Err(e) => self.error = Some(e),
                 }
+            }
+        }
+        if ui
+            .add_enabled(
+                self.result
+                    .as_ref()
+                    .is_some_and(|r| !r.report.detectors.is_empty()),
+                egui::Button::new("スクリーンを書き出す…"),
+            )
+            .clicked()
+        {
+            ui.close_menu();
+            if let Some(parent) = rfd::FileDialog::new()
+                .set_title("スクリーンの出力先")
+                .pick_folder()
+            {
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis();
+                self.export_current_screen(&parent.join(format!("screen_{stamp}")), ctx);
             }
         }
         if ui
@@ -176,9 +252,48 @@ impl App {
         });
     }
 
+    pub(super) fn export_current_screen(&mut self, dir: &std::path::Path, ctx: &egui::Context) {
+        let Some(r) = &self.result else {
+            return;
+        };
+        let Some(map) = r.report.detectors.get(self.detector).cloned() else {
+            self.error = Some("出力するスクリーンがありません".into());
+            return;
+        };
+        let dir = dir.to_path_buf();
+        let reference = r.report.budget.launched;
+        let plane = r.scene.reference_plane.clone();
+        let display = crate::export::DisplaySettings {
+            peak_normalized: self.screen_display.normalization == ScreenNormalization::Peak,
+            square_root: self.screen_display.scale == ScreenScale::SquareRoot,
+            maximum_percent: self.screen_display.maximum_percent,
+        };
+        let conditions = serde_json::json!({"calculation_software_version":r.calculation.software_version,"model":r.scene.name,"wavelengths_um":r.calculation.launch_wavelengths_um,
+            "input_rays":r.calculation.input_count(),"sources":r.scene.sources,"trace_settings":r.scene.settings,"display":display});
+        let (tx, rx) = mpsc::channel();
+        self.job = Some(rx);
+        self.status = "スクリーンを書き出し中…".into();
+        let context = ctx.clone();
+        std::thread::spawn(move || {
+            let result = (|| -> Result<PathBuf, String> {
+                crate::export::write_screen(&dir, &map, &plane, reference, display)?;
+                std::fs::write(
+                    dir.join("conditions.json"),
+                    serde_json::to_vec_pretty(&conditions).map_err(|e| e.to_string())?,
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(dir)
+            })();
+            let _ = tx.send(Job::Exported(result));
+            context.request_repaint();
+        });
+    }
+
     fn replace_project(&mut self, project: Project, preview: Option<usize>, component: usize) {
         self.project = project;
+        self.viewing_explicit_record = false;
         self.path = None;
+        self.loading_path = None;
         self.result = None;
         self.component = component;
         self.source = 0;
@@ -190,6 +305,8 @@ impl App {
         self.stale = false;
         self.view = View::Layout;
         self.error = None;
+        self.camera = LayoutCamera::default();
+        self.reset_history(true);
     }
 
     fn add_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -306,6 +423,8 @@ impl App {
         ui.separator();
         ui.add_space(10.0);
         let mut remove = false;
+        let mut duplicate = false;
+        let mut study = false;
         egui::ScrollArea::vertical()
             .id_salt("part_inspector")
             .show(ui, |ui| {
@@ -314,6 +433,14 @@ impl App {
                     ui.label(egui::RichText::new(kind_label(c.kind)).strong().color(INK));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.menu_button("操作", |ui| {
+                            if ui.button("この部品の値を走査…").clicked() {
+                                study = true;
+                                ui.close_menu();
+                            }
+                            if ui.button("部品を複製").clicked() {
+                                duplicate = true;
+                                ui.close_menu();
+                            }
                             if ui.button("部品を削除").clicked() {
                                 remove = true;
                                 ui.close_menu();
@@ -404,9 +531,19 @@ impl App {
             self.component = self.component.saturating_sub(1);
             self.source = 0;
             changed = true;
+        } else if duplicate {
+            let mut copy = assembly.components[self.component].clone();
+            copy.name = format!("{} コピー", copy.name);
+            assembly.components.insert(self.component + 1, copy);
+            self.component += 1;
+            self.source = 0;
+            changed = true;
         }
         if changed {
             self.refresh_components();
+        }
+        if study {
+            self.configure_study();
         }
     }
 
@@ -576,9 +713,23 @@ impl App {
                     }
                 });
             ui.checkbox(&mut self.show_rays, "光線");
+            if ui.small_button("選択へ").clicked() {
+                self.camera.request = Some(CameraRequest::Selected);
+            }
+            if ui.small_button("全体").clicked() {
+                self.camera.request = Some(CameraRequest::All);
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.menu_button("表示", |ui| {
                     ui.checkbox(&mut self.equal_scale, "縦横を同じ縮尺にする");
+                    if ui.button("拡大").clicked() {
+                        self.camera.request = Some(CameraRequest::Zoom(0.5));
+                        ui.close_menu();
+                    }
+                    if ui.button("縮小").clicked() {
+                        self.camera.request = Some(CameraRequest::Zoom(2.0));
+                        ui.close_menu();
+                    }
                 });
                 if self.job.is_some() {
                     ui.spinner();
@@ -612,9 +763,14 @@ impl App {
             self.projection,
             (ui.available_height() - 30.0).max(120.0),
             &markers,
-            self.component,
+            if self.project.assembly.is_some() {
+                self.component
+            } else {
+                self.selected
+            },
             self.job.is_none(),
             self.equal_scale,
+            &mut self.camera,
         );
         if let Some((index, delta)) = placement {
             if self.component != index {
@@ -734,7 +890,7 @@ impl App {
             });
             if old_preview != preview {
                 self.preview_limit = preview.then_some(256);
-                self.stale = true;
+                self.changed();
             }
             ui.label(
                 egui::RichText::new(
@@ -935,7 +1091,7 @@ impl App {
         ui.label(
             egui::RichText::new(format!(
                 "{} 本 · {:.2} ms · {} 面",
-                r.scene.sources.iter().map(|s| s.count).sum::<usize>(),
+                r.calculation.input_count(),
                 r.seconds * 1000.0,
                 r.scene.surfaces.len()
             ))
@@ -1365,6 +1521,63 @@ mod tests {
         })
     }
 
+    #[test]
+    fn zoom_and_background_pan_change_only_the_view_and_all_restores_auto_fit() {
+        let mut app = App::demo();
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            frame(&mut app, &ctx, vec![]);
+        }
+        let original = serde_json::to_value(&app.project).unwrap();
+        let p = Pos2::new(850.0, 250.0);
+        frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(p),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: Vec2::new(0.0, 100.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        let zoomed = serde_json::to_value(&app.camera).unwrap();
+        assert!(zoomed["views"][0].is_object());
+        frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: p,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(p + Vec2::new(50.0, 20.0))],
+        );
+        frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: p + Vec2::new(50.0, 20.0),
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        let panned = serde_json::to_value(&app.camera).unwrap();
+        assert_ne!(zoomed["views"][0]["center"], panned["views"][0]["center"]);
+        assert_eq!(original, serde_json::to_value(&app.project).unwrap());
+        assert!(!app.history.can_undo());
+        app.camera.request = Some(CameraRequest::All);
+        frame(&mut app, &ctx, vec![]);
+        assert!(serde_json::to_value(&app.camera).unwrap()["views"][0].is_null());
+    }
+
     fn click(app: &mut App, ctx: &egui::Context, p: Pos2) -> egui::FullOutput {
         frame(
             app,
@@ -1417,6 +1630,7 @@ mod tests {
         );
         let before = serde_json::to_value(&app.project).unwrap();
         app.result = Some(ResultView {
+            revision: app.history.revision,
             calculation: RunContext::capture(
                 &app.project,
                 &scene,

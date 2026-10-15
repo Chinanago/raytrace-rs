@@ -1,0 +1,211 @@
+use raytrace_rs::{
+    assembly,
+    model::Scene,
+    project::Project,
+    record::RunRecord,
+    scan::{linear_values, Parameter, ScanManifest, ScanPlan},
+    trace::{trace, trace_controlled, TraceControl, TraceOptions},
+};
+use std::{
+    fs,
+    path::PathBuf,
+    sync::atomic::{AtomicUsize, Ordering},
+};
+static NEXT: AtomicUsize = AtomicUsize::new(0);
+fn folder() -> PathBuf {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target/scan_tests")
+        .join(format!(
+            "{}_{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+    fs::create_dir_all(&p).unwrap();
+    p
+}
+fn lens() -> Project {
+    let mut s: Scene =
+        serde_json::from_str(include_str!("../examples/sequential_lens.json")).unwrap();
+    for source in &mut s.sources {
+        source.count = 32;
+    }
+    Project::new(s)
+}
+#[test]
+fn controlled_trace_preserves_the_complete_report_and_cancellation_keeps_it_unpublished() {
+    let p = lens().scene.prepare().unwrap();
+    let rays = p.generate_rays().unwrap();
+    let options = TraceOptions {
+        keep_terminals: true,
+        path_launch_count: 8,
+    };
+    let expected = trace(&p, &rays, options);
+    let control = TraceControl::default();
+    let actual = trace_controlled(&p, &rays, options, &control).unwrap();
+    assert_eq!(
+        serde_json::to_value(expected).unwrap(),
+        serde_json::to_value(actual).unwrap()
+    );
+    assert_eq!(control.completed.load(Ordering::Relaxed), rays.len());
+    control.cancel.store(true, Ordering::Relaxed);
+    assert!(trace_controlled(&p, &rays, options, &control).is_none());
+    assert_eq!(control.completed.load(Ordering::Relaxed), 0);
+}
+#[test]
+fn cancelled_scan_resumes_from_embedded_inputs_without_rewriting_completed_cases() {
+    let dir = folder();
+    let mut base = lens();
+    let plan = ScanPlan {
+        parameter: Parameter::SurfacePosition {
+            surface: 2,
+            axis: 2,
+        },
+        values: vec![67.0, 68.5, 70.0],
+        threads: 2,
+        rays_per_source: None,
+    };
+    let original = serde_json::to_value(&base).unwrap();
+    let mut m = ScanManifest::new(&base, plan).unwrap();
+    let control = TraceControl::default();
+    m.execute(&dir, &control, |m| {
+        if m.cases[0].state == "completed" {
+            control.cancel.store(true, Ordering::Relaxed);
+        }
+    })
+    .unwrap();
+    assert_eq!(
+        m.cases.iter().map(|c| c.state.as_str()).collect::<Vec<_>>(),
+        vec!["completed", "pending", "pending"]
+    );
+    let first = fs::read(dir.join("case_0000.raytrace-run.json")).unwrap();
+    base.scene.surfaces[2].pose.translation_mm.0[2] = 300.0;
+    let mut resumed = ScanManifest::open(&dir).unwrap();
+    control.cancel.store(false, Ordering::Relaxed);
+    resumed.execute(&dir, &control, |_| {}).unwrap();
+    assert!(resumed.cases.iter().all(|c| c.state == "completed"));
+    assert_eq!(
+        first,
+        fs::read(dir.join("case_0000.raytrace-run.json")).unwrap()
+    );
+    assert_eq!(serde_json::to_value(&resumed.base).unwrap(), original);
+    let mut launches = None;
+    for (i, value) in [67.0, 68.5, 70.0].into_iter().enumerate() {
+        let r = RunRecord::open(&dir.join(format!("case_{i:04}.raytrace-run.json"))).unwrap();
+        assert_eq!(
+            r.calculation.scene.surfaces[2].pose.translation_mm.0[2],
+            value
+        );
+        let rays = serde_json::to_value(r.calculation.rays().unwrap()).unwrap();
+        if let Some(expected) = &launches {
+            assert_eq!(expected, &rays);
+        } else {
+            launches = Some(rays);
+        }
+    }
+    fs::copy(
+        dir.join("case_0001.raytrace-run.json"),
+        dir.join("case_0000.raytrace-run.json"),
+    )
+    .unwrap();
+    assert!(ScanManifest::open(&dir).is_err());
+}
+#[test]
+fn parameter_units_limits_and_failed_cases_are_retained() {
+    let mut assembly = assembly::demo_project().unwrap();
+    Parameter::RodSize {
+        component: 2,
+        axis: 2,
+    }
+    .apply(&mut assembly, 40.0)
+    .unwrap();
+    Parameter::ComponentRotation {
+        component: 2,
+        axis: 1,
+    }
+    .apply(&mut assembly, 3.0)
+    .unwrap();
+    assert_eq!(
+        assembly.assembly.as_ref().unwrap().components[2]
+            .rod
+            .as_ref()
+            .unwrap()
+            .length_mm,
+        40.0
+    );
+    assert!(Parameter::RodSize {
+        component: 2,
+        axis: 0
+    }
+    .apply(&mut assembly, -1.0)
+    .is_err());
+    assert!(Parameter::ComponentPosition {
+        component: 2,
+        axis: 3
+    }
+    .apply(&mut assembly, 1.0)
+    .is_err());
+    assert!(Parameter::SurfacePosition {
+        surface: 0,
+        axis: 2
+    }
+    .apply(&mut assembly, 1.0)
+    .is_err());
+    assert_eq!(linear_values(0.4, 0.7, 4).unwrap().last(), Some(&0.7));
+    assert!(linear_values(0.4, 0.7, 1).is_err());
+    let dir = folder();
+    let mut m = ScanManifest::new(
+        &lens(),
+        ScanPlan {
+            values: vec![0.45, 0.8],
+            ..ScanPlan::default()
+        },
+    )
+    .unwrap();
+    m.execute(&dir, &TraceControl::default(), |_| {}).unwrap();
+    assert_eq!(m.cases[0].state, "completed");
+    assert_eq!(m.cases[1].state, "failed");
+    assert!(m.cases[1].error.is_some());
+    assert!(m.cases[1].detected_percent.is_none());
+    assert_eq!(ScanManifest::open(&dir).unwrap().cases[1].state, "failed");
+}
+#[test]
+fn cli_scan_can_be_reopened_and_protects_existing_output() {
+    let dir = folder();
+    lens().save(&dir.join("model.json")).unwrap();
+    fs::write(
+        dir.join("plan.json"),
+        serde_json::to_vec(&ScanPlan {
+            values: vec![0.45, 0.635],
+            threads: 1,
+            ..ScanPlan::default()
+        })
+        .unwrap(),
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_raytrace-rs"))
+            .current_dir(&dir)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let args = [
+        "--scan",
+        "model.json",
+        "--plan",
+        "plan.json",
+        "--output",
+        "study",
+    ];
+    let result = run(&args);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let bytes = fs::read(dir.join("study/scan.json")).unwrap();
+    assert!(!run(&args).status.success());
+    assert_eq!(bytes, fs::read(dir.join("study/scan.json")).unwrap());
+    fs::remove_file(dir.join("model.json")).unwrap();
+    assert!(run(&["--resume-scan", "study"]).status.success());
+}

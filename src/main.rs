@@ -14,6 +14,8 @@ const HELP: &str =
     [--wavelength-um VALUE] [--rays-per-source N] [--sampling sobol|pseudorandom]\n\
     raytrace-rs --replay RECORD.json [--output NEW_REPORT.json] [--threads N]\n\
     raytrace-rs --convergence MODEL [--plan PLAN.json] [--output DIRECTORY]\n\
+    raytrace-rs --scan MODEL [--plan PLAN.json] [--output DIRECTORY]\n\
+    raytrace-rs --resume-scan DIRECTORY\n\
 Ray CSV header: id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium\n\
 Units: mm, um, arbitrary power weights. Launch-weight sum is the 100% reference.\n\
 Sequential follows transmission, explicit mirrors and TIR. Non-sequential splits R/T.\n\
@@ -70,6 +72,10 @@ struct Benchmark {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let mut args: Vec<_> = env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "--version" || a == "-V") {
+        println!("raytrace-rs {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
         println!("{HELP}");
         return Ok(());
@@ -99,6 +105,51 @@ fn run() -> Result<(), Box<dyn Error>> {
         );
         if failures > 0 {
             return Err("Some convergence cases failed; inspect the saved summary".into());
+        }
+        return Ok(());
+    }
+    if args[0] == "--scan" || args[0] == "--resume-scan" {
+        use raytrace_rs::{
+            scan::{ScanManifest, ScanPlan},
+            trace::TraceControl,
+        };
+        let input = args.get(1).ok_or("Missing scan model or directory")?;
+        let mut output = PathBuf::from("results/scan");
+        let mut plan = ScanPlan::default();
+        let mut i = 2;
+        while i < args.len() {
+            let value = args.get(i + 1).ok_or("Missing scan option value")?;
+            match args[i].as_str() {
+                "--plan" if args[0] == "--scan" => {
+                    plan = serde_json::from_slice(&fs::read(value)?)?
+                }
+                "--output" if args[0] == "--scan" => output = value.into(),
+                _ => return Err("Unknown scan option".into()),
+            }
+            i += 2;
+        }
+        let mut manifest = if args[0] == "--resume-scan" {
+            output = input.into();
+            ScanManifest::open(&output)?
+        } else {
+            if output.join("scan.json").exists() {
+                return Err(
+                    "Scan output already exists; use --resume-scan or a new directory".into(),
+                );
+            }
+            ScanManifest::new(&Project::open(std::path::Path::new(input), &[])?, plan)?
+        };
+        manifest.execute(&output, &TraceControl::default(), |m| {
+            let completed = m
+                .cases
+                .iter()
+                .filter(|c| c.state == "completed" || c.state == "failed")
+                .count();
+            println!("Scan: {completed}/{} cases", m.cases.len());
+        })?;
+        println!("Scan saved: {}", output.join("scan.json").display());
+        if manifest.cases.iter().any(|c| c.state == "failed") {
+            return Err("Some scan cases failed; inspect scan.json".into());
         }
         return Ok(());
     }

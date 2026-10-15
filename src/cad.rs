@@ -15,7 +15,7 @@ pub fn load_step_with_tolerance(path: &Path, deflection_mm: f64) -> Result<Shape
     if !path.is_file() {
         return Err(format!("参照CADがありません: {}", path.display()));
     }
-    let cache_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("results/cad_cache");
+    let cache_dir = crate::storage::data_dir().join("cad_cache");
     fs::create_dir_all(&cache_dir).map_err(|e| e.to_string())?;
     use std::hash::{Hash, Hasher};
     let mut hash = std::collections::hash_map::DefaultHasher::new();

@@ -3,6 +3,14 @@ use crate::math::V3;
 use crate::model::{Interaction, Mode, PreparedScene, Ray};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+#[derive(Default)]
+pub struct TraceControl {
+    pub cancel: AtomicBool,
+    pub completed: AtomicUsize,
+    pub total: AtomicUsize,
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Budget {
@@ -261,6 +269,28 @@ pub struct TraceOptions {
 
 /// Rays must pass Ray::validate or originate from PreparedScene::generate_rays.
 pub fn trace(scene: &PreparedScene, rays: &[Ray], options: TraceOptions) -> Report {
+    trace_impl(scene, rays, options, None).expect("uncontrolled tracing cannot be cancelled")
+}
+
+/// A cancelled calculation returns no partial report; callers retain completed runs.
+/// Progress advances after complete launch rays, including all their branches.
+pub fn trace_controlled(
+    scene: &PreparedScene,
+    rays: &[Ray],
+    options: TraceOptions,
+    control: &TraceControl,
+) -> Option<Report> {
+    control.completed.store(0, Ordering::Relaxed);
+    control.total.store(rays.len(), Ordering::Relaxed);
+    trace_impl(scene, rays, options, Some(control))
+}
+
+fn trace_impl(
+    scene: &PreparedScene,
+    rays: &[Ray],
+    options: TraceOptions,
+    control: Option<&TraceControl>,
+) -> Option<Report> {
     // Fixed indexed chunks give a fixed reduction order independent of worker count.
     // At most 32 dense detector-map copies exist, including the final reduction.
     let chunk_size = rays.len().div_ceil(31).max(1);
@@ -269,12 +299,22 @@ pub fn trace(scene: &PreparedScene, rays: &[Ray], options: TraceOptions) -> Repo
         .map(|chunk| {
             let mut report = Report::new(scene);
             for ray in chunk {
+                if control.is_some_and(|c| c.cancel.load(Ordering::Relaxed)) {
+                    return None;
+                }
                 trace_one(scene, *ray, &mut report, options);
+                if let Some(c) = control {
+                    c.completed.fetch_add(1, Ordering::Relaxed);
+                }
             }
-            report
+            Some(report)
         })
         .collect();
-    reports.into_iter().fold(Report::new(scene), Report::merge)
+    reports
+        .into_iter()
+        .try_fold(Report::new(scene), |report, next| {
+            next.map(|r| report.merge(r))
+        })
 }
 
 #[derive(Clone, Copy)]

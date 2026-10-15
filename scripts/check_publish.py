@@ -9,6 +9,7 @@ FILES = {
     ".gitattributes", ".gitignore", "Cargo.toml", "Cargo.lock", "README.md",
     "Raytraceを起動.cmd", "examples/exchange_check.rs", "examples/assembly_demo.rs",
     "examples/validation_suite.rs",
+    "scripts/package_windows.py",
     "scripts/check_publish.py", "scripts/step_mesh.py", "scripts/zemax_exchange_probe.py",
 }
 DEMOS = {

@@ -13,6 +13,8 @@ cargo build --release --locked --features gui --bins
 
 ビルド後は `Raytraceを起動.cmd` からも起動できます。GUIは光源・レンズ・ロッド・スクリーンの組立サンプルで開きます。「ファイル → 開く…」またはドラッグ＆ドロップで `.zmx` やJSONプロジェクトを読み込み、「計算する」で追跡します。
 
+Windows x64用ZIPは `python scripts/package_windows.py` で作成できます。ビルド済みの場合は `--no-build` を指定します。ZIPにはGUI・CLI・サンプル・操作説明が入り、展開先で起動できます。基本の追跡にRustやOpticStudioは不要です。MSVC版はVisual C++ v14ランタイムを使います。`VCRUNTIME140.dll` が不足する環境では、[Microsoft公式のx64ランタイム](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)を導入してください。
+
 「光学系」では、左に部品一覧と選択部品の設定、中央に広い光路図を表示します。「スクリーン」に切り替えると画素ごとの積算光量を確認できます。光線数・追跡方式は「計算設定」、ZMXの対応条件は「読込レポート」、光量収支はスクリーンの「光量の内訳」から開けます。
 
 ## 光源・レンズ・ロッドを組み合わせる
@@ -24,6 +26,10 @@ cargo build --release --locked --features gui --bins
 5. 「＋ 追加 → スクリーン」で観測面を追加し、配置して「計算する」を押します。
 
 図の丸印をドラッグして、選んだ投影の2軸方向へ部品を移動できます。左側のX/Y/Z・「傾き」では位置と回転を数値指定します。光路図はZ–X／Z–Y／X–Y投影に対応し、縦横を同じ縮尺で表示します。「表示」メニューから縦横を独立した縮尺に切り替えられます。配置を変えると古い光線を隠し、再計算後に更新します。
+
+ホイールでカーソル位置を中心に拡大し、背景のドラッグ、右ボタンまたは中ボタンのドラッグで表示範囲を移動できます。「選択へ」で選択部品を拡大し、「全体」で光学系全体の表示へ戻ります。表示範囲は投影ごとに保ち、表示操作は部品の座標を変更しません。
+
+上部の戻す／やり直すボタン、`Ctrl+Z`、`Ctrl+Shift+Z`／`Ctrl+Y`で配置編集を戻せます。一連のドラッグや数値入力は1操作として扱います。テキスト入力中はその欄の編集を優先します。履歴は最大64操作、CAD形状を含む保存量は約128 MiBを目安に古い操作から整理します。部品の「操作 → 部品を複製」でコピーを作れます。計算時の配置へ戻ると、その結果の光路を再表示します。
 
 配置の基準は、光源が発光配列の中心、レンズが最初の光学面の頂点、ロッドが入口中心です。部品一覧のチェックで有効／無効を切り替え、選択部品の「操作 → 部品を削除」で取り除けます。光源を選ぶと本数・波長・分布・サンプリング、ロッドを選ぶと寸法と波長依存の材料、スクリーンを選ぶと寸法と画素数を編集できます。単体のZMXやJSONでは光源と各光学面を選んで編集します。
 
@@ -44,7 +50,43 @@ cargo run --release --example assembly_demo -- results/assembly_demo.json
 
 「半値幅」で、最大画素を通るX・Y断面の半値交点を赤い破線で示し、FWHMをmmで表示します。「断面」で両方向のプロファイルを同じ画面内に表示します。座標はスクリーンの局所座標です。
 
+「表示範囲」で基準光量比の上端を固定できます。「ファイル → スクリーンを書き出す…」は、元の画素光量・基準光量比・mm²当たりの光量比をCSVへ、X/Y断面を別CSVへ、分布をPNGへ保存します。基準面・座標・正規化・表示範囲・計算条件も同じフォルダーに記録します。
+
 半値交点は画素中心の値を線形補間して求めます。断面に複数の山がある場合は、最大ピークの両側で最初に半値へ達する位置を採ります。同じ最大値が複数ある場合は、画素配列の先頭（Yの小さい行、Xの小さい列）を選びます。交点が両側に揃わない方向は「半値交点不足」、受光ゼロは「受光なし」と表示します。幅の解釈には表示された画素寸法を併せて確認してください。
+
+## パラメーター走査
+
+選択部品の「操作 → この部品の値を走査…」、または「ファイル → パラメーター走査…」で専用画面を開きます。部品の位置・角度、ロッドの幅・長さ、単体モデルの面の位置・角度、全光源の計算波長から1項目を選び、範囲と点数または値の一覧を指定します。GUIの波長単位はnm、計画JSONではμmです。
+
+各ケースは同じ光源方式とseedを使い、受光量・半値幅・追跡時間・失敗理由を記録します。完了ケースの「表示」で、保存した結果と配置を開けます。「2ケースを比較」では分布とX/Y断面を並べ、共通の基準光量比と表示上端で比較します。半値幅や表示設定の変更は追跡後の処理です。
+
+計算中は完了した発射光線数を表示し、「中止」で停止できます。単発計算では前回の完了結果を保持します。走査は完了したケースを保存し、計算途中だったケースを未完了へ戻します。「走査記録を開く… → 未完了のケースを再開」で続行でき、完了・失敗が確定したケースを維持します。走査記録は同じソフトの版で再開します。各ケースは合計200万光線、計画全体は256ケースが上限です。
+
+```powershell
+./target/release/raytrace-rs.exe --scan examples/sequential_lens.json --plan scan_plan.json --output results/focus_scan
+./target/release/raytrace-rs.exe --resume-scan results/focus_scan
+```
+
+`scan_plan.json` の例です。部品番号・面番号・軸番号は0から始まり、軸0/1/2はX/Y/Zです。`rays_per_source: null` は元の本数を使います。
+
+```json
+{
+  "parameter": { "type": "surface_position", "surface": 2, "axis": 2 },
+  "values": [65.0, 68.5, 72.0],
+  "threads": 4,
+  "rays_per_source": 4096
+}
+```
+
+組立モデルには `component_position`・`component_rotation`（`component`・`axis`）、`rod_size`（`component`・`axis`：幅X／幅Y／長さ）を指定します。単体モデルは `surface_position`・`surface_rotation`（`surface`・`axis`）、波長は `{ "type": "wavelength" }` です。
+
+## 保存先
+
+タイトルの点印は未保存の編集を表し、タイトルにカーソルを合わせると現在の保存先を確認できます。「ファイル → 最近開いたファイル」から読み直せます。計算記録JSONも「開く…」で配置と結果を表示できます。
+
+明示入力の光線を含む記録では、GUIは保存済みの結果を表示し、「モデル光源で計算」で光源定義からの計算へ切り替えます。保存した入力光線を固定して再計算する場合はCLIの `--replay` を使います。
+
+Windowsでは設定・CADキャッシュ・GUI走査記録を `%LOCALAPPDATA%/Raytrace` に保存します。`RAYTRACE_DATA_DIR` で保存先を変更できます。プロジェクト・計算結果・スクリーンの出力先は保存時に指定します。
 
 ## コマンドライン
 
@@ -136,7 +178,7 @@ Source DiodeはGaussian係数Gx/Gy/Hx/Hyが1、非点収差0の範囲に対応�
 
 読込レポートは部品単位で、計算対応・原文のみ保持・条件指定待ち・条件指定済み・未対応を表示します。計算波長ごとの屈折率と吸収係数も確認できます。コーティングは名前を保持し、未コートFresnelで計算するには明示設定が必要です。SPCDスペクトルを使う光源は、単色の計算波長を指定して追跡します。未定義の波長番号、未知の面・オブジェクト属性、未対応の環境条件は読込時に明示します。
 
-STEPの初回読込にはFreeCADのPythonが必要です。`RAYTRACE_FREECAD_PYTHON` で実行ファイルを指定できます。Windowsの既定値は `%LOCALAPPDATA%/Programs/FreeCAD 1.1/bin/python.exe` です。0.02 mm設定で分割したメッシュをビルド元の `results/cad_cache` に保存し、追跡はRustで行います。CADの精度はメッシュ分割を変えた収束確認が必要です。
+STEPの初回読込にはFreeCADのPythonが必要です。`RAYTRACE_FREECAD_PYTHON` で実行ファイルを指定できます。Windowsの既定値は `%LOCALAPPDATA%/Programs/FreeCAD 1.1/bin/python.exe` です。0.02 mm設定で分割したメッシュをデータ保存先の `cad_cache` に置き、追跡はRustで行います。CADの精度はメッシュ分割を変えた収束確認が必要です。
 
 「保存…」は元のZMX全文と編集状態をJSONプロジェクトへ保存します。「ZMX書出し…」は次の編集をZemaxへ返します。
 
@@ -194,7 +236,7 @@ CAD分割精度を比較する場合はSTEP参照を持つ元のZMXを指定し�
 
 ## OpticStudioと比べた主な未対応機能
 
-[OpticStudioの公式機能一覧](https://www.ansys.com/products/optics/ansys-zemax-opticstudio)、[面型](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Summary_Table_of_Sequential_Surface_Types.html)、[光源モデル](https://optics.ansys.com/hc/en-us/articles/42661687233939-Light-sources-used-in-illumination-design)と比較した、v0.7の主な制約です。
+[OpticStudioの公式機能一覧](https://www.ansys.com/products/optics/ansys-zemax-opticstudio)、[面型](https://ansyshelp.ansys.com/public/Views/Secured/Zemax/v252/en/OpticStudio_User_Guide/OpticStudio_Help/topics/Summary_Table_of_Sequential_Surface_Types.html)、[光源モデル](https://optics.ansys.com/hc/en-us/articles/42661687233939-Light-sources-used-in-illumination-design)と比較した、v0.8の主な制約です。
 
 | 分野 | 未対応の機能 |
 |---|---|
