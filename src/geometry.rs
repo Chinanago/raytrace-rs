@@ -298,12 +298,12 @@ fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss>
             let mut hi = t_high;
             let mut flo = residual_at(lo).ok_or(Miss::Numerical)?;
             let fhi = residual_at(hi).ok_or(Miss::Numerical)?;
-            if flo.abs() >= 1e-10 && fhi.abs() >= 1e-10 && flo.signum() == fhi.signum() {
+            if flo != 0. && fhi != 0. && flo.signum() == fhi.signum() {
                 return Err(Miss::Geometry);
             }
-            let mut t = if flo.abs() < 1e-10 {
+            let mut t = if flo == 0. {
                 lo
-            } else if fhi.abs() < 1e-10 {
+            } else if fhi == 0. {
                 hi
             } else {
                 (-p.0[2] / d.0[2]).clamp(lo, hi)
@@ -316,7 +316,12 @@ fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss>
                 let residual = point.0[2] - z;
                 let derivative = d.0[2] - gx * d.0[0] - gy * d.0[1];
                 let tolerance = 32. * f64::EPSILON * (1. + t.abs().max(point.norm()));
-                if residual == 0. || residual.abs() <= derivative.abs() * tolerance {
+                // A sign-changing bracket can reach machine precision before
+                // the rounded sag residual meets a near-tangent error estimate.
+                if residual == 0.
+                    || residual.abs() <= derivative.abs() * tolerance
+                    || hi - lo <= tolerance
+                {
                     converged = true;
                     break;
                 }

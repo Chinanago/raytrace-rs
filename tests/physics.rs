@@ -381,6 +381,39 @@ fn oblique_paraboloid_matches_nearest_analytic_root_and_does_not_rehit_itself() 
 }
 
 #[test]
+fn monotone_grazing_asphere_finishes_when_the_root_bracket_reaches_precision() {
+    let mut front = plane("owned paraboloid", 0., glass(0, 1));
+    front["shape"] = json!({"type":"even_asphere","radius_mm":25.,"conic":-1.,"coefficients":[]});
+    front["aperture"] = json!({"type":"circle","radius_mm":10.});
+    let s = scene(Mode::Sequential, vec![front]);
+    for radius in [9.8, 9.99, 9.999] {
+        for slope in [0.40001, 0.4001, 0.401] {
+            for distance in [7.3, 20.7, 50.3] {
+                for angle in [0_f64, 0.3, 1.2] {
+                    let target = V3([
+                        radius * angle.cos(),
+                        radius * angle.sin(),
+                        radius * radius / 50.,
+                    ]);
+                    let direction = V3([angle.cos(), angle.sin(), slope]).unit();
+                    let origin = target - direction * distance;
+                    let hit = intersect(&s.surfaces[0], origin, direction).unwrap_or_else(|e| {
+                        panic!("radius={radius}, slope={slope}, distance={distance}, angle={angle}: {e:?}")
+                    });
+                    near(hit.distance_mm, distance, 2e-8);
+                    near((hit.point - target).norm(), 0., 2e-8);
+                    // Once it leaves the aperture, this monotone ray has no second root.
+                    assert!(matches!(
+                        intersect(&s.surfaces[0], hit.point, direction),
+                        Err(raytrace_rs::geometry::Miss::Geometry)
+                    ));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn wrong_medium_is_reported_and_invalid_configuration_is_rejected() {
     let s = scene(Mode::Sequential, vec![plane("glass", 0.0, glass(0, 1))]);
     let report = trace(&s, &[Ray { medium: 1, ..ray() }], TraceOptions::default());
