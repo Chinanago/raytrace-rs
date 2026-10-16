@@ -473,6 +473,9 @@ impl Assembly {
                     s.medium = map[s.medium];
                     if let Some(p) = &mut s.pupil {
                         p.pose = c.place(&p.pose);
+                        if let Some(o) = &mut p.optical {
+                            o.first_surface += surface_offset;
+                        }
                         if let Some(i) = &mut p.surface {
                             *i += surface_offset;
                         }
@@ -489,6 +492,9 @@ impl Assembly {
                     if let Some(w) = c.project.monochromatic_override_um {
                         s.wavelength_um = w;
                         s.spectrum = None;
+                        if let Some(o) = s.pupil.as_mut().and_then(|p| p.optical.as_mut()) {
+                            o.primary_wavelength_um = w;
+                        }
                     }
                     scene.sources.push(s);
                 }
@@ -523,6 +529,11 @@ impl Assembly {
                 };
                 let medium = source.medium;
                 let pupil_surface = source.pupil.as_ref().and_then(|p| p.surface);
+                let pupil_first = source
+                    .pupil
+                    .as_ref()
+                    .and_then(|p| p.optical.as_ref())
+                    .map(|o| o.first_surface);
                 *source = flat.clone();
                 source.medium = medium;
                 source.origin_mm = frame.local_point(source.origin_mm) + c.anchor_mm;
@@ -531,6 +542,9 @@ impl Assembly {
                     p.pose = frame.inverse_pose(&p.pose);
                     p.pose.translation_mm = p.pose.translation_mm + c.anchor_mm;
                     p.surface = pupil_surface;
+                    if let Some(o) = &mut p.optical {
+                        o.first_surface = pupil_first.unwrap_or(o.first_surface);
+                    }
                 }
                 if let Some(d) = &mut source.diode {
                     d.rotation_deg = frame

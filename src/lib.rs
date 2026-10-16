@@ -9,6 +9,7 @@ pub mod export;
 pub mod geometry;
 #[cfg(feature = "gui")]
 pub mod gui;
+pub mod illumination;
 pub mod math;
 pub mod mesh;
 pub mod model;

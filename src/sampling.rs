@@ -159,9 +159,203 @@ fn normal_quantile_lower(p: f64) -> f64 {
     x
 }
 
+/// Inverse CDF for exp(-2 * |x / width|^(2*factor)), clipped to a physical window.
+/// The table brackets the root; Newton refinement uses the analytic CDF, so its
+/// spacing does not approximate the requested distribution. Prepared per source.
+pub(crate) struct SuperGaussian {
+    width: f64,
+    power: f64,
+    limit: f64,
+    log_mass: f64,
+    log_integral: f64,
+    cdf: Vec<f64>,
+}
+impl SuperGaussian {
+    pub(crate) fn new(width: f64, factor: f64, half_width: f64) -> Self {
+        let power = 2. * factor;
+        let shape = 1. / power;
+        let log_mass = gamma_log_p(shape, 2_f64.ln() + power * (half_width.ln() - width.ln()));
+        let log_integral = width.ln() - shape * 2_f64.ln() + libm::lgamma(shape + 1.) + log_mass;
+        // The omitted tail is far below f64 resolution, including for heavy tails.
+        let tail_argument = shape + 32. * shape.sqrt() + 128.;
+        let limit = half_width.min((width.ln() + (tail_argument / 2.).ln() / power).exp());
+        let mut result = Self {
+            width,
+            power,
+            limit,
+            log_mass,
+            log_integral,
+            cdf: Vec::new(),
+        };
+        if width > 0. && half_width > 0. && factor < 1e15 {
+            result.cdf = (0..=512)
+                .map(|i| result.positive_cdf(limit * i as f64 / 512.))
+                .collect();
+        }
+        result
+    }
+    fn positive_cdf(&self, x: f64) -> f64 {
+        if x <= 0. {
+            return 0.;
+        }
+        self.log_cdf(x).exp().clamp(0., 1.)
+    }
+    fn log_cdf(&self, x: f64) -> f64 {
+        (gamma_log_p(
+            1. / self.power,
+            2_f64.ln() + self.power * (x.ln() - self.width.ln()),
+        ) - self.log_mass)
+            .min(0.)
+    }
+    pub(crate) fn quantile(&self, u: f64) -> f64 {
+        if self.width == 0. || self.limit == 0. {
+            return 0.;
+        }
+        let signed = 2. * u - 1.;
+        let target = signed.abs().min(1.);
+        if self.cdf.is_empty() {
+            // At this exponent the top-hat transition is below floating precision.
+            return signed * self.limit.min(self.width);
+        }
+        if target == 0. {
+            return 0.;
+        }
+        if target == 1. {
+            return self.limit * signed.signum();
+        }
+        let i = self.cdf.partition_point(|v| *v < target).clamp(1, 512);
+        let mut lo = self.limit * (i - 1) as f64 / 512.;
+        let mut hi = self.limit * i as f64 / 512.;
+        let mass = self.cdf[i] - self.cdf[i - 1];
+        let mut x = lo + (hi - lo) * ((target - self.cdf[i - 1]) / mass).clamp(0., 1.);
+        for _ in 0..64 {
+            let log_cdf = self.log_cdf(x);
+            let error = if target > 0.5 {
+                log_cdf.exp_m1() + (1. - target)
+            } else {
+                log_cdf.exp() - target
+            };
+            if error.abs() <= 8. * f64::EPSILON * target.min(1. - target)
+                || hi - lo <= 16. * f64::EPSILON * self.limit
+            {
+                break;
+            }
+            if error < 0. {
+                lo = x;
+            } else {
+                hi = x;
+            }
+            let argument = (2_f64.ln() + self.power * (x.ln() - self.width.ln())).exp();
+            let density = (-argument - self.log_integral).exp();
+            let candidate = x - error / density;
+            x = if candidate > lo && candidate < hi {
+                candidate
+            } else {
+                lo + 0.5 * (hi - lo)
+            };
+        }
+        x * signed.signum()
+    }
+}
+
+/// Log of the regularized lower incomplete gamma. The series keeps tiny
+/// conditional masses representable; the continued fraction evaluates the tail.
+fn gamma_log_p(a: f64, log_x: f64) -> f64 {
+    if log_x == f64::NEG_INFINITY {
+        return f64::NEG_INFINITY;
+    }
+    if log_x > 700. {
+        return 0.;
+    }
+    let x = log_x.exp();
+    if x < a + 1. {
+        let mut term = 1.;
+        let mut sum = 1.;
+        for n in 1..=1024 {
+            term *= x / (a + n as f64);
+            sum += term;
+            if term.abs() <= 2. * f64::EPSILON * sum.abs() {
+                break;
+            }
+        }
+        (a * log_x - x - libm::lgamma(a + 1.) + sum.ln()).min(0.)
+    } else {
+        let mut b = x + 1. - a;
+        let mut c = 1e300;
+        let mut d = 1. / b;
+        let mut h = d;
+        for i in 1..=1024 {
+            let fi = i as f64;
+            let an = -fi * (fi - a);
+            b += 2.;
+            d = an * d + b;
+            if d.abs() < 1e-300 {
+                d = 1e-300;
+            }
+            c = b + an / c;
+            if c.abs() < 1e-300 {
+                c = 1e-300;
+            }
+            d = 1. / d;
+            let delta = d * c;
+            h *= delta;
+            if (delta - 1.).abs() <= 4. * f64::EPSILON {
+                break;
+            }
+        }
+        let log_q = (a * log_x - x - libm::lgamma(a) + h.ln()).min(0.);
+        if log_q < -std::f64::consts::LN_2 {
+            (-log_q.exp()).ln_1p()
+        } else {
+            (-log_q.exp_m1()).ln()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn supergaussian_quantiles_match_independent_gamma_reference() {
+        // SciPy special.gammainc/gammaincinv, unit width; these are owned parameters.
+        for (g, limit, u, expected) in [
+            (0.01, 0.75, 0.1, -0.5946097192146145),
+            (0.1, 10., 0.9, 6.616013933407333),
+            (0.5, 1., 0.25, -0.28310958475848635),
+            (2., 10., 0.1, -0.6527466530057817),
+            (2., 10., 0.999999999999, 1.8466803767223767),
+            (50., 2., 0.9, 0.7899660326707638),
+            (2., 0.0001, 0.9, 0.00008),
+        ] {
+            let x = SuperGaussian::new(1., g, limit).quantile(u);
+            assert!(
+                (x - expected).abs() < 2e-11 * expected.abs().max(1e-4),
+                "g={g}, limit={limit}, u={u}: {x} != {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn supergaussian_truncation_gaussian_limit_and_scale_are_preserved() {
+        for factor in [0.01, 0.1, 0.5, 1., 2., 50.] {
+            for limit in [1e-8, 0.01, 1., 1000.] {
+                let p = SuperGaussian::new(1., factor, limit);
+                for u in [1e-8, 0.01, 0.25, 0.5, 0.9, 1. - 1e-8] {
+                    let x = p.quantile(u);
+                    assert!(x.is_finite() && x.abs() <= limit);
+                    assert!((0.5 + 0.5 * x.signum() * p.positive_cdf(x.abs()) - u).abs() < 2e-12);
+                    if factor == 1. {
+                        assert!((x - gaussian_quantile(u, 0.5, limit)).abs() < 1e-9);
+                    }
+                }
+            }
+        }
+        for scale in [1e-150, 1e150] {
+            let p = SuperGaussian::new(scale, 2., 2. * scale);
+            assert!((p.quantile(0.9) / scale - 0.6527466530057817).abs() < 1e-11);
+        }
+    }
 
     #[test]
     fn sobol_direction_numbers_match_six_dimensional_reference() {

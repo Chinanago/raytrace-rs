@@ -1,5 +1,6 @@
 //! Explicit subset of native Sequential object / field / pupil illumination.
 use super::*;
+use crate::illumination::{OpticalPupil, RayAiming, Vignetting};
 use crate::model::PupilIllumination;
 
 pub(super) fn sources(
@@ -65,40 +66,50 @@ pub(super) fn sources(
     if kind == 0. && xs.iter().chain(&ys).any(|v| v.abs() >= 90.) {
         return Err("Angle視野は各軸±90度未満に対応しています".into());
     }
-    let needs_pupil = finite || xs.iter().chain(&ys).any(|v| *v != 0.);
-    // Vignetting factors intentionally require an explicit implementation.
-    for key in ["VDXN", "VDYN", "VCXN", "VCYN", "VANN"] {
-        if values(key, 0.)?.iter().any(|v| *v != 0.) {
-            return Err(format!("視野の{key}補正は未対応です"));
-        }
-    }
+    let vdx = values("VDXN", 0.)?;
+    let vdy = values("VDYN", 0.)?;
+    let vcx = values("VCXN", 0.)?;
+    let vcy = values("VCYN", 0.)?;
+    let tan = values("VANN", 0.)?;
+    let aiming = match scalar(all, "RAIM", 0.)? {
+        0. => RayAiming::Off,
+        1. => RayAiming::Paraxial,
+        2. => RayAiming::Real,
+        _ => return Err("RAIMは0（Off）・1（Paraxial）・2（Real）に対応しています".into()),
+    };
+    let stop = blocks
+        .iter()
+        .find(|(_, l)| l.iter().any(|v| v.trim() == "STOP"))
+        .map(|b| b.0);
+    let needs_pupil = finite
+        || stop.is_some()
+        || aiming != RayAiming::Off
+        || xs
+            .iter()
+            .chain(&ys)
+            .chain(&vdx)
+            .chain(&vdy)
+            .chain(&vcx)
+            .chain(&vcy)
+            .chain(&tan)
+            .any(|v| *v != 0.);
     let mut pupil = None;
     if needs_pupil {
-        if scalar(all, "RAIM", 0.)? != 0. {
-            return Err("Ray Aimingを必要とする視野照射は未対応です".into());
-        }
-        let diameter = scalar(all, "ENPD", f64::NAN)?;
+        let diameter = scalar(all, "ENPD", 2. * base.disk_radius_mm)?;
         if !diameter.is_finite() || diameter <= 0. {
             return Err("視野照射にはENPDによる正の入射瞳径が必要です".into());
         }
-        let stop = blocks
-            .iter()
-            .find(|(_, l)| l.iter().any(|v| v.trim() == "STOP"))
-            .ok_or("視野照射にはSTOP面が必要です")?
-            .0;
+        let stop = stop.ok_or("視野照射にはSTOP面が必要です")?;
         let i = bindings
             .iter()
             .position(|b| *b == stop)
             .ok_or("STOP面の座標を解決できません")?;
-        if scene.surfaces[..i].iter().any(|s|!matches!(s.interaction,Interaction::Dielectric{minus_medium,plus_medium,..} if minus_medium==plus_medium)) {
-            return Err("STOPより前に屈折・反射面がある視野照射は、入射瞳の計算とRay Aimingが未対応です".into());
-        }
         let pose = &scene.surfaces[i].pose;
-        if pose.rotation_deg.norm() > 1e-12
-            || pose.translation_mm.0[..2].iter().any(|v| v.abs() > 1e-12)
-            || pose.translation_mm.0[2] < 0.
+        let first = &scene.surfaces[0].pose;
+        if first.rotation_deg.norm() > 1e-10
+            || first.translation_mm.0[0].hypot(first.translation_mm.0[1]) > 1e-9
         {
-            return Err("視野照射のSTOPは物体側Z軸上・無回転の配置に対応しています".into());
+            return Err("入射瞳を計算する元ZMXは、軸上・無回転の最初の光学面に対応しています。部品としての一括移動・回転は可能です".into());
         }
         pupil = Some(PupilIllumination {
             pose: pose.clone(),
@@ -107,6 +118,13 @@ pub(super) fn sources(
             },
             finite_object: finite,
             surface: Some(i),
+            optical: Some(OpticalPupil {
+                first_surface: 0,
+                primary_wavelength_um: base.wavelength_um,
+                aiming,
+                finite_field_angle_deg: None,
+            }),
+            vignetting: Vignetting::default(),
         });
     }
     let mut result = Vec::new();
@@ -143,9 +161,35 @@ pub(super) fn sources(
                 dir
             };
             s.disk_radius_mm = 0.;
-            s.pupil = Some(p.clone());
+            let mut p = p.clone();
+            p.vignetting = Vignetting {
+                decenter: [vdx[i], vdy[i]],
+                compression: [vcx[i], vcy[i]],
+                tangential_angle_deg: tan[i],
+            };
+            p.vignetting.validate()?;
+            if finite && kind == 0. {
+                p.optical.as_mut().unwrap().finite_field_angle_deg = Some([xs[i], ys[i]]);
+            }
+            s.pupil = Some(p);
         }
         result.push(s);
+    }
+    if pupil.is_some() {
+        let mut check = scene.clone();
+        check.sources = result.clone();
+        let prepared = check.prepare()?;
+        for (i, s) in result.iter_mut().enumerate() {
+            if s.pupil
+                .as_ref()
+                .and_then(|p| p.optical.as_ref())
+                .is_some_and(|p| p.finite_field_angle_deg.is_some())
+            {
+                if let Some(g) = crate::illumination::pupil_geometry(&prepared, i)? {
+                    s.origin_mm = g.object_origin_mm;
+                }
+            }
+        }
     }
     Ok(result)
 }

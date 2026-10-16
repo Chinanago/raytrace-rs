@@ -116,17 +116,16 @@ fn infinite_angle_fields_fill_stop_and_native_edits_preserve_object_definition()
     assert!(zemax::export(&p, &dir.join("incompatible_fields.zmx")).is_err());
 }
 #[test]
-fn powered_entrance_pupil_and_bad_fields_block_system_but_keep_optic_import_available() {
+fn unsupported_fields_block_system_but_keep_optic_import_available() {
     let dir = folder();
     let p = finite(&dir);
     let base = &p.zemax.as_ref().unwrap().text;
     for (i, text) in [
-        base.replace("TYPE STANDARD\nSTOP", "TYPE STANDARD\nGLAS 1.5 0 0\nSTOP")
-            .replace("STOP\n", "")
-            .replace("SURF 2\nTYPE STANDARD", "SURF 2\nTYPE STANDARD\nSTOP"),
         base.replace("FTYP 1", "FTYP 3"),
         base.replace("FWGN 1 3", "FWGN -1 3"),
-        base.replace("WAVM 1", "RAIM 1 0 0\nWAVM 1"),
+        base.replace("WAVM 1", "RAIM 3 0 0\nWAVM 1"),
+        base.replace("STOP\n", ""),
+        base.replace("WAVM 1", "VCXN 1.1 0\nWAVM 1"),
     ]
     .iter()
     .enumerate()

@@ -13,7 +13,16 @@ use std::{
 };
 
 pub const RUN_FORMAT: &str = "raytrace-run-v1";
-const SAMPLING_REVISION: u32 = 2;
+const SAMPLING_REVISION: u32 = 3;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SavedPupil {
+    pub source_index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geometry: Option<crate::illumination::PupilGeometry>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -39,6 +48,8 @@ pub struct RunContext {
     pub trace_options: TraceOptions,
     pub launch_wavelengths_um: Vec<f64>,
     pub compatibility: CompatibilityReport,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pupils: Vec<SavedPupil>,
 }
 impl RunContext {
     pub fn input_count(&self) -> usize {
@@ -103,6 +114,28 @@ impl RunContext {
             trace_options,
             compatibility,
             launch_wavelengths_um: waves,
+            pupils: scene
+                .sources
+                .iter()
+                .enumerate()
+                .filter_map(|(i, s)| {
+                    s.pupil.as_ref().and_then(|p| p.optical.as_ref())?;
+                    Some(
+                        match crate::illumination::pupil_geometry_from_scene(scene, i) {
+                            Ok(geometry) => SavedPupil {
+                                source_index: i,
+                                geometry,
+                                error: None,
+                            },
+                            Err(error) => SavedPupil {
+                                source_index: i,
+                                geometry: None,
+                                error: Some(error),
+                            },
+                        },
+                    )
+                })
+                .collect(),
         }
     }
     pub fn rays(&self) -> Result<Vec<Ray>, String> {
@@ -115,8 +148,15 @@ impl RunContext {
                 sampling_revision,
                 count,
             } => {
+                let legacy = self
+                    .scene
+                    .sources
+                    .iter()
+                    .all(|s| !s.extended_illumination());
                 if *sampling_revision != SAMPLING_REVISION
+                    && !(*sampling_revision == 2 && legacy)
                     && !(*sampling_revision == 1
+                        && legacy
                         && self
                             .scene
                             .sources

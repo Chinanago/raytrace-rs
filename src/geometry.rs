@@ -405,8 +405,7 @@ fn oblique_asphere_hit(
         sag(&surface.spec.shape, q.0[0], q.0[1])
             .map(|v| (q.0[2] - v.0, d.0[2] - v.1 * d.0[0] - v.2 * d.0[1]))
     };
-    let curvature = sag_curvature_bound(&surface.spec.shape, surface.spec.aperture.max_radius2())
-        * (d.0[0] * d.0[0] + d.0[1] * d.0[1]);
+    let transverse2 = d.0[0] * d.0[0] + d.0[1] * d.0[1];
     let mut stack = [(0.0, 0.0); 64];
     let mut count = 1;
     stack[0] = (lo, hi);
@@ -416,6 +415,17 @@ fn oblique_asphere_hit(
         }
         count -= 1;
         let (a, b) = stack[count];
+        // Squared radial distance is convex along the ray. Endpoint radii
+        // bound this interval more tightly than the full optical aperture.
+        let radius2 = [a, b]
+            .into_iter()
+            .map(|t| {
+                let q = p + d * t;
+                q.0[0] * q.0[0] + q.0[1] * q.0[1]
+            })
+            .fold(0., f64::max)
+            .min(surface.spec.aperture.max_radius2());
+        let curvature = sag_curvature_bound(&surface.spec.shape, radius2) * transverse2;
         let mid = a + (b - a) * 0.5;
         let (fm, df) = value(mid).ok_or(Miss::Numerical)?;
         let half = (b - a) * 0.5;

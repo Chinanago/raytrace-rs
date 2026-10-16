@@ -504,6 +504,7 @@ pub fn read_zmx_with_cad_tolerance(
         surface_numbers: bindings,
         glass_records: records,
     });
+    project.refresh_assembly()?;
     Ok(project)
 }
 
@@ -856,7 +857,7 @@ fn read_sequential(
             project.issue("illumination_definition", e, true);
         }
     }
-    project.issue("illumination","逐次ZMXの波長表・視野の相対重みを使用。光量の分母は発射光線の重みの合計です。瞳は面積に一様なサンプルで照射します",false);
+    project.issue("illumination","逐次ZMXの波長表・視野の相対重みを使用。光量の基準は瞳補正後の発射光線の重み合計を100%とします。入射瞳、Ray Aiming時はSTOPのXY座標を面積一様に選び、視野の瞳補正を適用します。実開口の外れは光量収支へ記録します",false);
     Ok(())
 }
 
@@ -1127,17 +1128,6 @@ fn read_nsc(
         }
         match typ {
             "NSC_SDIO" => {
-                if [8, 10, 17, 20]
-                    .iter()
-                    .any(|k| (param(*k, 1.0) - 1.0).abs() > 1e-12)
-                    || param(6, 0.0) != 0.0
-                {
-                    project.issue(
-                        "source",
-                        format!("{label}: 非点収差または超Gaussian係数は未対応です"),
-                        true,
-                    );
-                }
                 let frame = crate::math::Frame::new(&pose);
                 let waves = parameters(all, "WAVM");
                 let source_wave = *waves.get(&(param(4, 1.0) as usize)).unwrap_or(&wavelength);
@@ -1162,6 +1152,9 @@ fn read_nsc(
                     total_weight: param(3, 1.0),
                     seed: 42 + i as u64,
                     diode: Some(Diode {
+                        astigmatism_mm: param(6, 0.),
+                        angular_supergaussian: [param(8, 1.), param(10, 1.)],
+                        spatial_supergaussian: [param(17, 1.), param(20, 1.)],
                         rotation_deg: pose.rotation_deg,
                         divergence_deg: [param(7, 1.0), param(9, 1.0)],
                         array: [param(11, 1.0) as usize, param(12, 1.0) as usize],
@@ -1170,6 +1163,18 @@ fn read_nsc(
                         gaussian_width_mm: [param(16, 0.0), param(19, 0.0)],
                     }),
                 });
+                if let Err(e) = project
+                    .scene
+                    .sources
+                    .last()
+                    .unwrap()
+                    .diode
+                    .as_ref()
+                    .unwrap()
+                    .validate()
+                {
+                    project.issue("source", format!("{label}: {e}"), true);
+                }
             }
             "NSC_DETC" => project.scene.surfaces.push(Surface {
                 coating: None,
@@ -1800,16 +1805,21 @@ fn patch_nsc(
             Ok(BTreeMap::from([
                 (2, s.count as f64),
                 (3, s.total_weight),
+                (6, d.astigmatism_mm),
                 (7, d.divergence_deg[0]),
+                (8, d.angular_supergaussian[0]),
                 (9, d.divergence_deg[1]),
+                (10, d.angular_supergaussian[1]),
                 (11, d.array[0] as f64),
                 (12, d.array[1] as f64),
                 (13, d.spacing_mm[0]),
                 (14, d.spacing_mm[1]),
                 (15, d.half_width_mm[0]),
                 (16, d.gaussian_width_mm[0]),
+                (17, d.spatial_supergaussian[0]),
                 (18, d.half_width_mm[1]),
                 (19, d.gaussian_width_mm[1]),
+                (20, d.spatial_supergaussian[1]),
             ]))
         })
         .collect::<Result<_, String>>()?;

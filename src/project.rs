@@ -37,6 +37,12 @@ pub struct Project {
 
 impl Project {
     pub fn new(scene: Scene) -> Self {
+        let format = if scene.sources.iter().any(|s| s.extended_illumination()) {
+            "raytrace-project-v3"
+        } else {
+            "raytrace-project-v1"
+        }
+        .into();
         let material_names = (0..scene.materials.len())
             .map(|i| {
                 if i == 0 {
@@ -48,7 +54,7 @@ impl Project {
             .collect();
         Self {
             assembly: None,
-            format: "raytrace-project-v1".into(),
+            format,
             scene,
             material_names,
             issues: Vec::new(),
@@ -82,7 +88,12 @@ impl Project {
                 return Err("計算記録は raytrace-rs --replay で再計算できます。配置の編集にはプロジェクトJSONを開いてください".into());
             }
             let mut project: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
-            if !["raytrace-project-v1", "raytrace-project-v2"].contains(&project.format.as_str())
+            if ![
+                "raytrace-project-v1",
+                "raytrace-project-v2",
+                "raytrace-project-v3",
+            ]
+            .contains(&project.format.as_str())
                 || project.format == "raytrace-project-v2" && project.assembly.is_none()
             {
                 return Err("未対応のプロジェクト形式です".into());
@@ -128,6 +139,9 @@ impl Project {
             for source in &mut scene.sources {
                 source.wavelength_um = wavelength;
                 source.spectrum = None;
+                if let Some(o) = source.pupil.as_mut().and_then(|p| p.optical.as_mut()) {
+                    o.primary_wavelength_um = wavelength;
+                }
             }
         }
         Ok(scene)
@@ -155,7 +169,23 @@ impl Project {
             self.material_names = names;
             self.issues = issues;
         }
+        self.format = if self.requires_extended_illumination() {
+            "raytrace-project-v3"
+        } else if self.assembly.is_some() {
+            "raytrace-project-v2"
+        } else {
+            "raytrace-project-v1"
+        }
+        .into();
         Ok(())
+    }
+    fn requires_extended_illumination(&self) -> bool {
+        self.scene.sources.iter().any(|s| s.extended_illumination())
+            || self.assembly.as_ref().is_some_and(|a| {
+                a.components
+                    .iter()
+                    .any(|c| c.project.requires_extended_illumination())
+            })
     }
     pub fn add_component(&mut self, component: Component) -> Result<(), String> {
         let mut candidate = self.clone();

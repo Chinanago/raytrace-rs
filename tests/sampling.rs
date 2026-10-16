@@ -86,6 +86,9 @@ fn source_seed_prefix_and_serialization_are_reproducible_for_both_methods() {
 fn diode_keeps_gaussian_mass_and_balances_array_elements() {
     let mut spec = specification(4096);
     spec.sources[0].diode = Some(Diode {
+        astigmatism_mm: 0.,
+        angular_supergaussian: [1.; 2],
+        spatial_supergaussian: [1.; 2],
         rotation_deg: V3([0.0, 0.0, 0.0]),
         divergence_deg: [10.0, 20.0],
         array: [4, 2],

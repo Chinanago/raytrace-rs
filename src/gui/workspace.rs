@@ -271,7 +271,7 @@ impl App {
             maximum_percent: self.screen_display.maximum_percent,
         };
         let conditions = serde_json::json!({"calculation_software_version":r.calculation.software_version,"model":r.scene.name,"wavelengths_um":r.calculation.launch_wavelengths_um,
-            "input_rays":r.calculation.input_count(),"sources":r.scene.sources,"trace_settings":r.scene.settings,"display":display});
+            "input_rays":r.calculation.input_count(),"sources":r.scene.sources,"pupils":r.calculation.pupils,"trace_settings":r.scene.settings,"display":display});
         let (tx, rx) = mpsc::channel();
         self.job = Some(rx);
         self.status = "スクリーンを書き出し中…".into();
@@ -1015,6 +1015,23 @@ impl App {
                 }
             }
             if changed { self.changed(); }
+            if let Some(r) = &self.result {
+                if !r.calculation.pupils.is_empty() {
+                    egui::CollapsingHeader::new(if self.stale { "前回の計算結果の入射瞳" } else { "この計算結果の入射瞳" }).show(ui, |ui| {
+                        for pupil in &r.calculation.pupils {
+                            ui.label(format!("光源 {}", pupil.source_index + 1));
+                            if let Some(g) = &pupil.geometry {
+                                let p = g.entrance_pose.translation_mm.0;
+                                ui.label(format!("入射瞳中心：X {:.6} / Y {:.6} / Z {:.6} mm", p[0], p[1], p[2]));
+                                ui.label(format!("入射瞳半径：{:.6} mm · STOP基準半径：{:.6} mm", g.entrance_radius_mm, g.target_stop_radius_mm));
+                                let mode = match g.aiming { crate::illumination::RayAiming::Off => "近軸瞳へ照射", crate::illumination::RayAiming::Paraxial => "近軸半径のSTOPへ照準", crate::illumination::RayAiming::Real => "実光線半径のSTOPへ照準" };
+                                ui.label(format!("主波長 {:.1} nm · {mode}", g.primary_wavelength_um * 1000.));
+                            }
+                            if let Some(e) = &pupil.error { ui.colored_label(Color32::from_rgb(173, 93, 20), e); }
+                        }
+                    });
+                }
+            }
             section_label(ui, "読込の確認");
             let report = self.project.compatibility_report();
             ui.label(egui::RichText::new(if report.traceable { "指定した条件で計算できます" } else { "計算前に確認が必要な項目があります" })
@@ -1447,22 +1464,141 @@ fn source_controls(
             for a in 0..2 {
                 changed |= number_row(
                     ui,
-                    ["X 発散", "Y 発散"][a],
+                    ["X 発散 α", "Y 発散 α"][a],
                     &mut d.divergence_deg[a],
                     " °",
                     0.1,
-                    0.0..=179.0,
+                    0.0..=1e9,
                 );
             }
-        } else if let Some(p) = &s.pupil {
+            egui::CollapsingHeader::new("分布と非点収差").show(ui, |ui| {
+                ui.label("発散 α は強度が1/e²になる半角です");
+                ui.label("形の係数 G/H は1で通常のGaussianになります");
+                changed |= number_row(
+                    ui,
+                    "非点収差",
+                    &mut d.astigmatism_mm,
+                    " mm",
+                    0.01,
+                    0.0..=1e9,
+                );
+                for a in 0..2 {
+                    changed |= number_row(
+                        ui,
+                        ["X 角度 G", "Y 角度 G"][a],
+                        &mut d.angular_supergaussian[a],
+                        "",
+                        0.01,
+                        0.01..=50.,
+                    );
+                    if d.astigmatism_mm == 0. {
+                        changed |= number_row(
+                            ui,
+                            ["X 発光半幅", "Y 発光半幅"][a],
+                            &mut d.half_width_mm[a],
+                            " mm",
+                            0.001,
+                            0.0..=1e9,
+                        );
+                        changed |= number_row(
+                            ui,
+                            ["X 幅 s", "Y 幅 s"][a],
+                            &mut d.gaussian_width_mm[a],
+                            " mm",
+                            0.001,
+                            0.0..=1e9,
+                        );
+                        changed |= number_row(
+                            ui,
+                            ["X 形 H", "Y 形 H"][a],
+                            &mut d.spatial_supergaussian[a],
+                            "",
+                            0.01,
+                            0.01..=f64::MAX,
+                        );
+                    }
+                }
+                if d.astigmatism_mm > 0. {
+                    ui.label("Xの仮想発光点を後方へ移し、Z=0の線上から発射します");
+                }
+            });
+        } else if let Some(p) = &mut s.pupil {
             ui.label(if p.finite_object {
                 "有限距離の物点 → 瞳の面積一様照射"
             } else {
                 "無限遠の視野 → 瞳の面積一様照射"
             });
             if let Some(i) = p.surface {
-                ui.label(format!("瞳の配置は面 {} に追従", i + 1));
+                ui.label(if p.optical.is_some() {
+                    format!("STOP：面 {}", i + 1)
+                } else {
+                    format!("瞳の配置は面 {} に追従", i + 1)
+                });
             }
+            egui::CollapsingHeader::new("視野と瞳").show(ui, |ui| {
+                if let Some(o) = &mut p.optical {
+                    use crate::illumination::RayAiming;
+                    ui.label("入射瞳は光学面と主波長から計算します");
+                    ui.label(format!("主波長：{:.1} nm", o.primary_wavelength_um * 1000.));
+                    let label = |m| match m {
+                        RayAiming::Off => "近軸瞳へ照射",
+                        RayAiming::Paraxial => "絞りへ照準（近軸半径）",
+                        RayAiming::Real => "絞りへ照準（実光線半径）",
+                    };
+                    egui::ComboBox::from_id_salt("ray_aiming")
+                        .selected_text(label(o.aiming))
+                        .show_ui(ui, |ui| {
+                            for mode in [RayAiming::Off, RayAiming::Paraxial, RayAiming::Real] {
+                                changed |= ui
+                                    .selectable_value(&mut o.aiming, mode, label(mode))
+                                    .changed();
+                            }
+                        });
+                    if let Some(angles) = &mut o.finite_field_angle_deg {
+                        for a in 0..2 {
+                            changed |= number_row(
+                                ui,
+                                ["X 視野角", "Y 視野角"][a],
+                                &mut angles[a],
+                                " °",
+                                0.1,
+                                -89.9..=89.9,
+                            );
+                        }
+                        ui.label("物点のXY位置は視野角と入射瞳から決まります");
+                    }
+                    if let crate::model::Aperture::Circle { radius_mm } = &mut p.aperture {
+                        changed |= number_row(ui, "入射瞳半径", radius_mm, " mm", 0.1, 1e-9..=1e9);
+                    }
+                }
+                for a in 0..2 {
+                    changed |= number_row(
+                        ui,
+                        ["瞳のずれ X", "瞳のずれ Y"][a],
+                        &mut p.vignetting.decenter[a],
+                        "",
+                        0.01,
+                        -f64::MAX..=f64::MAX,
+                    );
+                    changed |= number_row(
+                        ui,
+                        ["瞳の圧縮 X", "瞳の圧縮 Y"][a],
+                        &mut p.vignetting.compression[a],
+                        "",
+                        0.01,
+                        -f64::MAX..=1.,
+                    );
+                }
+                changed |= number_row(
+                    ui,
+                    "瞳の回転",
+                    &mut p.vignetting.tangential_angle_deg,
+                    " °",
+                    0.1,
+                    -360.0..=360.0,
+                );
+                ui.label("瞳補正後に発射する光線の重み合計を100%とします");
+            });
         } else {
             changed |= number_row(ui, "円板半径", &mut s.disk_radius_mm, " mm", 0.1, 0.0..=1e9);
             changed |= number_row(
@@ -1481,6 +1617,14 @@ fn source_controls(
         })
         .show(ui, |ui| {
             for a in 0..3 {
+                if a < 2
+                    && s.pupil
+                        .as_ref()
+                        .and_then(|p| p.optical.as_ref())
+                        .is_some_and(|o| o.finite_field_angle_deg.is_some())
+                {
+                    continue;
+                }
                 changed |= number_row(
                     ui,
                     ["X", "Y", "Z"][a],
