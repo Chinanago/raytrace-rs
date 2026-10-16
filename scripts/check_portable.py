@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
@@ -11,6 +12,58 @@ import zipfile
 
 from check_publish import embedded_document
 from package_windows import FILES, ROOT
+
+
+def owned_step_box():
+    """A closed 2 x 4 x 3 mm test solid, authored independently of a CAD app."""
+    records = []
+    def add(value):
+        records.append(value)
+        return len(records)
+    def vector(values):
+        return "(" + ",".join(format(v, ".17E") for v in values) + ")"
+    def refs(values):
+        return "(" + ",".join(f"#{v}" for v in values) + ")"
+    def direction(values):
+        length = math.sqrt(sum(x*x for x in values))
+        return add(f"DIRECTION('',{vector([x/length for x in values])})")
+    points = [(-1,-2,0),(1,-2,0),(1,2,0),(-1,2,0),(-1,-2,3),(1,-2,3),(1,2,3),(-1,2,3)]
+    locations = [add(f"CARTESIAN_POINT('',{vector(p)})") for p in points]
+    vertices = [add(f"VERTEX_POINT('',#{p})") for p in locations]
+    edges, faces = {}, []
+    for corners in [(0,3,2,1),(0,1,5,4),(1,2,6,5),(2,3,7,6),(3,0,4,7),(4,5,6,7)]:
+        oriented = []
+        for i, a in enumerate(corners):
+            b = corners[(i+1) % 4]
+            key = tuple(sorted((a,b)))
+            if key not in edges:
+                delta = [y-x for x,y in zip(points[a],points[b])]
+                axis = direction(delta)
+                length = math.sqrt(sum(x*x for x in delta))
+                v = add(f"VECTOR('',#{axis},{length})")
+                line = add(f"LINE('',#{locations[a]},#{v})")
+                edge = add(f"EDGE_CURVE('',#{vertices[a]},#{vertices[b]},#{line},.T.)")
+                edges[key] = edge, a
+            edge, start = edges[key]
+            oriented.append(add(f"ORIENTED_EDGE('',*,*,#{edge},.{('T' if a == start else 'F')}.)"))
+        loop = add(f"EDGE_LOOP('',{refs(oriented)})")
+        bound = add(f"FACE_OUTER_BOUND('',#{loop},.T.)")
+        a,b,c = [points[i] for i in corners[:3]]
+        x = [v-u for u,v in zip(a,b)]
+        y = [v-u for u,v in zip(a,c)]
+        normal = [x[1]*y[2]-x[2]*y[1],x[2]*y[0]-x[0]*y[2],x[0]*y[1]-x[1]*y[0]]
+        zaxis, xaxis = direction(normal), direction(x)
+        frame = add(f"AXIS2_PLACEMENT_3D('',#{locations[corners[0]]},#{zaxis},#{xaxis})")
+        plane = add(f"PLANE('',#{frame})")
+        faces.append(add(f"ADVANCED_FACE('',(#{bound}),#{plane},.T.)"))
+    shell = add(f"CLOSED_SHELL('',{refs(faces)})")
+    solid = add(f"MANIFOLD_SOLID_BREP('Owned box',#{shell})")
+    unit = add("(LENGTH_UNIT() NAMED_UNIT(*) SI_UNIT(.MILLI.,.METRE.))")
+    angle = add("(NAMED_UNIT(*) PLANE_ANGLE_UNIT() SI_UNIT($,.RADIAN.))")
+    steradian = add("(NAMED_UNIT(*) SI_UNIT($,.STERADIAN.) SOLID_ANGLE_UNIT())")
+    context = add(f"(GEOMETRIC_REPRESENTATION_CONTEXT(3) GLOBAL_UNIT_ASSIGNED_CONTEXT((#{unit},#{angle},#{steradian})) REPRESENTATION_CONTEXT('',''))")
+    add(f"ADVANCED_BREP_SHAPE_REPRESENTATION('',(#{solid}),#{context})")
+    return "ISO-10303-21;\nHEADER;FILE_DESCRIPTION(('Owned test'),'2;1');FILE_NAME('owned.step','',(''),(''),'raytrace','','');FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));ENDSEC;\nDATA;\n" + "".join(f"#{i}={r};\n" for i,r in enumerate(records,1)) + "ENDSEC;END-ISO-10303-21;\n"
 
 
 def check(archive, output):
@@ -44,7 +97,8 @@ def check(archive, output):
         system = Path(environment.get("SystemRoot", "C:/Windows"))
         environment["PATH"] = os.pathsep.join([str(system / "System32"), str(system)])
         environment["RAYTRACE_DATA_DIR"] = str(destination / "runtime")
-        environment.pop("RAYTRACE_FREECAD_PYTHON", None)
+        environment["LOCALAPPDATA"] = str(destination / "empty_appdata")
+        environment["RAYTRACE_FREECAD_PYTHON"] = str(destination / "absent_python.exe")
         environment.pop("RAYTRACE_ZEMAX_ROOT", None)
 
         def run(binary, *args):
@@ -89,9 +143,48 @@ def check(archive, output):
             raise ValueError("Saved calculation replay differs")
         checks.extend(["Native ZMX import, placement edit, JSON save, ZMX roundtrip",
                        "Frozen calculation replay after original inputs are removed"])
+
+        step = root / "owned.STEP"
+        step.write_text(owned_step_box(), encoding="ascii")
+        catalog = root / "OWNED.AGF"
+        catalog.write_text("NM OWNED 1 0 1.5 50 0 0\nCD 2.25 0 0 0 0 0\nLD 0.4 0.7\n", encoding="ascii")
+        cad = root / "owned_cad.zmx"
+        cad.write_text("MODE NSC\nUNIT MM\nGCAT OWNED\nWAVM 1 .55 1\nPWAV 1\nSURF 1\n TYPE NONSEQCO\n NSOH NSC_IMPT 0 0 owned.STEP\n NSOP 0 0 0 0 0 0 OWNED\n NSOH NSC_DETC 0 0 Screen\n NSOP 0 0 15 0 0 0\n NSOD 1 10\n NSOD 2 10\n NSOD 3 4\n NSOD 4 4\n", encoding="ascii")
+        cache_dir = destination / "runtime" / "cad_cache"
+        if cache_dir.exists() and list(cache_dir.iterdir()):
+            raise ValueError("STEP acceptance needs an empty conversion cache")
+        run("raytrace-rs", cad, "--inspect", "--output", "cad.project.json")
+        project = record("cad.project.json")
+        if project["scene"]["surfaces"][0]["shape"]["type"] != "triangle_mesh":
+            raise ValueError("Native STEP import produced no mesh")
+        caches = list(cache_dir.glob("*_native_v1.json"))
+        if len(caches) != 1:
+            raise ValueError("Native STEP cache was not created")
+        caches[0].write_text('{"format":"corrupt"}', encoding="ascii")
+        run("raytrace-rs", cad, "--inspect", "--output", "cad.recovered.json")
+        if record("cad.recovered.json")["scene"] != project["scene"]:
+            raise ValueError("Corrupt STEP cache recovery changed geometry")
+        project["scene"]["surfaces"][0]["pose"]["translation_mm"][0] = 0.25
+        (root / "cad.moved.json").write_text(json.dumps(project), encoding="utf-8")
+        csv = root / "cad.rays.csv"
+        csv.write_text("id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium\n0,0,0,-5,0,0,1,1,.55,0\n", encoding="ascii")
+        for original in [step,catalog,cad,*caches]:
+            original.unlink()
+        run("raytrace-rs", "cad.moved.json", "--rays-csv", csv, "--threads", 1, "--output", "cad.run.json")
+        result = record("cad.run.json")
+        if abs(result["report"]["budget"]["detected"] - 12/13) > 1e-6:
+            raise ValueError("Native CAD slab optical power differs from the analytic value")
+        (root / "cad.moved.json").unlink()
+        csv.unlink()
+        run("raytrace-rs", "--replay", "cad.run.json", "--threads", 2, "--output", "cad.replay.json")
+        if result["report"] != record("cad.replay.json")["report"]:
+            raise ValueError("Native CAD frozen replay differs")
+        checks.extend(["Fresh STEP through ZMX without FreeCAD/Python lookup or a conversion cache",
+                       "Corrupt native STEP cache recovery",
+                       "CAD placement, analytic optical power, save and replay without original files/cache"])
     result = {"version": version, "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
               "checks": checks, "passed": True,
-              "scope": "Windows CLI workflows and GUI version entry point with only Windows directories on PATH. Interactive GUI rendering and FreeCAD conversion need separate checks."}
+              "scope": "Windows CLI workflows, fresh native STEP via ZMX, and GUI version entry point with only Windows directories on PATH. Interactive GUI operation on another PC remains a separate check."}
     output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(f"Portable acceptance: {len(checks)} checks passed; {output}")
 

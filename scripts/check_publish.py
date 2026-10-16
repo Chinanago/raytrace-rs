@@ -12,16 +12,18 @@ FILES = {
     "examples/validation_suite.rs",
     "examples/performance_check.rs",
     "examples/trace_limits.rs",
+    "examples/step_check.rs",
     ".github/workflows/windows.yml",
     "scripts/check_portable.py",
     "scripts/package_windows.py",
     "scripts/third_party_notices.toml",
-    "scripts/check_publish.py", "scripts/step_mesh.py", "scripts/zemax_exchange_probe.py",
+    "scripts/check_publish.py", "scripts/zemax_exchange_probe.py",
 }
 DEMOS = {
     "examples/sequential_lens.json", "examples/nonsequential_slab.json",
     "examples/integrator_rod.json", "examples/folded_mirror.json",
 }
+FIXTURES = {"tests/fixtures/step_legacy_hits.json"}
 
 
 def git(*args):
@@ -47,7 +49,7 @@ def main():
         path = name.decode("utf-8")
         part = PurePosixPath(path)
         source = part.suffix == ".rs" and part.parts[0] in {"src", "tests"}
-        if mode != b"100644" or stage != b"0" or not (path in FILES | DEMOS or source):
+        if mode != b"100644" or stage != b"0" or not (path in FILES | DEMOS | FIXTURES or source):
             failures.append(f"Unapproved publication path or mode: {path}")
             continue
         content = git("show", f":{path}")
@@ -56,8 +58,12 @@ def main():
             continue
         try:
             text = content.decode("utf-8")
-            if path in DEMOS and embedded_document(json.loads(text)):
+            if path in DEMOS | FIXTURES and embedded_document(json.loads(text)):
                 failures.append(f"Embedded original project data: {path}")
+            if path in FIXTURES:
+                fixture = json.loads(text)
+                if fixture.get("format") != "owned-step-legacy-hits-v1" or {c["name"] for c in fixture["cases"]} != {"box_mm", "box_inch", "tube", "cone", "sphere_cap", "torus"}:
+                    failures.append(f"Unrecognized owned fixture: {path}")
         except (UnicodeDecodeError, json.JSONDecodeError):
             failures.append(f"Invalid text/demo: {path}")
         checked += 1

@@ -1,6 +1,6 @@
 [package]
 name = "raytrace-rs"
-version = "0.10.0"
+version = "0.11.0"
 default-run = "raytrace-rs"
 edition = "2021"
 license = "MIT"
@@ -16,6 +16,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 encoding_rs = "0.8"
 libm = "0.2"
+spade = "2.15.1"
 eframe = { version = "0.31.1", optional = true, default-features = false, features = ["glow", "default_fonts"] }
 rfd = { version = "0.15", optional = true, default-features = false }
 image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
@@ -28,3 +29,6 @@ required-features = ["gui"]
 [profile.release]
 lto = "thin"
 codegen-units = 1
+
+[profile.test.package.raytrace-rs]
+opt-level = 1

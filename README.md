@@ -2,7 +2,7 @@
 
 光源・レンズ・インテグレータロッドを配置し、光路とスクリーン上の光量分布を調べるRust製の幾何光学シミュレーターです。日本語GUIとコマンドラインで、シーケンシャル／非シーケンシャルの両方を扱います。
 
-[Windows版ZIP（v0.10.0）](https://github.com/Chinanago/raytrace-rs/releases/download/v0.10.0/raytrace-rs-0.10.0-windows-x64.zip) · [機能と対応範囲](docs/FEATURES.md) · [操作ガイド](docs/GUIDE.md) · [変更履歴](https://github.com/Chinanago/raytrace-rs/releases)
+[Windows版ZIP（v0.11.0）](https://github.com/Chinanago/raytrace-rs/releases/download/v0.11.0/raytrace-rs-0.11.0-windows-x64.zip) · [機能と対応範囲](docs/FEATURES.md) · [操作ガイド](docs/GUIDE.md) · [変更履歴](https://github.com/Chinanago/raytrace-rs/releases)
 
 ## はじめる
 
@@ -14,7 +14,7 @@ Windows x64版のZIPを展開し、「Raytraceを起動.cmd」を開きます。
 
 自分のデータを使うときは「ファイル → 新規の光学系」から始め、「＋ 追加」で光源とレンズのZMXを別々に読み込みます。ロッドとスクリーンを加え、一つの光学系として追跡できます。配置と条件はJSONプロジェクトへ保存します。
 
-Visual C++ v14ランタイムを使います。DLL不足の表示が出る環境では、[Microsoft公式のx64ランタイム](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)を導入してください。STEPの初回読込にはFreeCADのPythonが必要です。
+Visual C++ v14ランタイムを使います。DLL不足の表示が出る環境では、[Microsoft公式のx64ランタイム](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)を導入してください。STEPもRustで直接読み込みます。
 
 ## できること
 
@@ -40,7 +40,7 @@ Visual C++ v14ランタイムを使います。DLL不足の表示が出る環境
 
 光線追跡による光路と光量を扱います。偏光・位相、回折・干渉・波動伝搬、収差図・MTF/PSF、自動最適化、公差解析は対象に含めていません。入射瞳・Ray Aimingは、最初の面から絞りまで同軸で正の面間隔を持つ屈折系に対応します。[機能ごとの条件と未対応項目](docs/FEATURES.md)
 
-v0.10.0では120テスト、解析解とZMX往復保存の8ケース・44項目、Windows配布ZIPの動作を確認しています。OpticStudioとの実機照合は継続課題です。[検証方法と開発情報](docs/DEVELOPMENT.md)
+v0.11.0では132テストが通過しています。STEPの従来版比較、解析解とZMX往復保存、Windows配布ZIPの動作も確認しています。OpticStudioとの実機照合は継続課題です。[検証方法と開発情報](docs/DEVELOPMENT.md)
 
 ## ドキュメント
 

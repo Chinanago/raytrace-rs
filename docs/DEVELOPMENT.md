@@ -29,12 +29,21 @@ README、機能一覧、操作ガイド、開発と検証の文書もZIPに同�
 
 ```powershell
 python scripts/package_windows.py
-python scripts/check_portable.py results/packages/raytrace-rs-0.10.0-windows-x64.zip
+python scripts/check_portable.py results/packages/raytrace-rs-0.11.0-windows-x64.zip
 ```
 
 ## 自動テストと配布確認
 
-GitHubへのpushとPull Requestで、Windows上の整形・Clippy・全テスト・解析解／ZMX往復保存・配布ZIPの作成と確認を自動実行します。配布確認はWindows標準ディレクトリだけをPATHに残し、4サンプル、ZMX読込、配置編集、保存と元ファイル削除後の再計算を実行します。GUIの対話操作とFreeCAD初回変換は別途確認します。
+GitHubへのpushとPull Requestで、Windows上の整形・Clippy・全テスト・解析解／ZMX往復保存・配布ZIPの作成と確認を自動実行します。配布確認はWindows標準ディレクトリだけをPATHに残し、4サンプル、ZMX読込、配置編集、保存と元ファイル削除後の再計算を実行します。STEPは変換キャッシュを空にし、外部Pythonの参照先も使用できない状態で、ZMXから初回読込・配置・追跡・保存・再生を確認します。別PCでのGUIの対話操作は別途確認します。
+
+STEPの回帰テストは、自作6形状について従来の変換結果から固定した900本の光線で、交差有無・交点・法線を照合します。曲面の比較許容差は分割精度・入射角・曲率から求め、平面は丸め誤差の範囲で比較します。NURBS半球は独立した球の解析解でも検証します。穴、周期の継ぎ目、極、単位換算、配置、閉じた形状、分割精度の収束と再現性もテスト対象です。
+
+```powershell
+cargo test --locked --test native_step
+cargo run --release --locked --example step_check -- --generate-owned results/step-owned
+```
+
+`step_check INPUT.step OUTPUT.json [REFERENCE_MESH.json] [DEFLECTION_MM] [--optical]` で、キャッシュを使わない変換時間と固定光線の交点・法線を比較できます。`--optical` は分散材料と6面の受光器を使い、光量収支・画素分布・出射方向・光学距離を比較します。光量の差は固定した全入力光線の重みを分母とします。従来版の曲面分割は精度設定で結果が変わるため、精度を変えた従来版同士の差も一緒に確認してください。
 
 ## Rust内の検証
 

@@ -1241,7 +1241,7 @@ fn read_nsc(
         .any(|s| matches!(s.shape, Shape::TriangleMesh { .. }))
     {
         project.cad_deflection_mm = Some(deflection_mm);
-        project.issue("cad_accuracy",format!("STEPはFreeCADで{deflection_mm} mm設定で分割し、頂点法線を補間します。メッシュを変えたときの結果の収束が検証対象です"),false);
+        project.issue("cad_accuracy",format!("STEPはRustで{deflection_mm} mm設定の適応分割を行い、曲面法線を補間します。分割精度を変えて結果の収束を確認してください"),false);
     }
     Ok(())
 }

@@ -101,7 +101,7 @@ Visual C++ v14ランタイムを使います。VCRUNTIME140.dllが不足する�
 
 部品を読み込んで配置し、「計算する」で追跡します。走査は選択部品の「操作 → この部品の値を走査…」から開きます。
 
-`examples` に解析用のJSONサンプルがあります。STEPの初回読込にはFreeCADのPythonが必要です。分割済みメッシュを含むJSONはRustだけで追跡できます。
+`examples` に解析用のJSONサンプルがあります。STEPの初回読込もRustで処理します。対応する形状と分割精度の設定は `docs/GUIDE.md` と `docs/FEATURES.md` にあります。
 
 設定・CADキャッシュ・走査記録は `%LOCALAPPDATA%/Raytrace` に保存します。`RAYTRACE_DATA_DIR` を設定すると保存先を変更できます。
 

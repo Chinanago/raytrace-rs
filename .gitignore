@@ -38,6 +38,7 @@ __pycache__/
 !/examples/nonsequential_slab.json
 !/examples/integrator_rod.json
 !/examples/folded_mirror.json
+!/tests/fixtures/step_legacy_hits.json
 *.csv
 *.npz
 *.npy
