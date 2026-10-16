@@ -4,7 +4,7 @@ Rust製の幾何光学シミュレーターです。シーケンシャル／非�
 
 ## Windows版をダウンロードして起動
 
-[Windows版ZIP（v0.9.0）](https://github.com/Chinanago/raytrace-rs/releases/download/v0.9.0/raytrace-rs-0.9.0-windows-x64.zip)を展開し、「Raytraceを起動.cmd」を開きます。基本の光線追跡にはRustやOpticStudioは不要です。版ごとの変更点とチェックサムは[Releases](https://github.com/Chinanago/raytrace-rs/releases)で確認できます。
+[Windows版ZIP（v0.9.1）](https://github.com/Chinanago/raytrace-rs/releases/download/v0.9.1/raytrace-rs-0.9.1-windows-x64.zip)を展開し、「Raytraceを起動.cmd」を開きます。基本の光線追跡にはRustやOpticStudioは不要です。版ごとの変更点とチェックサムは[Releases](https://github.com/Chinanago/raytrace-rs/releases)で確認できます。
 
 起動すると光源・レンズ・ロッド・スクリーンの組立サンプルが開きます。部品を選んで配置し、「計算する」→「スクリーン」で結果を確認します。提供されたZMXは「追加」から光源・光学部品として読み込み、「保存…」で配置と条件をJSONへ保存できます。
 
