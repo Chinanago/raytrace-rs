@@ -196,11 +196,16 @@ pub enum Aperture {
 impl Aperture {
     pub fn contains(&self, x: f64, y: f64) -> bool {
         match *self {
-            Self::Circle { radius_mm } => x * x + y * y <= radius_mm * radius_mm,
+            Self::Circle { radius_mm } => {
+                x * x + y * y <= radius_mm * radius_mm * (1. + 32. * f64::EPSILON)
+            }
             Self::Rectangle {
                 half_width_mm,
                 half_height_mm,
-            } => x.abs() <= half_width_mm && y.abs() <= half_height_mm,
+            } => {
+                x.abs() <= half_width_mm * (1. + 32. * f64::EPSILON)
+                    && y.abs() <= half_height_mm * (1. + 32. * f64::EPSILON)
+            }
         }
     }
     pub fn bounds(&self) -> (f64, f64) {

@@ -9,6 +9,8 @@ pub struct Hit {
     pub point: V3,
     /// Points from the minus medium towards the plus medium.
     pub normal: V3,
+    /// Boundary orientation for medium selection; mesh normals may be smoothed.
+    pub geometric_normal: V3,
     pub local_point: V3,
 }
 #[derive(Clone, Copy, Debug)]
@@ -83,13 +85,14 @@ fn bounded_interval(surface: &PreparedSurface, p: V3, d: V3) -> Option<(f64, f64
     for axis in 0..3 {
         let a = surface.local_bounds[0].0[axis];
         let b = surface.local_bounds[1].0[axis];
+        let padding = 32. * f64::EPSILON * (1. + a.abs().max(b.abs()).max(p.0[axis].abs()));
         if d.0[axis].abs() < 1e-15 {
             if p.0[axis] < a - 1e-12 || p.0[axis] > b + 1e-12 {
                 return None;
             }
         } else {
-            let ta = (a - p.0[axis]) / d.0[axis];
-            let tb = (b - p.0[axis]) / d.0[axis];
+            let ta = (a - padding - p.0[axis]) / d.0[axis];
+            let tb = (b + padding - p.0[axis]) / d.0[axis];
             low = low.max(ta.min(tb));
             high = high.min(ta.max(tb));
         }
@@ -97,7 +100,8 @@ fn bounded_interval(surface: &PreparedSurface, p: V3, d: V3) -> Option<(f64, f64
     if let Aperture::Circle { radius_mm } = surface.spec.aperture {
         let a = d.0[0] * d.0[0] + d.0[1] * d.0[1];
         let b = p.0[0] * d.0[0] + p.0[1] * d.0[1];
-        let c = p.0[0] * p.0[0] + p.0[1] * p.0[1] - radius_mm * radius_mm;
+        let c =
+            p.0[0] * p.0[0] + p.0[1] * p.0[1] - radius_mm * radius_mm * (1. + 32. * f64::EPSILON);
         if a < 1e-30 {
             if c > 0.0 {
                 return None;
@@ -171,6 +175,10 @@ pub fn intersect_ordered(surface: &PreparedSurface, p_world: V3, d_world: V3) ->
                     .unit();
                 if (p.0[2] - z).abs() <= tolerance && d_world.dot(normal).abs() > 1e-14 {
                     return Ok(Hit {
+                        geometric_normal: surface
+                            .frame
+                            .world_vector(V3([-gx, -gy, 1.]).unit())
+                            .unit(),
                         distance_mm: 0.0,
                         point: p_world,
                         local_point: p,
@@ -232,6 +240,7 @@ fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss>
         ])
         .unit();
         return Ok(Hit {
+            geometric_normal: surface.frame.world_vector(normal).unit(),
             distance_mm,
             local_point: point,
             point: surface.frame.world_point(point),
@@ -239,13 +248,15 @@ fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss>
         });
     }
     if let Some(mesh) = &surface.mesh {
-        let (distance_mm, normal) = mesh.hit(p, d).ok_or(Miss::Geometry)?;
+        let h = mesh.hit_with_normals(p, d).ok_or(Miss::Geometry)?;
+        let distance_mm = h.distance_mm;
         let local_point = p + d * distance_mm;
         return Ok(Hit {
             distance_mm,
             local_point,
             point: surface.frame.world_point(local_point),
-            normal: surface.frame.world_vector(normal).unit(),
+            normal: surface.frame.world_vector(h.normal).unit(),
+            geometric_normal: surface.frame.world_vector(h.geometric_normal).unit(),
         });
     }
     let t = match &surface.spec.shape {
@@ -303,7 +314,9 @@ fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss>
                 let (z, gx, gy) =
                     sag(&surface.spec.shape, point.0[0], point.0[1]).ok_or(Miss::Numerical)?;
                 let residual = point.0[2] - z;
-                if residual.abs() < 1e-10 {
+                let derivative = d.0[2] - gx * d.0[0] - gy * d.0[1];
+                let tolerance = 32. * f64::EPSILON * (1. + t.abs().max(point.norm()));
+                if residual == 0. || residual.abs() <= derivative.abs() * tolerance {
                     converged = true;
                     break;
                 }
@@ -313,7 +326,6 @@ fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss>
                 } else {
                     hi = t;
                 }
-                let derivative = d.0[2] - gx * d.0[0] - gy * d.0[1];
                 if derivative.abs() < 1e-14 {
                     return Err(Miss::Numerical);
                 }
@@ -339,6 +351,7 @@ fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss>
     }
     let (_, gx, gy) = sag(&surface.spec.shape, point.0[0], point.0[1]).ok_or(Miss::Numerical)?;
     Ok(Hit {
+        geometric_normal: surface.frame.world_vector(V3([-gx, -gy, 1.]).unit()).unit(),
         distance_mm: t,
         point: surface.frame.world_point(point),
         local_point: point,
@@ -349,8 +362,32 @@ fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss>
     })
 }
 
-/// Search from near to far; a global Lipschitz bound excludes root-free intervals.
-/// This handles multiple intersections without assuming the sag residual is monotone.
+// Bound the spectral norm of the sag Hessian over the aperture. Together with
+// the derivative at an interval midpoint this certifies monotonicity locally.
+fn sag_curvature_bound(shape: &Shape, r2: f64) -> f64 {
+    let Shape::EvenAsphere {
+        radius_mm,
+        conic,
+        coefficients,
+    } = shape
+    else {
+        unreachable!()
+    };
+    let c = 1. / radius_mm;
+    let q = (1. - (1. + conic) * c * c * r2).min(1.);
+    let mut bound = c.abs() / q.sqrt() + (1. + conic).abs() * c.abs().powi(3) * r2 / q.powf(1.5);
+    let mut power = r2;
+    for (i, a) in coefficients.iter().enumerate() {
+        let m = (i + 2) as f64;
+        bound += 2. * m * (2. * m - 1.) * a.abs() * power;
+        power *= r2;
+    }
+    bound
+}
+
+/// Search near to far. A second-derivative bound excludes empty intervals and
+/// certifies unique roots; bracketed roots are refined to floating-point scale.
+/// A small residual alone does not establish an intersection near a tangent.
 fn oblique_asphere_hit(
     surface: &PreparedSurface,
     p: V3,
@@ -360,9 +397,11 @@ fn oblique_asphere_hit(
 ) -> Result<Hit, Miss> {
     let value = |t| {
         let q = p + d * t;
-        sag(&surface.spec.shape, q.0[0], q.0[1]).map(|v| q.0[2] - v.0)
+        sag(&surface.spec.shape, q.0[0], q.0[1])
+            .map(|v| (q.0[2] - v.0, d.0[2] - v.1 * d.0[0] - v.2 * d.0[1]))
     };
-    let slope = d.0[2].abs() + surface.max_sag_slope * d.0[0].hypot(d.0[1]);
+    let curvature = sag_curvature_bound(&surface.spec.shape, surface.spec.aperture.max_radius2())
+        * (d.0[0] * d.0[0] + d.0[1] * d.0[1]);
     let mut stack = [(0.0, 0.0); 64];
     let mut count = 1;
     stack[0] = (lo, hi);
@@ -373,26 +412,63 @@ fn oblique_asphere_hit(
         count -= 1;
         let (a, b) = stack[count];
         let mid = a + (b - a) * 0.5;
-        let fm = value(mid).ok_or(Miss::Numerical)?;
-        if fm.abs() > slope * (b - a) * 0.5 + 1e-12 {
+        let (fm, df) = value(mid).ok_or(Miss::Numerical)?;
+        let half = (b - a) * 0.5;
+        let roundoff = 32. * f64::EPSILON * (1. + p.0[2].abs() + (d.0[2] * mid).abs());
+        if fm.abs() > df.abs() * half + 0.5 * curvature * half * half + roundoff {
             continue;
         }
-        if b - a <= 1e-9 || mid == a || mid == b {
-            let fa = value(a).ok_or(Miss::Numerical)?;
-            let fb = value(b).ok_or(Miss::Numerical)?;
-            let candidate = if fa * fb < 0.0 {
-                a - fa * (b - a) / (fb - fa)
-            } else {
-                mid
-            };
-            let residual = value(candidate).ok_or(Miss::Numerical)?;
-            if residual.abs() > 1e-9 {
-                return Err(Miss::Numerical);
+        let tolerance = 32. * f64::EPSILON * (1. + a.abs().max(b.abs()).max(p.norm()));
+        let monotone = df.abs() > curvature * half + roundoff;
+        let terminal = b - a <= tolerance || mid == a || mid == b;
+        if monotone || terminal {
+            let (mut fa, _) = value(a).ok_or(Miss::Numerical)?;
+            let (mut fb, _) = value(b).ok_or(Miss::Numerical)?;
+            let mut left = a;
+            if fa != 0. && fb != 0. && fa.signum() == fb.signum() {
+                if monotone {
+                    continue;
+                }
+                // At floating-point scale a stationary zero represents a tangent.
+                // Ordinary near-misses are already excluded by monotonicity/Taylor bounds.
+                if terminal && fm.abs() <= roundoff && df.abs() <= curvature * half + roundoff {
+                    left = mid;
+                    fa = 0.;
+                } else {
+                    return Err(Miss::Numerical);
+                }
+            }
+            let mut right = b;
+            for _ in 0..80 {
+                if fa == 0. || fb == 0. || right - left <= tolerance {
+                    break;
+                }
+                let t = left + (right - left) * 0.5;
+                let (f, _) = value(t).ok_or(Miss::Numerical)?;
+                if f.signum() == fa.signum() {
+                    left = t;
+                    fa = f;
+                } else {
+                    right = t;
+                    fb = f;
+                }
+            }
+            let candidate = if fa.abs() < fb.abs() { left } else { right };
+            if candidate <= RAY_EPS_MM {
+                continue;
             }
             let local_point = p + d * candidate;
+            if !surface
+                .spec
+                .aperture
+                .contains(local_point.0[0], local_point.0[1])
+            {
+                continue;
+            }
             let (_, gx, gy) = sag(&surface.spec.shape, local_point.0[0], local_point.0[1])
                 .ok_or(Miss::Numerical)?;
             return Ok(Hit {
+                geometric_normal: surface.frame.world_vector(V3([-gx, -gy, 1.]).unit()).unit(),
                 distance_mm: candidate,
                 local_point,
                 point: surface.frame.world_point(local_point),

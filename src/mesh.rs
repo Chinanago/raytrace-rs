@@ -18,6 +18,12 @@ struct Data {
 }
 #[derive(Clone, Debug)]
 pub struct MeshAccel(Arc<Data>);
+#[derive(Clone, Copy, Debug)]
+pub struct MeshHit {
+    pub distance_mm: f64,
+    pub normal: V3,
+    pub geometric_normal: V3,
+}
 fn intersects(min: V3, max: V3, p: V3, d: V3, limit: f64) -> bool {
     let mut lo: f64 = 1e-8;
     let mut hi = limit;
@@ -98,12 +104,17 @@ impl MeshAccel {
         Some(Self(Arc::new(data)))
     }
     pub fn hit(&self, p: V3, d: V3) -> Option<(f64, V3)> {
+        self.hit_with_normals(p, d)
+            .map(|h| (h.distance_mm, h.normal))
+    }
+    pub fn hit_with_normals(&self, p: V3, d: V3) -> Option<MeshHit> {
         let data = &self.0;
         // A balanced tree over <=1 million triangles has depth below 32.
         let mut stack = [0usize; 64];
         let mut stack_len = 1;
         let mut nearest = f64::INFINITY;
         let mut normal = None;
+        let mut geometric_normal = V3::default();
         while stack_len > 0 {
             stack_len -= 1;
             let i = stack[stack_len];
@@ -147,9 +158,14 @@ impl MeshAccel {
                             + data.normals[ids[2] as usize] * v)
                             .unit(),
                     );
+                    geometric_normal = e1.cross(e2).unit();
                 }
             }
         }
-        normal.map(|n| (nearest, n))
+        normal.map(|n| MeshHit {
+            distance_mm: nearest,
+            normal: n,
+            geometric_normal,
+        })
     }
 }

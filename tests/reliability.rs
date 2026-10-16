@@ -259,6 +259,9 @@ fn diagnostics_identify_medium_and_surface_and_remain_bounded() {
         assert_eq!(d.expected_medium, Some(0));
         assert_eq!(d.surface, Some(d.example.ray.id as usize));
         assert_eq!(d.example.ray.position_mm.0[2], 0.0);
+        let hit = d.intersection.as_ref().unwrap();
+        assert_eq!(hit.origin_mm.0[2], -1.);
+        assert_eq!(hit.distance_mm, 1.);
     }
 }
 

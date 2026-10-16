@@ -318,6 +318,69 @@ fn frame_inverse_and_detector_edge() {
 }
 
 #[test]
+fn oblique_paraboloid_matches_nearest_analytic_root_and_does_not_rehit_itself() {
+    let mut front = plane("paraboloid", 0., glass(0, 1));
+    front["shape"] = json!({"type":"even_asphere","radius_mm":25.,"conic":-1.,"coefficients":[]});
+    front["aperture"] = json!({"type":"circle","radius_mm":10.});
+    let s = scene(Mode::Sequential, vec![front]);
+    for x in [-12., -5., 0., 5., 12.] {
+        for z in [0., 0.000001, 0.5, 1.5, 3.] {
+            for dz in [-0.2, -0.01, 0., 0.01, 0.2] {
+                let p = V3([x, 0., z]);
+                let d = V3([1., 0., dz]).unit();
+                let a = d.0[0] * d.0[0] / 50.;
+                let b = 2. * x * d.0[0] / 50. - d.0[2];
+                let c = x * x / 50. - z;
+                let mut disc = b * b - 4. * a * c;
+                // Coalesce a double root when discriminant cancellation is within
+                // floating-point uncertainty; the stationary point is its analytic limit.
+                if disc.abs() <= 32. * f64::EPSILON * (b * b + (4. * a * c).abs()) {
+                    disc = 0.;
+                }
+                let expected = if disc < 0. {
+                    None
+                } else {
+                    let q = -0.5 * (b + disc.sqrt().copysign(b));
+                    let mut roots = if q == 0. {
+                        [-b / (2. * a); 2]
+                    } else {
+                        [q / a, c / q]
+                    };
+                    roots.sort_by(f64::total_cmp);
+                    roots
+                        .into_iter()
+                        .find(|t| *t > 1e-8 && (x + d.0[0] * t).abs() <= 10. + 1e-10)
+                };
+                let hit = intersect(&s.surfaces[0], p, d);
+                match expected {
+                    Some(t) => {
+                        let h =
+                            hit.unwrap_or_else(|e| panic!("{p:?} {d:?}: expected {t}, got {e:?}"));
+                        near(h.distance_mm, t, 2e-10);
+                        let result = dielectric(d, h.normal, 1., 1.5);
+                        for outgoing in [Some(result.reflected), result.transmitted]
+                            .into_iter()
+                            .flatten()
+                        {
+                            if let Ok(next) = intersect(&s.surfaces[0], h.point, outgoing) {
+                                assert!(
+                                    next.distance_mm > 1e-6,
+                                    "False self-hit: {h:?}, next {next:?}"
+                                );
+                            }
+                        }
+                    }
+                    None => assert!(
+                        matches!(hit, Err(raytrace_rs::geometry::Miss::Geometry)),
+                        "{p:?} {d:?}: {hit:?}"
+                    ),
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn wrong_medium_is_reported_and_invalid_configuration_is_rejected() {
     let s = scene(Mode::Sequential, vec![plane("glass", 0.0, glass(0, 1))]);
     let report = trace(&s, &[Ray { medium: 1, ..ray() }], TraceOptions::default());
@@ -325,6 +388,69 @@ fn wrong_medium_is_reported_and_invalid_configuration_is_rejected() {
     let mut spec = s.spec;
     spec.settings.max_depth = 0;
     assert!(spec.prepare().is_err());
+}
+
+#[test]
+fn nsc_event_allowance_resolves_strong_reflections_before_weak_descendants() {
+    let interface = |minus, plus| json!({"type":"dielectric","minus_medium":minus,"plus_medium":plus,"reflectance":0.5});
+    let mut prepared = scene(
+        Mode::NonSequential,
+        vec![
+            plane("front", 0., interface(0, 1)),
+            plane("rear", 1., interface(1, 0)),
+            detector("forward", 2.),
+            detector("backward", -2.),
+        ],
+    );
+    prepared.spec.settings.max_events_per_launch = 8;
+    let limited = trace(&prepared, &[ray()], terminals());
+    assert!(limited.budget.detected >= 0.875);
+    assert!(limited.budget.interaction_limit <= 0.125);
+    near(limited.budget.accounted(), 1., 1e-14);
+    prepared.spec.settings.max_events_per_launch = 256;
+    let complete = trace(&prepared, &[ray()], terminals());
+    near(complete.budget.detected, 1., 1e-12);
+    near(
+        complete.detectors[0].weights.iter().sum::<f64>(),
+        1. / 3.,
+        1e-12,
+    );
+    near(
+        complete.detectors[1].weights.iter().sum::<f64>(),
+        2. / 3.,
+        1e-12,
+    );
+    assert_eq!(complete.budget.interaction_limit, 0.);
+}
+
+#[test]
+fn interpolated_mesh_normals_preserve_the_geometric_boundary_side() {
+    for normal in [V3([0.6, 0., 0.8]), V3([0.25, 0., 1.]).unit()] {
+        let mut face = plane("mesh entrance", 0., glass(1, 0));
+        face["shape"] = json!({"type":"triangle_mesh","vertices":[[-100.,-100.,0.],[100.,-100.,0.],[100.,100.,0.],[-100.,100.,0.]],"triangles":[[0,1,2],[0,2,3]],"normals":[normal,normal,normal,normal]});
+        let mut s = scene(
+            Mode::NonSequential,
+            vec![
+                face,
+                plane("rear", -1., glass(0, 1)),
+                detector("forward", -2.),
+                detector("backward", 2.),
+            ],
+        );
+        s.spec.settings.max_depth = 256;
+        let r = Ray {
+            position_mm: V3([-1., 0., 1.]),
+            direction: V3([1., 0., -0.3]).unit(),
+            ..ray()
+        };
+        let report = trace(&s, &[r], terminals());
+        assert_eq!(report.budget.medium_mismatch, 0.);
+        assert_eq!(report.budget.numerical_failure, 0.);
+        assert!(report.surfaces[0].normal_fallbacks > 0);
+        // Finite apertures let some off-axis descendants leave the model.
+        near(report.budget.detected + report.budget.escaped, 1., 1e-10);
+        near(report.budget.accounted(), 1., 1e-12);
+    }
 }
 
 #[test]

@@ -64,6 +64,11 @@ pub struct SurfaceStats {
     pub absorbed_weight: f64,
     pub detected_weight: f64,
     pub geometric_miss_weight: f64,
+    #[serde(default, skip_serializing_if = "zero")]
+    pub normal_fallbacks: u64,
+}
+fn zero(n: &u64) -> bool {
+    *n == 0
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DetectorMap {
@@ -99,6 +104,17 @@ pub struct TraceDiagnostic {
     pub branch_count: u64,
     pub weight: f64,
     pub example: Terminal,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intersection: Option<IntersectionContext>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct IntersectionContext {
+    /// Position from which the failed interface search started.
+    pub origin_mm: V3,
+    pub distance_mm: f64,
+    pub normal: V3,
+    #[serde(default)]
+    pub geometric_normal: V3,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct DiagnosticOverflow {
@@ -172,6 +188,7 @@ impl Report {
             a.absorbed_weight += b.absorbed_weight;
             a.detected_weight += b.detected_weight;
             a.geometric_miss_weight += b.geometric_miss_weight;
+            a.normal_fallbacks += b.normal_fallbacks;
         }
         for (a, b) in self.detectors.iter_mut().zip(other.detectors) {
             for (wa, wb) in a.weights.iter_mut().zip(b.weights) {
@@ -227,6 +244,7 @@ impl Report {
         surface: Option<usize>,
         depth: usize,
         expected_medium: Option<usize>,
+        intersection: Option<IntersectionContext>,
     ) {
         if let Some(existing) = self.diagnostics.iter_mut().find(|d| {
             d.reason == reason
@@ -244,6 +262,7 @@ impl Report {
             return;
         }
         self.merge_diagnostic(TraceDiagnostic {
+            intersection,
             reason: reason.into(),
             surface,
             expected_medium,
@@ -343,6 +362,63 @@ struct Work {
     next_surface: usize,
     depth: usize,
 }
+struct WeightedWork {
+    work: Work,
+    order: u64,
+}
+impl PartialEq for WeightedWork {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+impl Eq for WeightedWork {}
+impl PartialOrd for WeightedWork {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for WeightedWork {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.work
+            .ray
+            .weight
+            .total_cmp(&other.work.ray.weight)
+            .then(self.order.cmp(&other.order))
+    }
+}
+enum WorkQueue {
+    Sequential(Vec<Work>),
+    NonSequential(std::collections::BinaryHeap<WeightedWork>, u64),
+}
+impl WorkQueue {
+    fn new(mode: Mode, first: Work) -> Self {
+        let mut q = if mode == Mode::Sequential {
+            Self::Sequential(Vec::new())
+        } else {
+            Self::NonSequential(std::collections::BinaryHeap::new(), 0)
+        };
+        q.push(first);
+        q
+    }
+    fn push(&mut self, work: Work) {
+        match self {
+            Self::Sequential(q) => q.push(work),
+            Self::NonSequential(q, order) => {
+                q.push(WeightedWork {
+                    work,
+                    order: *order,
+                });
+                *order += 1;
+            }
+        }
+    }
+    fn pop(&mut self) -> Option<Work> {
+        match self {
+            Self::Sequential(q) => q.pop(),
+            Self::NonSequential(q, _) => q.pop().map(|w| w.work),
+        }
+    }
+}
 
 fn evaluate_optics(scene: &PreparedScene, wavelength: f64) -> Vec<(f64, f64)> {
     // Every branch keeps its launch wavelength; evaluate dispersion and spectral
@@ -367,11 +443,16 @@ fn trace_one(
     optics: &[(f64, f64)],
 ) {
     report.budget.launched += launch.weight;
-    let mut stack = vec![Work {
-        ray: launch,
-        next_surface: 0,
-        depth: 0,
-    }];
+    // Resolve the strongest pending NSC branches first. A launch-wide event
+    // allowance must not strand a strong reflection behind many weak descendants.
+    let mut stack = WorkQueue::new(
+        scene.spec.mode,
+        Work {
+            ray: launch,
+            next_surface: 0,
+            depth: 0,
+        },
+    );
     let mut events = 0;
     let mut path_events = 0;
     while let Some(work) = stack.pop() {
@@ -386,7 +467,7 @@ fn trace_one(
         if ray.weight < launch.weight * scene.spec.settings.min_relative_branch_weight {
             report.budget.branch_cutoff += ray.weight;
             let previous = next_surface.checked_sub(1);
-            report.diagnose(ray, "branch_cutoff", previous, depth, None);
+            report.diagnose(ray, "branch_cutoff", previous, depth, None, None);
             report.terminal(
                 ray,
                 "branch_cutoff",
@@ -401,7 +482,7 @@ fn trace_one(
         {
             report.budget.interaction_limit += ray.weight;
             let previous = next_surface.checked_sub(1);
-            report.diagnose(ray, "interaction_limit", previous, depth, None);
+            report.diagnose(ray, "interaction_limit", previous, depth, None, None);
             report.terminal(
                 ray,
                 "interaction_limit",
@@ -465,7 +546,7 @@ fn trace_one(
             }
             Err((Miss::Numerical, surface)) => {
                 report.budget.numerical_failure += ray.weight;
-                report.diagnose(ray, "numerical_failure", surface, depth, None);
+                report.diagnose(ray, "numerical_failure", surface, depth, None, None);
                 report.terminal(
                     ray,
                     "numerical_failure",
@@ -490,6 +571,7 @@ fn trace_one(
             path_events += 1;
         }
         let (n_before, absorption) = optics[ray.medium];
+        let origin_mm = ray.position_mm;
         let before_bulk = ray.weight;
         ray.weight *= (-absorption * hit.distance_mm).exp();
         report.budget.bulk_absorbed += before_bulk - ray.weight;
@@ -529,22 +611,32 @@ fn trace_one(
                 );
             }
             Interaction::Mirror { reflectance } => {
+                let mut normal = hit.normal;
+                let reflected = (ray.direction - normal * (2. * ray.direction.dot(normal))).unit();
+                if !normal.finite()
+                    || ray.direction.dot(normal) * ray.direction.dot(hit.geometric_normal) < 0.
+                    || reflected.dot(hit.geometric_normal) * ray.direction.dot(hit.geometric_normal)
+                        > 1e-14
+                {
+                    normal = hit.geometric_normal;
+                    report.surfaces[index].normal_fallbacks += 1;
+                }
                 let reflectance = surface.spec.coating.as_ref().map_or(reflectance, |c| {
-                    c.side(ray.direction.dot(hit.normal) > 0.0).evaluate(
-                        ray.wavelength_um,
-                        ray.direction.dot(hit.normal).abs(),
-                        n_before,
-                        n_before,
-                        false,
-                    )[0]
+                    c.side(ray.direction.dot(hit.geometric_normal) > 0.0)
+                        .evaluate(
+                            ray.wavelength_um,
+                            ray.direction.dot(normal).abs(),
+                            n_before,
+                            n_before,
+                            false,
+                        )[0]
                 });
                 let absorbed = ray.weight * (1.0 - reflectance);
                 report.budget.surface_absorbed += absorbed;
                 report.surfaces[index].absorbed_weight += absorbed;
                 report.surfaces[index].reflected_weight += ray.weight * reflectance;
                 ray.weight *= reflectance;
-                ray.direction =
-                    (ray.direction - hit.normal * (2.0 * ray.direction.dot(hit.normal))).unit();
+                ray.direction = (ray.direction - normal * (2.0 * ray.direction.dot(normal))).unit();
                 stack.push(Work {
                     ray,
                     next_surface: index + 1,
@@ -556,7 +648,7 @@ fn trace_one(
                 plus_medium,
                 reflectance,
             } => {
-                let (expected, after) = if ray.direction.dot(hit.normal) > 0.0 {
+                let (expected, after) = if ray.direction.dot(hit.geometric_normal) > 0.0 {
                     (minus_medium, plus_medium)
                 } else {
                     (plus_medium, minus_medium)
@@ -569,6 +661,12 @@ fn trace_one(
                         Some(index),
                         depth + 1,
                         Some(expected),
+                        Some(IntersectionContext {
+                            origin_mm,
+                            distance_mm: hit.distance_mm,
+                            normal: hit.normal,
+                            geometric_normal: hit.geometric_normal,
+                        }),
                     );
                     report.terminal(
                         ray,
@@ -580,7 +678,20 @@ fn trace_one(
                     continue;
                 }
                 let n_after = optics[after].0;
-                let result = dielectric(ray.direction, hit.normal, n_before, n_after);
+                let mut normal = hit.normal;
+                let mut result = dielectric(ray.direction, normal, n_before, n_after);
+                let incoming = ray.direction.dot(hit.geometric_normal);
+                if !normal.finite()
+                    || ray.direction.dot(normal) * incoming < 0.
+                    || result.reflected.dot(hit.geometric_normal) * incoming > 1e-14
+                    || result
+                        .transmitted
+                        .is_some_and(|t| t.dot(hit.geometric_normal) * incoming < -1e-14)
+                {
+                    normal = hit.geometric_normal;
+                    result = dielectric(ray.direction, normal, n_before, n_after);
+                    report.surfaces[index].normal_fallbacks += 1;
+                }
                 let r = if result.transmitted.is_none() {
                     1.0
                 } else {
@@ -589,9 +700,9 @@ fn trace_one(
                 let reflected_weight = ray.weight * r;
                 let (reflected_weight, transmitted_weight) = if let Some(c) = &surface.spec.coating
                 {
-                    let [r, t] = c.side(ray.direction.dot(hit.normal) > 0.0).evaluate(
+                    let [r, t] = c.side(incoming > 0.0).evaluate(
                         ray.wavelength_um,
-                        ray.direction.dot(hit.normal).abs(),
+                        ray.direction.dot(normal).abs(),
                         n_before,
                         n_after,
                         result.transmitted.is_none(),

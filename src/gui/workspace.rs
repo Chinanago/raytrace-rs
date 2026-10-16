@@ -1104,6 +1104,18 @@ impl App {
             .color(MUTED),
         );
         section_label(ui, "追跡の診断");
+        let fallbacks = r
+            .report
+            .surfaces
+            .iter()
+            .map(|s| s.normal_fallbacks)
+            .sum::<u64>();
+        if fallbacks > 0 {
+            egui::CollapsingHeader::new(format!("CAD法線の補正：{fallbacks}回")).show(ui,|ui|{
+                ui.label("補間法線の反射・屈折が三角形の境界と食い違う場合、三角形の幾何法線を使用します。CADの分割精度を変えた収束確認の対象です。");
+                for s in r.report.surfaces.iter().filter(|s|s.normal_fallbacks>0) {ui.label(format!("{}：{}回",s.name,s.normal_fallbacks));}
+            });
+        }
         if r.report.diagnostics.is_empty() {
             ui.label(
                 egui::RichText::new("未解決の光線・打切りはありません")
@@ -1149,6 +1161,14 @@ impl App {
                     ui.label(format!(
                         "入射媒質 {} · 境界が要求する媒質 {}",
                         d.actual_medium, expected
+                    ));
+                }
+                if let Some(h) = &d.intersection {
+                    ui.label(format!("交差探索の開始位置 [mm]：{:?}", h.origin_mm.0));
+                    ui.label(format!("交点までの距離：{:.9e} mm", h.distance_mm));
+                    ui.label(format!(
+                        "幾何法線：{:?} · 光学法線：{:?}",
+                        h.geometric_normal.0, h.normal.0
                     ));
                 }
                 if d.reason == "numerical_failure" {

@@ -1,6 +1,6 @@
 [package]
 name = "raytrace-rs"
-version = "0.9.0"
+version = "0.9.1"
 default-run = "raytrace-rs"
 edition = "2021"
 license = "MIT"

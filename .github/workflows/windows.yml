@@ -1,0 +1,61 @@
+name: Windows checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-and-package:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - name: Install Rust tools
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+      - name: Check publication contents
+        run: python scripts/check_publish.py
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Check code
+        run: cargo clippy --locked --all-features --all-targets -- -D warnings
+      - name: Run all tests
+        run: cargo test --locked --all-features
+      - name: Check CLI-only build
+        run: cargo check --locked --no-default-features
+      - name: Verify analytic and native roundtrip cases
+        run: cargo run --release --locked --example validation_suite -- results/validation
+      - name: Build Windows binaries
+        run: cargo build --release --locked --all-features --bins
+      - name: Build distribution
+        run: python scripts/package_windows.py --no-build
+      - name: Check portable distribution
+        run: |
+          $package = Get-ChildItem -LiteralPath results/packages -Filter '*.zip' | Select-Object -First 1
+          python scripts/check_portable.py $package.FullName
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-${{ github.sha }}
+          path: |
+            results/packages/*.zip
+            results/validation/suite.json
+            results/portable_summary.json
+          if-no-files-found: error
+          retention-days: 14
