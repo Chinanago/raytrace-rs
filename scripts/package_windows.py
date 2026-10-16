@@ -14,6 +14,9 @@ FILES = {
     "target/release/raytrace-rs.exe": "raytrace-rs.exe",
     "Raytraceを起動.cmd": "Raytraceを起動.cmd",
     "README.md": "README.md",
+    "docs/FEATURES.md": "docs/FEATURES.md",
+    "docs/GUIDE.md": "docs/GUIDE.md",
+    "docs/DEVELOPMENT.md": "docs/DEVELOPMENT.md",
     "LICENSE": "LICENSE",
     "examples/sequential_lens.json": "examples/sequential_lens.json",
     "examples/nonsequential_slab.json": "examples/nonsequential_slab.json",
@@ -102,7 +105,9 @@ Visual C++ v14ランタイムを使います。VCRUNTIME140.dllが不足する�
 
 設定・CADキャッシュ・走査記録は `%LOCALAPPDATA%/Raytrace` に保存します。`RAYTRACE_DATA_DIR` を設定すると保存先を変更できます。
 
-操作と対応範囲は `README.md`、版と実行ファイル・サンプル等のSHA-256は `package.json` に記載しています。本ソフトはMITライセンスです。本文は `LICENSE`、依存ライブラリとフォントの利用条件は `THIRD_PARTY_LICENSES.txt` に同梱しています。
+機能と対応範囲は [機能一覧](docs/FEATURES.md)、詳しい操作は [操作ガイド](docs/GUIDE.md) を参照してください。[README](README.md) からも各文書へ進めます。
+
+版と実行ファイル・サンプル等のSHA-256は `package.json` に記載しています。本ソフトはMITライセンスです。本文は `LICENSE`、依存ライブラリとフォントの利用条件は `THIRD_PARTY_LICENSES.txt` に同梱しています。
 """)
     with zipfile.ZipFile(output) as archive:
         if archive.testzip() is not None:
