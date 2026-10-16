@@ -119,6 +119,9 @@ impl RunContext {
                 .iter()
                 .enumerate()
                 .filter_map(|(i, s)| {
+                    if explicit.is_some() {
+                        return None;
+                    }
                     s.pupil.as_ref().and_then(|p| p.optical.as_ref())?;
                     Some(
                         match crate::illumination::pupil_geometry_from_scene(scene, i) {

@@ -259,8 +259,16 @@ fn saved_conditions_capture_pupil_geometry_and_enforce_sampling_revision() {
     let expected = scene.clone().prepare().unwrap().generate_rays().unwrap();
     assert_eq!(
         serde_json::to_value(record.rays().unwrap()).unwrap(),
-        serde_json::to_value(expected).unwrap()
+        serde_json::to_value(&expected).unwrap()
     );
+    let explicit = raytrace_rs::record::RunContext::capture(
+        &p,
+        &scene,
+        Some(&expected),
+        2,
+        TraceOptions::default(),
+    );
+    assert!(explicit.pupils.is_empty());
     let mut old = record.clone();
     old.input = raytrace_rs::record::LaunchInput::Generated {
         sampling_revision: 2,
