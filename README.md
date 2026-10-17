@@ -42,6 +42,18 @@ Visual C++ v14ランタイムを使います。DLL不足の表示が出る環境
 
 v0.11.0では132テストが通過しています。STEPの従来版比較、解析解とZMX往復保存、Windows配布ZIPの動作も確認しています。OpticStudioとの実機照合は継続課題です。[検証方法と開発情報](docs/DEVELOPMENT.md)
 
+## AIエージェントから使う
+
+[raytrace-rsのAgent Skill](https://github.com/Chinanago/raytrace-rs/tree/codex/initial-import/skills/raytrace-rs)を公開しています。ZMXの読込、波長依存の材料、追跡、光量収支、収束確認・再計算の手順をAIへ渡せます。
+
+Codexでは、次のように依頼してインストールできます。
+
+```text
+$skill-installer で Chinanago/raytrace-rs の skills/raytrace-rs を、codex/initial-import ブランチからインストールして。
+```
+
+インストール後は `$raytrace-rs` で呼び出し、モデルと計算条件を指定します。ほかのAIエージェントでも、フォルダー内の `SKILL.md` と、そこから参照される文書を読み込ませて利用できます。スキルはMITライセンスです。
+
 ## ドキュメント
 
 | 読みたいこと | 参照先 |

@@ -18,6 +18,8 @@ FILES = {
     "scripts/package_windows.py",
     "scripts/third_party_notices.toml",
     "scripts/check_publish.py", "scripts/zemax_exchange_probe.py",
+    "skills/raytrace-rs/SKILL.md", "skills/raytrace-rs/LICENSE",
+    "skills/raytrace-rs/agents/openai.yaml", "skills/raytrace-rs/references/workflows.md",
 }
 DEMOS = {
     "examples/sequential_lens.json", "examples/nonsequential_slab.json",

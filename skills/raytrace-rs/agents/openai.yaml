@@ -1,0 +1,6 @@
+interface:
+  display_name: "raytrace-rs"
+  short_description: "Trace optical systems and validate power budgets"
+  default_prompt: "Use $raytrace-rs to import optical components, place them, and trace a wavelength-dependent system with a reproducible power budget."
+policy:
+  allow_implicit_invocation: true
