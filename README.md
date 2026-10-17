@@ -44,7 +44,7 @@ v0.11.0では132テストが通過しています。STEPの従来版比較、解
 
 ## AIエージェントから使う
 
-[raytrace-rsのAgent Skill](https://github.com/Chinanago/raytrace-rs/tree/codex/initial-import/skills/raytrace-rs)を公開しています。ZMXの読込、波長依存の材料、追跡、光量収支、収束確認・再計算の手順をAIへ渡せます。
+[raytrace-rsのAgent Skill](https://github.com/Chinanago/raytrace-rs/tree/codex/initial-import/skills/raytrace-rs)を公開しています。raytrace-rsのCLI・GUIを操作するための手順で、ZMXの読込、材料、追跡、出力の読み方、走査・再計算を扱います。
 
 Codexでは、次のように依頼してインストールできます。
 

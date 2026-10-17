@@ -4,11 +4,11 @@
 
 1. Use the executable or installation explicitly selected by the user.
 2. Otherwise check `raytrace-rs` on PATH, an extracted Windows package, or the current raytrace-rs source checkout. The release CLI is `raytrace-rs.exe`; a Windows source build places it in `target/release`. The GUI is `raytrace-gui.exe`.
-3. Check `--version` and `--help` before using version-specific arguments. Record the selected executable/version with results. Do not assume the skill is installed inside the application checkout.
+3. Check `--version` and `--help` before using version-specific arguments. The skill directory and application checkout can be separate.
 
 Upstream: [source](https://github.com/Chinanago/raytrace-rs), [Windows releases](https://github.com/Chinanago/raytrace-rs/releases).
 
-The baseline below is **v0.11.0**. Prefer matching local documentation if the installed version differs:
+The baseline below is **v0.11.0**. For another installed version, use its matching documentation:
 
 | Need | Local documentation | v0.11.0 upstream copy |
 |---|---|---|
@@ -17,11 +17,11 @@ The baseline below is **v0.11.0**. Prefer matching local documentation if the in
 | Build, test or modify the application | `docs/DEVELOPMENT.md` | [Development](https://github.com/Chinanago/raytrace-rs/blob/v0.11.0/docs/DEVELOPMENT.md) |
 | Model examples and exact schemas | `examples/*.json`, `src/project.rs`, `src/assembly.rs`, `src/model.rs` | [Examples](https://github.com/Chinanago/raytrace-rs/tree/v0.11.0/examples) |
 
-The Windows ZIP runs without Rust or OpticStudio installed. If a source build is needed, run `cargo build --release --locked` from the checkout; add `--features gui --bins` for CLI and GUI together. Follow applicable project instructions when modifying code. Validate other-platform builds before promising support.
+The Windows ZIP runs without Rust or OpticStudio installed. If a source build is needed, run `cargo build --release --locked` from the checkout; add `--features gui --bins` for CLI and GUI together. Windows is the verified distribution platform for v0.11.0.
 
 ## First run from an extracted Windows ZIP
 
-Run these PowerShell commands from the extracted application folder. The examples include dispersive materials. For a real task, set the executable, model and output paths to that task's locations.
+Run these PowerShell commands from the extracted application folder. The examples include dispersive materials and explicitly set 1024 rays per source, Sobol sampling and four threads. Those are example parameters; omitted overrides retain model settings, and an omitted thread count uses the runtime's default. Set paths and options for the current task.
 
 ```powershell
 $rtRoot = (Get-Location).Path
@@ -45,13 +45,13 @@ Inspect a supplied ZMX before tracing. Set `$rtInputZmx` to the actual input pat
 & $rtCli $rtInputZmx --inspect --output (Join-Path $rtWork 'imported_project.json')
 ```
 
-Read the printed report and saved project. Import entries distinguish definitions used for calculation, preserved-only information, conditions requiring explicit settings and unsupported definitions. Do not use `--ignore-coatings` merely to bypass a blocker. Parsing/saving can succeed while tracing remains blocked.
+Read the printed report and saved project. Import entries distinguish definitions used for calculation, preserved-only information, conditions requiring explicit settings and unsupported definitions. `--ignore-coatings` opts into an uncoated calculation and changes the physical model. Parsing/saving can succeed while tracing remains blocked.
 
 AGF catalogs are searched beside the input ZMX and, on Windows, under `%USERPROFILE%\Documents\Zemax\Glasscat`. The GUI can add catalog folders. Preserve resolvable STEP references; placing referenced STEP files beside the ZMX is supported. Check declared catalogs and resolved materials.
 
 For GUI assembly: new optical system → add source ZMX → add lens ZMX → add rod → add screen → place components → calculate → inspect screens. Save a project JSON. v0.11.0 supports assembly JSON and individual-model ZMX editing/export; assembly-to-ZMX export is unavailable.
 
-CLI lengths are **mm**, wavelengths **μm**; GUI wavelengths are **nm**. `--wavelength-um 0.465` explicitly replaces the source spectrum with 465 nm. A spectral study should retain the full intended spectrum.
+CLI lengths are **mm**, wavelengths **μm**; GUI wavelengths are **nm**. `--wavelength-um 0.465` explicitly replaces the source spectrum with 465 nm. Omitting that override retains the model's spectrum.
 
 ## Fixed rays, replay and parameter work
 
@@ -69,7 +69,7 @@ Read the guide's plan schema before creating scan/convergence plans. With the ac
 & $rtCli --convergence $rtModel --plan $rtConvergencePlan --output (Join-Path $rtWork 'convergence')
 ```
 
-Initial STEP parsing/tessellation in v0.11.0 uses Rust. Supported inputs are single connected closed solids with supported surfaces and boundaries; see Features for exact restrictions. The default deflection is 0.02 mm. CAD convergence needs the original STEP-referencing ZMX because saved projects contain an already generated mesh. Check normal fallbacks and sensitivity near grazing or critical angles. Geometry tessellation and wavelength-dependent material physics are separate calculation steps.
+Initial STEP parsing/tessellation in v0.11.0 uses Rust. Supported inputs are single connected closed solids with supported surfaces and boundaries; see Features for exact restrictions. The default deflection is 0.02 mm. CAD convergence needs the original STEP-referencing ZMX because saved projects contain an already generated mesh. CAD normal fallbacks are recorded in trace diagnostics. Geometry tessellation and wavelength-dependent material physics are separate calculation steps.
 
 Windows settings/cache location is `%LOCALAPPDATA%\Raytrace`. Set process-local `RAYTRACE_DATA_DIR` to a task-owned folder when isolated runtime/cache storage is useful.
 

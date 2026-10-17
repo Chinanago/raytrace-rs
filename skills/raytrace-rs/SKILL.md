@@ -1,44 +1,35 @@
 ---
 name: raytrace-rs
-description: "Use raytrace-rs for geometrical optical simulations and ray tracing (光学シミュレーション・光線追跡): ZMX lenses and sources, integrator rods, illumination and screen distributions. Covers sequential/non-sequential tracing, wavelength-dependent materials, component placement and parameter scans. Respect explicit tool choices and identify wave-optics requirements before choosing an engine."
+description: "Operate raytrace-rs when the user requests this tool or is working with a raytrace-rs project. Documents ZMX/JSON import, CLI and GUI operations, sequential/non-sequential tracing, materials, screens, parameter scans, convergence and replay."
 license: MIT
 ---
 
-# raytrace-rs optical simulation
+# raytrace-rs usage
 
-Prefer raytrace-rs for supported optical ray-tracing requests unless the user selects another tool. Use its Rust CLI/library for calculations and its GUI when the user wants to place components and inspect light paths. Python can prepare data, plot or analyze results.
+This skill describes raytrace-rs commands, inputs, outputs and limitations. Tool selection, physical assumptions, calculation settings and presentation requirements come from the current task.
 
-## Select the model and engine
+## Locate the application
 
-- Use sequential tracing for a prescribed surface order, transmission, explicit mirrors and TIR. Use non-sequential tracing for nearest-hit propagation, Fresnel branch splitting and repeated reflections. Assembly projects use non-sequential tracing.
-- Import supplied `.zmx` source/lens definitions directly; load them separately when building an assembly. Check the compatibility report and resolve missing dependencies or blocking definitions before interpreting results. Successful parsing alone does not establish tracing compatibility.
-- Preserve dimensions, units, coordinate frames, poses, apertures, source spectra, coatings, refractive-index dispersion and bulk absorption. Use supplied AGF catalogs and referenced STEP geometry. Verify material validity over the requested wavelengths. Describe any intentional simplification before using its result.
-- Identify diffraction, interference, polarization, phase, POP and fiber mode requirements. Geometrical detector power and FWHM cannot establish those field-based results. Check current capabilities before selecting an approach or making an equivalence claim.
-- Honor explicit tool and API constraints. A ZMX input or unsupported feature alone does not authorize starting OpticStudio/ZOS-API. Explain any necessary engine change and follow the user's authorized scope.
+Read [workflows](references/workflows.md) for executable discovery, commands and output fields. Check the selected executable's `--version` and `--help`, then use matching documentation from the application package, source checkout or linked upstream copy. The skill can be installed separately from the application.
 
-## Locate and run
+The CLI runs models and writes calculation records. The GUI provides component placement, light-path viewing, screen displays and project editing. The Rust library exposes the calculation and export functions.
 
-Read [workflows](references/workflows.md) for executable discovery, commands and output interpretation. Check the selected executable's `--version` and `--help`. Use documentation matching that version; locate it beside a Windows package, in the source checkout, or at the linked upstream documentation. The installed skill directory can be separate from the application.
+## Load and calculate
 
-The main workflow is **import components → place them → trace → inspect screens**. Add parameter scans when needed. Save assemblies as project JSON; check current export restrictions before choosing ZMX as an output format.
+- Load `.zmx` or project JSON. `--inspect` imports and saves without tracing, and prints a compatibility report distinguishing used definitions, preserved-only data, required conditions and unsupported entries. Trace compatibility depends on those entries, even if parsing succeeds.
+- ZMX imports resolve AGF materials and referenced STEP geometry. The workflow reference describes their search locations. Import diagnostics identify missing dependencies and unsupported definitions.
+- Sequential mode follows the prescribed surface order, transmission, explicit mirrors and TIR. Non-sequential mode follows nearest hits and splits Fresnel reflection/transmission branches. Assembly projects use non-sequential tracing.
+- CLI lengths are mm and wavelengths are μm; GUI wavelength fields use nm. Options such as `--wavelength-um`, `--rays-per-source` and `--sampling` override the corresponding model settings. `--rays-csv` supplies explicit input rays.
+- The source generator's default sampling is Sobol; `--sampling pseudorandom` selects the alternative. Sobol's balance properties apply to power-of-two sample counts. Preserve the selected sampling settings or explicit rays for reproduction.
 
-Do not rebuild a usable executable just to run a model. Start with a small preview to check placement. Use an output directory belonging to the current task and save the effective project and calculation record.
+## Save, compare and inspect
 
-## Validate a calculation
+- Save assemblies as project JSON. For individual-model ZMX export, check the installed version's export restrictions.
+- `--replay` reruns recorded optical conditions. `--scan` and `--convergence` use the plan schemas documented in the guide; `--resume-scan` resumes a saved scan directory.
+- CLI percentage fields use the launch-weight sum as their denominator. `reference_weight` and `scene.reference_plane` describe that normalization. GUI peak normalization changes the display while retaining original detector powers.
+- Budget fields distinguish detected power, misses, absorption, untraced reflection and unresolved/cutoff weight. Closure includes accounted unresolved power, and surface totals include repeated encounters. See the workflow reference for exact field meanings and timing scope.
+- Saved project/run JSON can embed original ZMX definitions, geometry and explicit input rays. Screen export provides CSV/PNG, profiles, FWHM and ROI data.
 
-- Define the physical reference plane, source weights, launch distribution, wavelengths, detector size/pixels and trace limits. Use the requested baseline; establish any conversion from the imported source normalization.
-- Default newly generated rays to Sobol sampling, preferably powers of two per source such as 256, 1024 or 4096. Retain the seed. Preserve the original sampling or explicit rays when reproducing an existing run.
-- Check sensitivity to ray count, seed and detector resolution when they affect the conclusion. Vary STEP tessellation accuracy when CAD geometry matters; start from the original STEP-referencing input for that comparison.
-- Inspect budget closure alongside geometric misses, absorption, untraced reflection, branch/depth cutoffs, `numerical_failure`, `medium_mismatch`, `interaction_limit` and CAD normal fallbacks. Closure can include unresolved power. Repeated surface encounters can make surface totals exceed launched power.
-- Use `--replay` for recorded optical conditions. For candidate/reference comparisons, keep input rays, wavelengths, materials, poses and limits identical where possible. Compare hit/miss status, intersections, directions, optical path length, budgets and detector maps as relevant. State tolerances and tessellation convergence.
-- Distinguish analytic checks, internal regressions and actual OpticStudio comparisons. Claim only the validation performed. Match rays, accuracy and threads for timing comparisons, and separate import/tessellation, preparation, tracing and output time.
+## Supported physics
 
-## Explain results
-
-State the quantity, denominator, units and conditions. Report power as a percentage of the user-specified reference plane first; add watts when the absolute source power is known and useful. For stage budgets, show input, output, difference and fraction of the reference, separating geometric misses, interface reflection and bulk absorption.
-
-Treat peak normalization as a display transform and retain original power for throughput and ROI calculations. Include pixel size, profile location and the half-maximum convention when reporting FWHM. Keep plot titles short; put reference planes, normalization and calculation details in captions or accompanying results.
-
-## Handle model data
-
-Saved project/run JSON and meshes can embed supplier ZMX definitions or geometry. Check redistribution rights before publishing such artifacts, and keep private inputs in the task's local data/output directories. Use the repository's self-authored examples for smoke checks.
+raytrace-rs v0.11.0 implements geometrical ray tracing. Wave optics, polarization and general automatic optimization are outside that version's feature set. STEP support is limited to the documented solids, surfaces and boundaries. Consult version-matched Features documentation for exact restrictions.
