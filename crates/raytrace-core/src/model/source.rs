@@ -198,11 +198,7 @@ impl PreparedScene {
                 V3([0.0, 1.0, 0.0])
             };
             let u = (helper - w * helper.dot(w)).unit();
-            let v = V3([
-                w.0[1] * u.0[2] - w.0[2] * u.0[1],
-                w.0[2] * u.0[0] - w.0[0] * u.0[2],
-                w.0[0] * u.0[1] - w.0[1] * u.0[0],
-            ]);
+            let v = w.cross(u);
             let pupil_frame = source
                 .pupil
                 .as_ref()

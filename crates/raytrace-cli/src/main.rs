@@ -10,7 +10,7 @@ use std::{env, error::Error, fs, path::PathBuf, time::Instant};
 const HELP: &str =
     "raytrace-rs MODEL.json|MODEL.zmx [--output REPORT.json] [--rays-csv INPUT.csv]\n\
     [--mode sequential|non_sequential] [--threads N] [--repeat N]\n\
-    [--terminals] [--paths FIRST_N_LAUNCH_IDS]\n\
+    [--terminals] [--paths FIRST_N_LAUNCH_RAYS]\n\
     [--inspect] [--export-zmx COPY.zmx] [--ignore-coatings]\n\
     [--wavelength-um VALUE] [--rays-per-source N] [--sampling sobol|pseudorandom]\n\
     raytrace-rs --replay RECORD.json [--output NEW_REPORT.json] [--threads N]\n\
@@ -19,7 +19,7 @@ const HELP: &str =
     raytrace-rs --resume-scan DIRECTORY\n\
 Ray CSV header: id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium\n\
 Units: mm, um, arbitrary power weights. Launch-weight sum is the 100% reference.\n\
-Sequential follows transmission, explicit mirrors and TIR. Non-sequential splits R/T.\n\
+Sequential follows transmission and explicit mirrors; TIR terminates the ray. Non-sequential splits R/T.\n\
 Benchmark timing includes tracing/report accumulation; excludes input/output and warmup.";
 
 fn read_csv(path: &str, scene: &PreparedScene) -> Result<Vec<Ray>, Box<dyn Error>> {

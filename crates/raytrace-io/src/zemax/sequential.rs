@@ -160,7 +160,7 @@ pub(super) fn read_sequential(
             "STANDARD" if conic == 0.0 => Shape::Sphere {
                 radius_mm: 1.0 / curvature,
             },
-            "STANDARD" | "EVENASPH" if curvature != 0.0 => {
+            "STANDARD" | "EVENASPH" => {
                 if coeff.get(&1).is_some_and(|v| v.abs() > 0.0) {
                     project.issue(
                         "surface",
@@ -168,10 +168,18 @@ pub(super) fn read_sequential(
                         true,
                     );
                 }
-                Shape::EvenAsphere {
-                    radius_mm: 1.0 / curvature,
-                    conic,
-                    coefficients: (2..=9).map(|i| *coeff.get(&i).unwrap_or(&0.0)).collect(),
+                let coefficients: Vec<_> =
+                    (2..=9).map(|i| *coeff.get(&i).unwrap_or(&0.0)).collect();
+                if curvature != 0.0 {
+                    Shape::EvenAsphere {
+                        radius_mm: 1.0 / curvature,
+                        conic,
+                        coefficients,
+                    }
+                } else if coefficients.iter().any(|v| *v != 0.0) {
+                    Shape::FlatEvenAsphere { coefficients }
+                } else {
+                    Shape::Plane
                 }
             }
             _ => {

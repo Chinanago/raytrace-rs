@@ -24,6 +24,11 @@ pub enum Shape {
         normals: Vec<V3>,
     },
     Plane,
+    /// Coefficients are A4, A6, A8, ... in increasing order.
+    FlatEvenAsphere {
+        #[serde(default)]
+        coefficients: Vec<f64>,
+    },
     /// The vertex-centred sag cap; radius is signed. This is not a full sphere.
     Sphere {
         radius_mm: f64,
@@ -338,6 +343,11 @@ impl Scene {
                         || surface.aperture.max_radius2() >= radius_mm * radius_mm =>
                 {
                     return Err("Spherical sag cap requires aperture radius < |R|".into())
+                }
+                Shape::FlatEvenAsphere { coefficients }
+                    if coefficients.len() > 8 || !coefficients.iter().all(|v| v.is_finite()) =>
+                {
+                    return Err("Invalid or singular even-asphere over aperture".into());
                 }
                 Shape::EvenAsphere {
                     radius_mm,

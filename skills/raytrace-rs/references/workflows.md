@@ -57,7 +57,7 @@ CLI lengths are **mm**, wavelengths **μm**; GUI wavelengths are **nm**. `--wave
 
 `--rays-csv` reads:
 `id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium`.
-Check medium indices against the effective scene. `--terminals` saves terminal rays; `--paths N` saves paths for launch IDs below N. Large path collections increase output size.
+Check medium indices against the effective scene. `--terminals` saves terminal rays; `--paths N` saves paths for the first N launch rays in input order. Large path collections increase output size.
 
 Replay freezes optical conditions. Output, threads, repeat and path/terminal recording settings can change; source, geometry, wavelength and mode overrides require a new calculation.
 

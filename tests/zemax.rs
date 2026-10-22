@@ -335,3 +335,69 @@ fn mesh_bvh_and_absorbing_medium_match_planar_solution() {
     assert_eq!(report.budget.medium_mismatch, 0.0);
     assert!((report.budget.accounted() - 1.0).abs() < 1e-12);
 }
+
+#[test]
+fn flat_even_asphere_import_trace_and_edited_roundtrip() {
+    let dir = folder();
+    let input = dir.join("flat.zmx");
+    let text = "MODE SEQ\nUNIT MM\nENPD 4\nWAVM 1 0.55 1\nSURF 0\n TYPE STANDARD\n DISZ INFINITY\nSURF 1\n TYPE EVENASPH\n CURV 0\n PARM 2 0.001\n DIAM 3\n DISZ 5\n GLAS TESTGLASS 0 0\nSURF 2\n TYPE STANDARD\n DIAM 3\n DISZ 5\nSURF 3\n TYPE STANDARD\n DIAM 3\n";
+    fs::write(&input, text).unwrap();
+    fs::write(dir.join("TEST.AGF"), glass()).unwrap();
+    let mut p = Project::open(&input, &[]).unwrap();
+    let Shape::FlatEvenAsphere { coefficients } = &p.scene.surfaces[0].shape else {
+        panic!()
+    };
+    assert_eq!(coefficients[0], 0.001);
+    let prepared = p.scene.clone().prepare().unwrap();
+    let h: f64 = 2.;
+    let r = Ray {
+        id: 42,
+        position_mm: V3([h, 0., -1.]),
+        direction: V3([0., 0., 1.]),
+        weight: 1.,
+        wavelength_um: 0.55,
+        medium: 0,
+        optical_path_mm: 0.,
+    };
+    let hit = raytrace_rs::geometry::intersect(&prepared.surfaces[0], r.position_mm, r.direction)
+        .unwrap();
+    assert!((hit.point.0[2] - 0.001 * h.powi(4)).abs() < 1e-12);
+    let target = V3([h, 0., 0.001 * h.powi(4)]);
+    let direction = V3([1., 0., 0.01]).unit();
+    let oblique = raytrace_rs::geometry::intersect(
+        &prepared.surfaces[0],
+        target - direction * 0.5,
+        direction,
+    )
+    .unwrap();
+    assert!((oblique.point - target).norm() < 1e-10);
+    assert!(p.compatibility_report().traceable);
+    let result = trace(
+        &prepared,
+        &[r],
+        TraceOptions {
+            path_launch_count: 1,
+            ..TraceOptions::default()
+        },
+    );
+    assert!(result.paths.len() >= 2);
+    assert!((result.paths[1].end_mm.0[0] - h).abs() > 1e-3);
+    p.scene.surfaces[1].pose.translation_mm.0[2] = 6.;
+    let output = dir.join("edited.zmx");
+    zemax::export(&p, &output).unwrap();
+    let again = Project::open(&output, &[]).unwrap();
+    assert_eq!(
+        serde_json::to_value(&again.scene.surfaces[0].shape).unwrap(),
+        serde_json::to_value(&p.scene.surfaces[0].shape).unwrap()
+    );
+    for coefficients in [vec![f64::NAN], vec![0.; 9]] {
+        let mut invalid = p.scene.clone();
+        invalid.surfaces[0].shape = Shape::FlatEvenAsphere { coefficients };
+        assert!(invalid.prepare().is_err());
+    }
+    fs::write(&input, text.replace("PARM 2 0.001", "PARM 2 0")).unwrap();
+    assert!(matches!(
+        Project::open(&input, &[]).unwrap().scene.surfaces[0].shape,
+        Shape::Plane
+    ));
+}

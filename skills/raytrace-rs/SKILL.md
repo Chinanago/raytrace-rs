@@ -18,7 +18,7 @@ The CLI runs models and writes calculation records. The GUI provides component p
 
 - Load `.zmx` or project JSON. `--inspect` imports and saves without tracing, and prints a compatibility report distinguishing used definitions, preserved-only data, required conditions and unsupported entries. Trace compatibility depends on those entries, even if parsing succeeds.
 - ZMX imports resolve AGF materials and referenced STEP geometry. The workflow reference describes their search locations. Import diagnostics identify missing dependencies and unsupported definitions.
-- Sequential mode follows the prescribed surface order, transmission, explicit mirrors and TIR. Non-sequential mode follows nearest hits and splits Fresnel reflection/transmission branches. Assembly projects use non-sequential tracing.
+- Sequential mode follows the prescribed surface order, transmission and explicit mirrors; TIR terminates the ray. Non-sequential mode follows nearest hits and splits Fresnel reflection/transmission branches. Assembly projects use non-sequential tracing.
 - CLI lengths are mm and wavelengths are μm; GUI wavelength fields use nm. Options such as `--wavelength-um`, `--rays-per-source` and `--sampling` override the corresponding model settings. `--rays-csv` supplies explicit input rays.
 - The source generator's default sampling is Sobol; `--sampling pseudorandom` selects the alternative. Sobol's balance properties apply to power-of-two sample counts. Preserve the selected sampling settings or explicit rays for reproduction.
 

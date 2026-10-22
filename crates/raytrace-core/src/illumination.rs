@@ -183,7 +183,10 @@ impl PreparedPupil {
             }
             if !matches!(
                 surface.spec.shape,
-                Shape::Plane | Shape::Sphere { .. } | Shape::EvenAsphere { .. }
+                Shape::Plane
+                    | Shape::Sphere { .. }
+                    | Shape::EvenAsphere { .. }
+                    | Shape::FlatEvenAsphere { .. }
             ) {
                 return Err("入射瞳の計算は平面・球面・偶数次非球面に対応しています".into());
             }

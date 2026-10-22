@@ -138,6 +138,7 @@ impl App {
                         "逐次追跡で追わない界面反射",
                         b.sequential_reflection_not_followed,
                     ),
+                    ("全反射（シーケンシャル）", b.sequential_tir),
                     ("界面での吸収", b.surface_absorbed),
                     ("材料内部での吸収", b.bulk_absorbed),
                     ("分岐・深さの打切り", b.branch_cutoff + b.interaction_limit),
@@ -189,6 +190,7 @@ impl App {
                 .map(|s| s.name.as_str())
                 .unwrap_or("面の特定なし");
             let reason = match d.reason.as_str() {
+                "sequential_tir" => "全反射（シーケンシャル）",
                 "medium_mismatch" => "媒質の不整合",
                 "numerical_failure" => "未解決の交差",
                 "branch_cutoff" => "弱い分岐の打切り",

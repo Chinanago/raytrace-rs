@@ -1,4 +1,4 @@
-use crate::geometry::{dielectric, intersect, intersect_ordered, Hit, Miss};
+use crate::geometry::{dielectric, intersect, intersect_ordered, search_start, Hit, Miss};
 use crate::math::V3;
 use crate::model::{Interaction, Mode, PreparedScene, Ray};
 use rayon::prelude::*;
@@ -21,6 +21,8 @@ pub struct Budget {
     pub surface_absorbed: f64,
     pub bulk_absorbed: f64,
     pub sequential_reflection_not_followed: f64,
+    #[serde(default)]
+    pub sequential_tir: f64,
     pub branch_cutoff: f64,
     pub interaction_limit: f64,
     pub numerical_failure: f64,
@@ -34,6 +36,7 @@ impl Budget {
             + self.surface_absorbed
             + self.bulk_absorbed
             + self.sequential_reflection_not_followed
+            + self.sequential_tir
             + self.branch_cutoff
             + self.interaction_limit
             + self.numerical_failure
@@ -47,6 +50,7 @@ impl Budget {
         self.surface_absorbed += b.surface_absorbed;
         self.bulk_absorbed += b.bulk_absorbed;
         self.sequential_reflection_not_followed += b.sequential_reflection_not_followed;
+        self.sequential_tir += b.sequential_tir;
         self.branch_cutoff += b.branch_cutoff;
         self.interaction_limit += b.interaction_limit;
         self.numerical_failure += b.numerical_failure;
@@ -222,19 +226,37 @@ impl Report {
         }
     }
     fn merge_diagnostic(&mut self, diagnostic: TraceDiagnostic) {
+        let reason = diagnostic.reason.clone();
+        let key = (
+            reason.as_str(),
+            diagnostic.surface,
+            diagnostic.expected_medium,
+            diagnostic.actual_medium,
+        );
+        self.group_diagnostic(key, diagnostic.branch_count, diagnostic.weight, || {
+            diagnostic
+        });
+    }
+    fn group_diagnostic(
+        &mut self,
+        key: (&str, Option<usize>, Option<usize>, usize),
+        count: u64,
+        weight: f64,
+        make: impl FnOnce() -> TraceDiagnostic,
+    ) {
         if let Some(existing) = self.diagnostics.iter_mut().find(|d| {
-            d.reason == diagnostic.reason
-                && d.surface == diagnostic.surface
-                && d.expected_medium == diagnostic.expected_medium
-                && d.actual_medium == diagnostic.actual_medium
+            d.reason == key.0
+                && d.surface == key.1
+                && d.expected_medium == key.2
+                && d.actual_medium == key.3
         }) {
-            existing.branch_count += diagnostic.branch_count;
-            existing.weight += diagnostic.weight;
+            existing.branch_count += count;
+            existing.weight += weight;
         } else if self.diagnostics.len() < MAX_DIAGNOSTIC_GROUPS {
-            self.diagnostics.push(diagnostic);
+            self.diagnostics.push(make());
         } else {
-            self.diagnostic_overflow.branch_count += diagnostic.branch_count;
-            self.diagnostic_overflow.weight += diagnostic.weight;
+            self.diagnostic_overflow.branch_count += count;
+            self.diagnostic_overflow.weight += weight;
         }
     }
     fn diagnose(
@@ -246,43 +268,33 @@ impl Report {
         expected_medium: Option<usize>,
         intersection: Option<IntersectionContext>,
     ) {
-        if let Some(existing) = self.diagnostics.iter_mut().find(|d| {
-            d.reason == reason
-                && d.surface == surface
-                && d.expected_medium == expected_medium
-                && d.actual_medium == ray.medium
-        }) {
-            existing.branch_count += 1;
-            existing.weight += ray.weight;
-            return;
-        }
-        if self.diagnostics.len() == MAX_DIAGNOSTIC_GROUPS {
-            self.diagnostic_overflow.branch_count += 1;
-            self.diagnostic_overflow.weight += ray.weight;
-            return;
-        }
-        self.merge_diagnostic(TraceDiagnostic {
-            intersection,
-            reason: reason.into(),
-            surface,
-            expected_medium,
-            actual_medium: ray.medium,
-            branch_count: 1,
-            weight: ray.weight,
-            example: Terminal {
-                ray,
+        self.group_diagnostic(
+            (reason, surface, expected_medium, ray.medium),
+            1,
+            ray.weight,
+            || TraceDiagnostic {
+                intersection,
                 reason: reason.into(),
                 surface,
-                depth,
+                expected_medium,
+                actual_medium: ray.medium,
+                branch_count: 1,
+                weight: ray.weight,
+                example: Terminal {
+                    ray,
+                    reason: reason.into(),
+                    surface,
+                    depth,
+                },
             },
-        });
+        );
     }
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct TraceOptions {
     pub keep_terminals: bool,
-    /// Store every segment belonging to the first N launch IDs, including branches.
+    /// Store every segment belonging to the first N launch rays in input order, including branches.
     pub path_launch_count: u64,
 }
 
@@ -315,7 +327,8 @@ fn trace_impl(
     let chunk_size = rays.len().div_ceil(31).max(1);
     let reports: Vec<_> = rays
         .par_chunks(chunk_size)
-        .map(|chunk| {
+        .enumerate()
+        .map(|(chunk_index, chunk)| {
             let mut report = Report::new(scene);
             // Bound optical-data caches to ~64 KiB per chunk (at most 31 chunks).
             // Explicit rays with many distinct wavelengths fall back to direct evaluation.
@@ -323,7 +336,10 @@ fn trace_impl(
                 / (scene.spec.materials.len().max(1) * std::mem::size_of::<(f64, f64)>()))
             .clamp(1, 256);
             let mut cache = std::collections::HashMap::new();
-            for ray in chunk {
+            let mut completed = 0;
+            for (position, ray) in chunk.iter().enumerate() {
+                let record_paths =
+                    ((chunk_index * chunk_size + position) as u64) < options.path_launch_count;
                 if control.is_some_and(|c| c.cancel.load(Ordering::Relaxed)) {
                     return None;
                 }
@@ -332,19 +348,27 @@ fn trace_impl(
                     cache.insert(key, evaluate_optics(scene, ray.wavelength_um));
                 }
                 if let Some(optics) = cache.get(&key) {
-                    trace_one(scene, *ray, &mut report, options, optics);
+                    trace_one(scene, *ray, &mut report, options, record_paths, optics);
                 } else {
                     trace_one(
                         scene,
                         *ray,
                         &mut report,
                         options,
+                        record_paths,
                         &evaluate_optics(scene, ray.wavelength_um),
                     );
                 }
                 if let Some(c) = control {
-                    c.completed.fetch_add(1, Ordering::Relaxed);
+                    completed += 1;
+                    if completed == 256 {
+                        c.completed.fetch_add(completed, Ordering::Relaxed);
+                        completed = 0;
+                    }
                 }
+            }
+            if let Some(c) = control {
+                c.completed.fetch_add(completed, Ordering::Relaxed);
             }
             Some(report)
         })
@@ -440,6 +464,7 @@ fn trace_one(
     launch: Ray,
     report: &mut Report,
     options: TraceOptions,
+    record_paths: bool,
     optics: &[(f64, f64)],
 ) {
     report.budget.launched += launch.weight;
@@ -503,7 +528,7 @@ fn trace_one(
             // Linear nearest-hit traversal is deliberate in v0.1. BVH is a future
             // acceleration layer and does not change interaction semantics.
             let mut nearest: Option<(usize, Hit)> = None;
-            let mut numerical = None;
+            let mut numerical: Option<(usize, f64)> = None;
             for (i, s) in scene.surfaces.iter().enumerate() {
                 match intersect(s, ray.position_mm, ray.direction) {
                     Ok(hit)
@@ -514,12 +539,18 @@ fn trace_one(
                         nearest = Some((i, hit))
                     }
                     Err(Miss::Numerical) => {
-                        numerical.get_or_insert(i);
+                        if let Some(start) = search_start(s, ray.position_mm, ray.direction) {
+                            if numerical.is_none_or(|(_, previous)| start < previous) {
+                                numerical = Some((i, start));
+                            }
+                        }
                     }
                     _ => (),
                 }
             }
-            if let Some(i) = numerical {
+            if let Some((i, _)) = numerical
+                .filter(|(_, start)| nearest.as_ref().is_none_or(|(_, h)| *start < h.distance_mm))
+            {
                 Err((Miss::Numerical, Some(i)))
             } else {
                 Ok(nearest)
@@ -559,7 +590,7 @@ fn trace_one(
         };
         events += 1;
         report.surface_intersections += 1;
-        if launch.id < options.path_launch_count && path_events < 256 {
+        if record_paths && path_events < 256 {
             report.paths.push(PathEvent {
                 id: ray.id,
                 depth,
@@ -612,10 +643,11 @@ fn trace_one(
             }
             Interaction::Mirror { reflectance } => {
                 let mut normal = hit.normal;
-                let reflected = (ray.direction - normal * (2. * ray.direction.dot(normal))).unit();
                 if !normal.finite()
                     || ray.direction.dot(normal) * ray.direction.dot(hit.geometric_normal) < 0.
-                    || reflected.dot(hit.geometric_normal) * ray.direction.dot(hit.geometric_normal)
+                    || (ray.direction.dot(hit.geometric_normal)
+                        - 2. * ray.direction.dot(normal) * normal.dot(hit.geometric_normal))
+                        * ray.direction.dot(hit.geometric_normal)
                         > 1e-14
                 {
                     normal = hit.geometric_normal;
@@ -721,7 +753,18 @@ fn trace_one(
                 if result.transmitted.is_none() {
                     report.total_internal_reflections += 1;
                 }
-                if scene.spec.mode == Mode::NonSequential || result.transmitted.is_none() {
+                if scene.spec.mode == Mode::Sequential && result.transmitted.is_none() {
+                    ray.weight = reflected_weight;
+                    report.budget.sequential_tir += ray.weight;
+                    report.diagnose(ray, "sequential_tir", Some(index), depth + 1, None, None);
+                    report.terminal(
+                        ray,
+                        "sequential_tir",
+                        Some(index),
+                        depth + 1,
+                        options.keep_terminals,
+                    );
+                } else if scene.spec.mode == Mode::NonSequential {
                     if reflected_weight > 0.0 {
                         stack.push(Work {
                             ray: Ray {

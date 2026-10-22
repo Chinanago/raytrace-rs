@@ -355,7 +355,7 @@ fn shape_name(s: &Shape) -> &'static str {
         Shape::ConicalSide { .. } => "レンズ側面",
         Shape::Plane => "平面",
         Shape::Sphere { .. } => "球面",
-        Shape::EvenAsphere { .. } => "非球面",
+        Shape::EvenAsphere { .. } | Shape::FlatEvenAsphere { .. } => "非球面",
         Shape::TriangleMesh { .. } => "CAD",
     }
 }

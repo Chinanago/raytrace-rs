@@ -139,3 +139,21 @@ fn native_zmx_coating_is_saved_with_results_and_uncoated_override_is_explicit() 
     assert!(p.trace_scene().unwrap().surfaces[0].coating.is_none());
     assert!(Project::open(&path, &[]).unwrap().trace_scene().is_err());
 }
+
+#[test]
+fn sequential_tir_coating_keeps_absorption_separate() {
+    let prepared = scene(Mode::Sequential, coating()).prepare().unwrap();
+    let a = 50f64.to_radians();
+    let r = Ray {
+        medium: 1,
+        position_mm: V3([0., 0., 1.]),
+        direction: V3([a.sin(), 0., -a.cos()]),
+        ..ray()
+    };
+    let result = trace(&prepared, &[r], TraceOptions::default());
+    assert_eq!(result.total_internal_reflections, 1);
+    near(result.budget.sequential_tir, 0.65);
+    near(result.budget.surface_absorbed, 0.35);
+    near(result.budget.medium_mismatch, 0.);
+    near(result.budget.accounted(), 1.);
+}

@@ -135,7 +135,7 @@ impl MeshAccel {
                 let e2 = data.vertices[ids[2] as usize] - a;
                 let h = d.cross(e2);
                 let determinant = e1.dot(h);
-                if determinant.abs() < 1e-14 {
+                if determinant.abs() <= 1e-12 * d.norm() * e1.norm() * e2.norm() {
                     continue;
                 }
                 let inv = 1.0 / determinant;

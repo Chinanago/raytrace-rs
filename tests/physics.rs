@@ -610,3 +610,94 @@ fn spherical_sag_cap_from_distant_source_and_reversed_direction() {
     near(forward.point.0[2], expected, 1e-9);
     near(backward.point.0[2], expected, 1e-9);
 }
+
+#[test]
+fn farther_numerical_asphere_does_not_discard_nearer_detector() {
+    let mut front = detector("near", 0.);
+    front["pose"] = json!({"translation_mm":[-15.,0.,0.],"rotation_deg":[0.,90.,0.]});
+    let mut far = plane("far", 0., glass(0, 1));
+    // Cancellation near the polynomial minimum exhausts the oblique search.
+    far["shape"] =
+        json!({"type":"even_asphere","radius_mm":25.,"conic":-1.,"coefficients":[1e8,-2e8,1e8]});
+    far["aperture"] = json!({"type":"circle","radius_mm":10.});
+    let s = scene(Mode::NonSequential, vec![front, far]);
+    let r = Ray {
+        position_mm: V3([-20., 1., 0.]),
+        direction: V3([1., 0., 0.]),
+        ..ray()
+    };
+    assert!(matches!(
+        intersect(&s.surfaces[1], r.position_mm, r.direction),
+        Err(raytrace_rs::geometry::Miss::Numerical)
+    ));
+    let report = trace(&s, &[r], terminals());
+    near(report.detectors[0].weights.iter().sum(), 1., 1e-14);
+    assert_eq!(report.budget.numerical_failure, 0.);
+    // Without the nearer detector, the unresolved search still terminates the ray.
+    let mut spec = s.spec;
+    spec.surfaces.remove(0);
+    let report = trace(&spec.prepare().unwrap(), &[r], terminals());
+    near(report.budget.numerical_failure, 1., 1e-14);
+    assert_eq!(report.diagnostics[0].reason, "numerical_failure");
+}
+
+#[test]
+fn sequential_tir_terminates_inside_glass_and_closes_budget() {
+    let mut front = plane("entrance", 0., glass(0, 1));
+    front["interaction"]["reflectance"] = json!(0.);
+    let mut exit = plane("exit", 1., glass(1, 0));
+    exit["pose"]["rotation_deg"] = json!([0., 50., 0.]);
+    let s = scene(
+        Mode::Sequential,
+        vec![front, exit, plane("next", -2., glass(1, 0))],
+    );
+    let report = trace(&s, &[ray()], terminals());
+    near(report.budget.sequential_tir, 1., 1e-14);
+    assert_eq!(report.total_internal_reflections, 1);
+    assert_eq!(report.budget.medium_mismatch, 0.);
+    assert_eq!(report.terminals[0].reason, "sequential_tir");
+    assert_eq!(report.diagnostics[0].reason, "sequential_tir");
+    near(report.budget.accounted(), report.budget.launched, 1e-14);
+    let mut old = serde_json::to_value(&report.budget).unwrap();
+    old.as_object_mut().unwrap().remove("sequential_tir");
+    assert_eq!(
+        serde_json::from_value::<raytrace_rs::trace::Budget>(old)
+            .unwrap()
+            .sequential_tir,
+        0.
+    );
+}
+
+#[test]
+fn path_launch_count_selects_input_order_with_arbitrary_ids() {
+    let s = scene(Mode::Sequential, vec![detector("sensor", 1.)]);
+    let rays = [1000, 5, 7].map(|id| Ray { id, ..ray() });
+    let report = trace(
+        &s,
+        &rays,
+        TraceOptions {
+            path_launch_count: 1,
+            ..TraceOptions::default()
+        },
+    );
+    assert_eq!(report.paths.len(), 1);
+    assert_eq!(report.paths[0].id, 1000);
+}
+
+#[test]
+fn tiny_closed_mesh_intersects_at_oblique_incidence() {
+    let mut face = plane("tetrahedron", 0., json!({"type":"absorb"}));
+    face["shape"] = json!({"type":"triangle_mesh","vertices":[[0.,0.,0.],[1e-4,0.,0.],[0.,1e-4,0.],[0.,0.,1e-4]],"triangles":[[0,2,1],[0,1,3],[0,3,2],[1,2,3]],"normals":[[0.,0.,-1.],[0.,0.,-1.],[0.,0.,-1.],[0.,0.,1.]]});
+    let s = scene(Mode::NonSequential, vec![face]);
+    let d = V3([1., 0., 1e-7]).unit();
+    let target = V3([2e-5, 2e-5, 0.]);
+    let r = Ray {
+        position_mm: target - d * 1e-3,
+        direction: d,
+        ..ray()
+    };
+    let h = intersect(&s.surfaces[0], r.position_mm, r.direction).unwrap();
+    near(h.distance_mm, 1e-3, 1e-14);
+    let report = trace(&s, &[r], TraceOptions::default());
+    near(report.budget.surface_absorbed, 1., 1e-14);
+}

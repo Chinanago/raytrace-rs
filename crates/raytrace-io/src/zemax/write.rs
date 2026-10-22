@@ -241,6 +241,7 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
         let id = original.map_or(i + 2, |z| z.surface_numbers[i]);
         let (typ, curvature, conic, coeff) = match &s.shape {
             Shape::Plane => ("STANDARD", 0.0, 0.0, Vec::new()),
+            Shape::FlatEvenAsphere { coefficients } => ("EVENASPH", 0.0, 0.0, coefficients.clone()),
             Shape::Sphere { radius_mm } => ("STANDARD", 1.0 / radius_mm, 0.0, Vec::new()),
             Shape::EvenAsphere {
                 radius_mm,

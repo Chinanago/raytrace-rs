@@ -87,7 +87,8 @@ fn scene_bytes(scene: &Scene) -> usize {
                             (vertices.len() + normals.len()) * std::mem::size_of::<V3>()
                                 + triangles.len() * 12
                         }
-                        Shape::EvenAsphere { coefficients, .. } => coefficients.len() * 8,
+                        Shape::EvenAsphere { coefficients, .. }
+                        | Shape::FlatEvenAsphere { coefficients } => coefficients.len() * 8,
                         _ => 0,
                     }
             })

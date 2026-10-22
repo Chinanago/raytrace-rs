@@ -53,6 +53,7 @@ pub fn bounds(shape: &Shape, aperture: &Aperture) -> Option<([V3; 2], f64)> {
         Shape::TriangleMesh { .. } | Shape::ConicalSide { .. } => unreachable!(),
         Shape::Plane => return Some(([V3([-hx, -hy, 0.0]), V3([hx, hy, 0.0])], 0.0)),
         Shape::Sphere { radius_mm } => (*radius_mm, 0.0, &[]),
+        Shape::FlatEvenAsphere { coefficients } => (f64::INFINITY, 0.0, coefficients),
         Shape::EvenAsphere {
             radius_mm,
             conic,
@@ -77,6 +78,16 @@ pub fn bounds(shape: &Shape, aperture: &Aperture) -> Option<([V3; 2], f64)> {
     let slope = factor_bound * r2.sqrt();
     (low.is_finite() && high.is_finite() && slope.is_finite())
         .then_some(([V3([-hx, -hy, low]), V3([hx, hy, high])], slope))
+}
+
+/// Lower bound of the surface search interval along a world-space ray.
+pub fn search_start(surface: &PreparedSurface, p_world: V3, d_world: V3) -> Option<f64> {
+    bounded_interval(
+        surface,
+        surface.frame.local_point(p_world),
+        surface.frame.local_vector(d_world),
+    )
+    .map(|(low, _)| low)
 }
 
 fn bounded_interval(surface: &PreparedSurface, p: V3, d: V3) -> Option<(f64, f64)> {
@@ -124,6 +135,7 @@ pub fn sag(shape: &Shape, x: f64, y: f64) -> Option<(f64, f64, f64)> {
         Shape::TriangleMesh { .. } | Shape::ConicalSide { .. } => return None,
         Shape::Plane => return Some((0.0, 0.0, 0.0)),
         Shape::Sphere { radius_mm } => (*radius_mm, 0.0, &[]),
+        Shape::FlatEvenAsphere { coefficients } => (f64::INFINITY, 0.0, coefficients),
         Shape::EvenAsphere {
             radius_mm,
             conic,
@@ -283,7 +295,7 @@ fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss>
                 .find(|t| ((p + d * *t).0[2] - radius_mm) * radius_mm <= 0.0)
                 .ok_or(Miss::Geometry)?
         }
-        Shape::EvenAsphere { .. } => {
+        Shape::EvenAsphere { .. } | Shape::FlatEvenAsphere { .. } => {
             // Use the fast solver when monotonicity proves a unique intersection;
             // otherwise search bounded intervals in nearest-first order.
             let transverse = d.0[0].hypot(d.0[1]);
@@ -370,15 +382,15 @@ fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss>
 // Bound the spectral norm of the sag Hessian over the aperture. Together with
 // the derivative at an interval midpoint this certifies monotonicity locally.
 fn sag_curvature_bound(shape: &Shape, r2: f64) -> f64 {
-    let Shape::EvenAsphere {
-        radius_mm,
-        conic,
-        coefficients,
-    } = shape
-    else {
-        unreachable!()
+    let (c, conic, coefficients) = match shape {
+        Shape::EvenAsphere {
+            radius_mm,
+            conic,
+            coefficients,
+        } => (1. / radius_mm, *conic, coefficients),
+        Shape::FlatEvenAsphere { coefficients } => (0., 0., coefficients),
+        _ => unreachable!(),
     };
-    let c = 1. / radius_mm;
     let q = (1. - (1. + conic) * c * c * r2).min(1.);
     let mut bound = c.abs() / q.sqrt() + (1. + conic).abs() * c.abs().powi(3) * r2 / q.powf(1.5);
     let mut power = r2;
