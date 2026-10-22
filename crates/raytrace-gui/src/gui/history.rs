@@ -219,6 +219,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use raytrace_core::trace::{trace, TraceOptions};
     #[test]
     fn edits_coalesce_until_release_and_undo_restores_the_matching_result_revision() {
         let mut app = App::demo();

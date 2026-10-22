@@ -1,4 +1,5 @@
 //! Files written alongside a ZMX, with conflict checks for existing user data.
+use super::nsc::nsc_reference;
 use super::*;
 
 pub(super) type Sidecars = BTreeMap<PathBuf, Vec<u8>>;
