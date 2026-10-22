@@ -44,12 +44,12 @@ v0.11.0では132テストが通過しています。STEPの従来版比較、解
 
 ## AIエージェントから使う
 
-[raytrace-rsのAgent Skill](https://github.com/Chinanago/raytrace-rs/tree/codex/initial-import/skills/raytrace-rs)を公開しています。raytrace-rsのCLI・GUIを操作するための手順で、ZMXの読込、材料、追跡、出力の読み方、走査・再計算を扱います。
+[raytrace-rsのAgent Skill](https://github.com/Chinanago/raytrace-rs/tree/main/skills/raytrace-rs)を公開しています。raytrace-rsのCLI・GUIを操作するための手順で、ZMXの読込、材料、追跡、出力の読み方、走査・再計算を扱います。
 
 Codexでは、次のように依頼してインストールできます。
 
 ```text
-$skill-installer で Chinanago/raytrace-rs の skills/raytrace-rs を、codex/initial-import ブランチからインストールして。
+$skill-installer で Chinanago/raytrace-rs の skills/raytrace-rs をインストールして。
 ```
 
 インストール後は `$raytrace-rs` で呼び出し、モデルと計算条件を指定します。ほかのAIエージェントでも、フォルダー内の `SKILL.md` と、そこから参照される文書を読み込ませて利用できます。スキルはMITライセンスです。
