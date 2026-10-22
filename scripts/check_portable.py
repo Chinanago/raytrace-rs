@@ -69,7 +69,7 @@ def owned_step_box():
 def check(archive, output):
     if os.name != "nt":
         raise ValueError("This acceptance check targets Windows")
-    version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
+    version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
     prefix = f"raytrace-rs-{version}-windows-x64/"
     allowed = set(FILES.values()) | {"package.json", "START_HERE.md", "THIRD_PARTY_LICENSES.txt"}
     output.parent.mkdir(parents=True, exist_ok=True)

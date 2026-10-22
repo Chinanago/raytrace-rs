@@ -1,3 +1,5 @@
+#[path = "support/cli.rs"]
+mod cli_support;
 use raytrace_rs::{
     assembly,
     model::Scene,
@@ -338,7 +340,7 @@ fn cli_scan_can_be_reopened_and_protects_existing_output() {
     )
     .unwrap();
     let run = |args: &[&str]| {
-        std::process::Command::new(env!("CARGO_BIN_EXE_raytrace-rs"))
+        std::process::Command::new(cli_support::executable())
             .current_dir(&dir)
             .args(args)
             .output()

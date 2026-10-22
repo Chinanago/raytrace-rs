@@ -15,9 +15,9 @@ The baseline below is **v0.11.0**. For another installed version, use its matchi
 | Physics, supported inputs and restrictions | `docs/FEATURES.md` | [Features](https://github.com/Chinanago/raytrace-rs/blob/v0.11.0/docs/FEATURES.md) |
 | Import, placement, sources, screens, scans, convergence and replay | `docs/GUIDE.md` | [Guide](https://github.com/Chinanago/raytrace-rs/blob/v0.11.0/docs/GUIDE.md) |
 | Build, test or modify the application | `docs/DEVELOPMENT.md` | [Development](https://github.com/Chinanago/raytrace-rs/blob/v0.11.0/docs/DEVELOPMENT.md) |
-| Model examples and exact schemas | `examples/*.json`, `src/project.rs`, `src/assembly.rs`, `src/model.rs` | [Examples](https://github.com/Chinanago/raytrace-rs/tree/v0.11.0/examples) |
+| Model examples and exact schemas | `examples/*.json`, `crates/raytrace-io/src/project.rs`, `crates/raytrace-io/src/assembly.rs`, `crates/raytrace-core/src/model.rs` | [Examples](https://github.com/Chinanago/raytrace-rs/tree/v0.11.0/examples) |
 
-The Windows ZIP runs without Rust or OpticStudio installed. If a source build is needed, run `cargo build --release --locked` from the checkout; add `--features gui --bins` for CLI and GUI together. Windows is the verified distribution platform for v0.11.0.
+The Windows ZIP runs without Rust or OpticStudio installed. If a source build is needed, run `cargo build --release --locked -p raytrace-cli` from the checkout for the CLI, or `cargo build --release --locked --workspace --bins` for CLI and GUI together. Windows is the verified distribution platform for v0.11.0.
 
 ## First run from an extracted Windows ZIP
 

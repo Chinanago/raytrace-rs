@@ -1,0 +1,23 @@
+[package]
+name = "raytrace-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Command-line geometric optical ray tracer"
+readme = "../../README.md"
+keywords = ["optics", "raytracing"]
+categories = ["science", "simulation"]
+
+[dependencies]
+raytrace-core = { workspace = true }
+raytrace-io = { workspace = true }
+raytrace-app = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[[bin]]
+name = "raytrace-rs"
+path = "src/main.rs"

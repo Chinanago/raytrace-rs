@@ -1,3 +1,5 @@
+#[path = "support/cli.rs"]
+mod cli_support;
 use raytrace_rs::{
     assembly,
     compatibility::CompatibilityStatus as Status,
@@ -29,7 +31,7 @@ fn folder() -> PathBuf {
 fn cli_replays_generated_and_csv_runs_without_the_original_inputs() {
     let dir = folder();
     let cli = |args: &[&str]| {
-        std::process::Command::new(env!("CARGO_BIN_EXE_raytrace-rs"))
+        std::process::Command::new(cli_support::executable())
             .current_dir(&dir)
             .args(args)
             .output()

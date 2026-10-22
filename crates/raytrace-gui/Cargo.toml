@@ -1,0 +1,26 @@
+[package]
+name = "raytrace-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Desktop optical project editor and analysis interface"
+readme = "../../README.md"
+keywords = ["optics", "raytracing"]
+categories = ["science", "simulation"]
+
+[dependencies]
+serde = { workspace = true }
+raytrace-core = { workspace = true }
+raytrace-io = { workspace = true, features = ["png"] }
+raytrace-app = { workspace = true }
+rayon = { workspace = true }
+serde_json = { workspace = true }
+eframe = { workspace = true }
+rfd = { workspace = true }
+image = { workspace = true }
+
+[[bin]]
+name = "raytrace-gui"
+path = "src/main.rs"

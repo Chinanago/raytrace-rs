@@ -81,7 +81,7 @@ fn exported_pixels_keep_power_coordinates_units_and_reference_without_renormaliz
     assert_eq!(metadata["received_percent"], 100.0);
     assert_eq!(metadata["display"]["maximum_percent"], 80.0);
     assert_eq!(display.maximum_weight(4.0, 10.0), 8.0);
-    #[cfg(feature = "gui")]
+    #[cfg(feature = "png")]
     {
         let png = image::open(dir.join("screen.png")).unwrap().to_rgb8();
         assert_eq!(png.get_pixel(0, 0).0, export::rgb(3.0 / 8.0, false));

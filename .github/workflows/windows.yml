@@ -35,15 +35,15 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Check code
-        run: cargo clippy --locked --all-features --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
       - name: Run all tests
-        run: cargo test --locked --all-features
+        run: cargo test --locked --workspace --all-features
       - name: Check CLI-only build
-        run: cargo check --locked --no-default-features
+        run: cargo check --locked -p raytrace-cli
       - name: Verify analytic and native roundtrip cases
         run: cargo run --release --locked --example validation_suite -- results/validation
       - name: Build Windows binaries
-        run: cargo build --release --locked --all-features --bins
+        run: cargo build --release --locked --workspace --bins
       - name: Build distribution
         run: python scripts/package_windows.py --no-build
       - name: Check portable distribution
@@ -59,3 +59,21 @@ jobs:
             results/portable_summary.json
           if-no-files-found: error
           retention-days: 14
+
+  linux-core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install Rust tools
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+          rustup default stable
+      - name: Check formatting
+        run: cargo fmt --all --check
+      - name: Check code
+        run: cargo clippy --locked -p raytrace-core -p raytrace-io -p raytrace-app -p raytrace-cli -p raytrace-rs --all-features --all-targets -- -D warnings
+      - name: Run tests
+        run: cargo test --locked -p raytrace-core -p raytrace-io -p raytrace-app -p raytrace-cli -p raytrace-rs --all-features

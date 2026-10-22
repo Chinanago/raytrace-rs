@@ -1,34 +1,71 @@
-[package]
-name = "raytrace-rs"
+[workspace]
+members = ["crates/raytrace-core", "crates/raytrace-io", "crates/raytrace-app", "crates/raytrace-cli", "crates/raytrace-gui"]
+resolver = "2"
+
+[workspace.package]
 version = "0.11.0"
-default-run = "raytrace-rs"
 edition = "2021"
 license = "MIT"
-description = "Experimental sequential and non-sequential geometric optical ray tracing"
+rust-version = "1.82"
+repository = "https://github.com/Chinanago/raytrace-rs"
 
-[features]
-default = []
-gui = ["dep:eframe", "dep:rfd", "dep:image"]
-
-[dependencies]
+[workspace.dependencies]
 rayon = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 encoding_rs = "0.8"
 libm = "0.2"
 spade = "2.15.1"
-eframe = { version = "0.31.1", optional = true, default-features = false, features = ["glow", "default_fonts"] }
-rfd = { version = "0.15", optional = true, default-features = false }
-image = { version = "0.25", optional = true, default-features = false, features = ["png"] }
+eframe = { version = "0.31.1", default-features = false, features = ["glow", "default_fonts"] }
+rfd = { version = "0.15", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
+raytrace-core = { path = "crates/raytrace-core", version = "0.11.0" }
+raytrace-io = { path = "crates/raytrace-io", version = "0.11.0" }
+raytrace-app = { path = "crates/raytrace-app", version = "0.11.0" }
 
-[[bin]]
-name = "raytrace-gui"
-path = "src/bin/gui.rs"
-required-features = ["gui"]
+[package]
+name = "raytrace-rs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Experimental sequential and non-sequential geometric optical ray tracing"
+readme = "README.md"
+keywords = ["optics", "raytracing", "zemax"]
+categories = ["science", "simulation"]
+
+[features]
+default = []
+png = ["raytrace-io/png"]
+
+[dependencies]
+raytrace-core = { workspace = true }
+raytrace-io = { workspace = true }
+raytrace-app = { workspace = true }
+
+[dev-dependencies]
+image = { workspace = true }
+libm = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [profile.release]
 lto = "thin"
 codegen-units = 1
 
 [profile.test.package.raytrace-rs]
+opt-level = 1
+
+[profile.test.package.raytrace-core]
+opt-level = 1
+
+[profile.test.package.raytrace-io]
+opt-level = 1
+
+[profile.test.package.raytrace-app]
+opt-level = 1
+
+[profile.test.package.raytrace-gui]
 opt-level = 1

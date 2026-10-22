@@ -1723,18 +1723,77 @@ dependencies = [
 ]
 
 [[package]]
-name = "raytrace-rs"
+name = "raytrace-app"
+version = "0.11.0"
+dependencies = [
+ "rayon",
+ "raytrace-core",
+ "raytrace-io",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "raytrace-cli"
+version = "0.11.0"
+dependencies = [
+ "rayon",
+ "raytrace-app",
+ "raytrace-core",
+ "raytrace-io",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "raytrace-core"
+version = "0.11.0"
+dependencies = [
+ "libm",
+ "rayon",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "raytrace-gui"
 version = "0.11.0"
 dependencies = [
  "eframe",
- "encoding_rs",
  "image",
- "libm",
  "rayon",
+ "raytrace-app",
+ "raytrace-core",
+ "raytrace-io",
  "rfd",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "raytrace-io"
+version = "0.11.0"
+dependencies = [
+ "encoding_rs",
+ "image",
+ "raytrace-core",
+ "serde",
+ "serde_json",
  "spade",
+]
+
+[[package]]
+name = "raytrace-rs"
+version = "0.11.0"
+dependencies = [
+ "image",
+ "libm",
+ "rayon",
+ "raytrace-app",
+ "raytrace-core",
+ "raytrace-io",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

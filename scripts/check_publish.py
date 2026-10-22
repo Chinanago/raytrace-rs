@@ -26,6 +26,7 @@ DEMOS = {
     "examples/integrator_rod.json", "examples/folded_mirror.json",
 }
 FIXTURES = {"tests/fixtures/step_legacy_hits.json"}
+CRATES = {"raytrace-core", "raytrace-io", "raytrace-app", "raytrace-cli", "raytrace-gui"}
 
 
 def git(*args):
@@ -51,6 +52,13 @@ def main():
         path = name.decode("utf-8")
         part = PurePosixPath(path)
         source = part.suffix == ".rs" and part.parts[0] in {"src", "tests"}
+        source = source or (
+            len(part.parts) >= 3
+            and part.parts[0] == "crates"
+            and part.parts[1] in CRATES
+            and (part.parts[2:] == ("Cargo.toml",)
+                 or (part.parts[2] == "src" and part.suffix == ".rs"))
+        )
         if mode != b"100644" or stage != b"0" or not (path in FILES | DEMOS | FIXTURES or source):
             failures.append(f"Unapproved publication path or mode: {path}")
             continue

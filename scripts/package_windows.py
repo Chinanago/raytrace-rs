@@ -34,7 +34,7 @@ def dependency_notices():
     supplements = tomllib.loads((ROOT / "scripts/third_party_notices.toml").read_text(encoding="utf-8"))["notice"]
     sections = ["Third-party components retain their respective licenses.\n"]
     for package in sorted(metadata["packages"], key=lambda p: (p["name"], p["version"])):
-        if package["id"] not in active or package["name"] == "raytrace-rs":
+        if package["id"] not in active or package["id"] in metadata["workspace_members"]:
             continue
         base = Path(package["manifest_path"]).parent
         sections.append(f"\n{'=' * 72}\n{package['name']} {package['version']}\nLicense: {package.get('license')}\nRepository: {package.get('repository')}\n")
@@ -72,9 +72,9 @@ def main():
     parser.add_argument("--output", type=Path, default=ROOT / "results/packages")
     parser.add_argument("--no-build", action="store_true")
     args = parser.parse_args()
-    version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["package"]["version"]
+    version = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
     if not args.no_build:
-        subprocess.run(["cargo", "build", "--release", "--locked", "--all-features", "--bins"], cwd=ROOT, check=True)
+        subprocess.run(["cargo", "build", "--release", "--locked", "--workspace", "--bins"], cwd=ROOT, check=True)
     for binary in ("raytrace-rs", "raytrace-gui"):
         reported = subprocess.check_output([str(ROOT / f"target/release/{binary}.exe"), "--version"], text=True).strip()
         if reported != f"{binary} {version}":

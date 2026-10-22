@@ -7,16 +7,17 @@
 WindowsとRust（Cargo）が必要です。初回ビルド時に依存ライブラリを取得します。
 
 ```powershell
-cargo build --release --locked --features gui --bins
+cargo build --release --locked --workspace --bins
 ./target/release/raytrace-gui.exe
 ```
 
 ビルド後は `Raytraceを起動.cmd` からも起動できます。GUIは光源・レンズ・ロッド・スクリーンの組立サンプルで開きます。「ファイル → 開く…」またはドラッグ＆ドロップで `.zmx` やJSONプロジェクトを読み込み、「計算する」で追跡します。
 
-GUIなしで使う場合は `cargo build --release --locked` でビルドします。
+GUIなしで使う場合は `cargo build --release --locked -p raytrace-cli` でビルドします。
 
 ```powershell
 ./target/release/raytrace-rs.exe examples/sequential_lens.json --threads 4 --output results/lens.json
+cargo run --release --locked -p raytrace-cli -- examples/sequential_lens.json --threads 4 --output results/lens.json
 cargo run --release --example assembly_demo -- results/assembly_demo.json
 ./target/release/raytrace-rs.exe results/assembly_demo.json --threads 4 --output results/assembly_trace.json
 ```
@@ -52,8 +53,8 @@ cargo run --release --locked --example step_check -- --generate-owned results/st
 `cargo run --release --example performance_check` は単色／200波長の各131,072光線を1スレッドで測り、準備・光線生成・追跡を分けて5回の中央値、光線の署名、全画素と光量収支をJSONへ出力します。性能の比較には同じPC・入力・精度を使用してください。
 
 ```powershell
-cargo test --all-features --locked
-cargo clippy --all-targets --all-features --locked -- -D warnings
+cargo test --locked --workspace --all-features
+cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
 ./target/release/raytrace-gui.exe --smoke results/gui_check
 ./target/release/raytrace-gui.exe --screen --screen-profiles --smoke results/gui_screen
 ```
@@ -82,6 +83,16 @@ python scripts/zemax_exchange_probe.py --input results/validation/even_asphere/e
 
 解析解との比較・Rust内のZMX往復保存と、OpticStudio実機との照合は別の検証です。生成したケースの実機照合状態は `not_run` から始まります。Pythonプローブは軸上Standard／Even Asphereの波長別・面別の交点と方向を比較し、許容差を超えると失敗します。Fresnel光量・光学距離・NSC分岐の実機照合は別途必要です。
 
-## コードの構成
+## リポジトリ構成
 
-計算核は `src/geometry.rs` と `src/trace.rs`、光源生成は `src/model.rs` と `src/sampling.rs`、ZMX交換は `src/zemax.rs`、部品の組立は `src/assembly.rs`、追跡後のスクリーン解析は `src/screen.rs` にあります。Rustライブラリとしても利用できます。
+Cargo workspaceとして、`crates/` 以下の5クレートに分けています。
+
+- `raytrace-core`: 数学・形状・光源生成・光線追跡・コーティング・分散・スクリーン解析の計算核です。ファイル形式やGUIには依存しません。
+- `raytrace-io`: ZMX／AGF／SPCD・STEP・保存・出力を扱います。ZMX入出力と相互に参照する `project`、`assembly`、`record`、`compatibility` もここに置いています。
+- `raytrace-app`: パラメーター走査・収束確認・検証ケースのワークフローを扱います。
+- `raytrace-cli`: コマンドライン用の `raytrace-rs` 実行ファイルです。
+- `raytrace-gui`: デスクトップ用の `raytrace-gui` 実行ファイルです。PNG出力も有効にします。
+
+依存方向は `core ← io ← app ← {cli, gui}` で、各層は必要な下位層を参照します。リポジトリ直下の `raytrace-rs` はcore・io・appのモジュールを再公開する窓口で、既存の `raytrace_rs::model` などのパスを使えます。`tests/` と `examples/` も直下に残しています。
+
+ライブラリのPNG出力には `--features png` を指定します。SPCDの文字列解析は `Spectrum::parse_spcd`、ファイルの読込・文字コード判定は `raytrace_rs::zemax::read_spcd` を使います。

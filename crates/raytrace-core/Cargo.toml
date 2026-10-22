@@ -1,0 +1,17 @@
+[package]
+name = "raytrace-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Pure geometric optics kernel and ray propagation"
+readme = "../../README.md"
+keywords = ["optics", "raytracing"]
+categories = ["science", "simulation"]
+
+[dependencies]
+rayon = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+libm = { workspace = true }
