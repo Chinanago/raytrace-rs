@@ -1,5 +1,5 @@
 use super::*;
-use raytrace_core::trace::{trace, trace_controlled, TraceOptions};
+use raytrace_core::trace::{trace, trace_generated_controlled, TraceOptions};
 
 impl App {
     pub(super) fn run(&mut self, ctx: &egui::Context) {
@@ -42,22 +42,20 @@ impl App {
                 if control.cancel.load(Ordering::Relaxed) {
                     return Ok(None);
                 }
-                let rays = prepared.generate_rays()?;
-                if rays.is_empty() || rays.len() > 2_000_000 {
-                    return Err("光線数は1〜2,000,000本で指定してください".into());
-                }
-                let power = rays.iter().map(|r| r.weight).sum::<f64>();
-                if !power.is_finite() || power <= 0.0 {
-                    return Err("発射基準光量は正の有限値で指定してください".into());
-                }
                 let started = Instant::now();
                 let Some(mut report) = pool.install(|| {
-                    trace_controlled(&prepared, &rays, TraceOptions::default(), &control)
-                }) else {
+                    trace_generated_controlled(&prepared, TraceOptions::default(), &control)
+                })?
+                else {
                     return Ok(None);
                 };
                 let seconds = started.elapsed().as_secs_f64();
-                let n = rays.len().min(64);
+                let power = report.budget.launched;
+                if !power.is_finite() || power <= 0.0 {
+                    return Err("発射基準光量は正の有限値で指定してください".into());
+                }
+                let generator = prepared.ray_generator()?;
+                let n = generator.len().min(64);
                 // Each source contributes a prefix; striding a Sobol sequence destroys its balance.
                 let mut preview = Vec::with_capacity(n);
                 let mut layer = 0;
@@ -67,7 +65,10 @@ impl App {
                         if layer < source.count {
                             preview.push(Ray {
                                 id: preview.len() as u64,
-                                ..rays[offset + layer]
+                                ..generator
+                                    .rays(offset + layer..offset + layer + 1)
+                                    .next()
+                                    .unwrap()?
                             });
                         }
                         offset += source.count;

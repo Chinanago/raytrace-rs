@@ -1,8 +1,8 @@
 //! Self-contained calculation conditions and replay, separate from the editable project.
 use crate::{compatibility::CompatibilityReport, project::Project};
 use raytrace_core::{
-    model::{Ray, Scene},
-    trace::{Report, TraceOptions},
+    model::{PreparedScene, Ray, Scene},
+    trace::{trace, trace_generated, Report, TraceOptions},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -140,38 +140,73 @@ impl RunContext {
                 .collect(),
         }
     }
+    pub fn validate_generated(&self, prepared: &PreparedScene) -> Result<(), String> {
+        if self.worker_threads == 0 {
+            return Err("計算記録のスレッド数が不正です".into());
+        }
+        if let LaunchInput::Generated {
+            sampling_revision,
+            count,
+        } = self.input
+        {
+            let legacy = self
+                .scene
+                .sources
+                .iter()
+                .all(|s| !s.extended_illumination());
+            if sampling_revision != SAMPLING_REVISION
+                && !(sampling_revision == 2 && legacy)
+                && !(sampling_revision == 1
+                    && legacy
+                    && self
+                        .scene
+                        .sources
+                        .iter()
+                        .all(|s| s.spectrum.is_none() && s.pupil.is_none()))
+            {
+                return Err("この計算記録のサンプリング版は再生に対応していません".into());
+            }
+            if prepared.ray_generator()?.len() != count {
+                return Err("計算記録の光線数が一致しません".into());
+            }
+        }
+        Ok(())
+    }
+
+    pub fn trace(&self) -> Result<Report, String> {
+        let prepared = self.scene.clone().prepare()?;
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(self.worker_threads)
+            .build()
+            .map_err(|e| e.to_string())?;
+        match self.input {
+            LaunchInput::Generated { .. } => {
+                self.validate_generated(&prepared)?;
+                let report = pool.install(|| trace_generated(&prepared, self.trace_options))?;
+                if prepared.spec.sources.is_empty()
+                    || !report.budget.launched.is_finite()
+                    || report.budget.launched <= 0.
+                {
+                    return Err("計算記録の発射光量が不正です".into());
+                }
+                Ok(report)
+            }
+            LaunchInput::Explicit { .. } => {
+                let rays = self.rays()?;
+                Ok(pool.install(|| trace(&prepared, &rays, self.trace_options)))
+            }
+        }
+    }
+
     pub fn rays(&self) -> Result<Vec<Ray>, String> {
         if self.worker_threads == 0 {
             return Err("計算記録のスレッド数が不正です".into());
         }
         let prepared = self.scene.clone().prepare()?;
         let rays = match &self.input {
-            LaunchInput::Generated {
-                sampling_revision,
-                count,
-            } => {
-                let legacy = self
-                    .scene
-                    .sources
-                    .iter()
-                    .all(|s| !s.extended_illumination());
-                if *sampling_revision != SAMPLING_REVISION
-                    && !(*sampling_revision == 2 && legacy)
-                    && !(*sampling_revision == 1
-                        && legacy
-                        && self
-                            .scene
-                            .sources
-                            .iter()
-                            .all(|s| s.spectrum.is_none() && s.pupil.is_none()))
-                {
-                    return Err("この計算記録のサンプリング版は再生に対応していません".into());
-                }
-                let rays = prepared.generate_rays()?;
-                if rays.len() != *count {
-                    return Err("計算記録の光線数が一致しません".into());
-                }
-                rays
+            LaunchInput::Generated { .. } => {
+                self.validate_generated(&prepared)?;
+                prepared.generate_rays()?
             }
             LaunchInput::Explicit { rays } => rays.clone(),
         };
@@ -224,6 +259,10 @@ pub struct RunRecord {
     pub report: Report,
 }
 impl RunRecord {
+    pub fn replay(&self) -> Result<Report, String> {
+        self.calculation.trace()
+    }
+
     pub fn open(path: &Path) -> Result<Self, String> {
         let bytes = fs::read(path).map_err(|e| e.to_string())?;
         let record: Self = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;

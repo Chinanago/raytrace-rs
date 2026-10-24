@@ -1,7 +1,7 @@
 //! Command-line tracing, project workflows and calculation replay.
 use raytrace_core::math::V3;
 use raytrace_core::model::{Mode, PreparedScene, Ray, Sampling, Scene};
-use raytrace_core::trace::{trace, TraceOptions};
+use raytrace_core::trace::{trace, trace_generated, TraceOptions};
 use raytrace_io::record::{LaunchInput, RunContext, RunRecord, RUN_FORMAT};
 use raytrace_io::{project::Project, zemax};
 use serde::Serialize;
@@ -20,7 +20,7 @@ const HELP: &str =
 Ray CSV header: id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium\n\
 Units: mm, um, arbitrary power weights. Launch-weight sum is the 100% reference.\n\
 Sequential follows transmission and explicit mirrors; TIR terminates the ray. Non-sequential splits R/T.\n\
-Benchmark timing includes tracing/report accumulation; excludes input/output and warmup.";
+Benchmark timing includes generated source rays and tracing/report accumulation; excludes input/output and warmup.";
 
 fn read_csv(path: &str, scene: &PreparedScene) -> Result<Vec<Ray>, Box<dyn Error>> {
     let text = fs::read_to_string(path)?;
@@ -325,43 +325,72 @@ fn run() -> Result<(), Box<dyn Error>> {
         || replay
             .as_ref()
             .is_some_and(|r| matches!(r.calculation.input, LaunchInput::Explicit { .. }));
-    let rays = if let Some(r) = &replay {
-        r.calculation.rays()?
-    } else if let Some(path) = &csv {
-        read_csv(path, &scene)?
+    let rays = if explicit {
+        Some(if let Some(r) = &replay {
+            r.calculation.rays()?
+        } else {
+            read_csv(csv.as_ref().unwrap(), &scene)?
+        })
     } else {
-        scene.generate_rays()?
+        if let Some(r) = &replay {
+            r.calculation.validate_generated(&scene)?;
+        }
+        None
     };
-    if rays.is_empty() {
+    let input_count = match &rays {
+        Some(rays) => {
+            if rays.is_empty() {
+                return Err("Supply a source or ray CSV".into());
+            }
+            if !rays.iter().map(|r| r.weight).sum::<f64>().is_finite()
+                || rays.iter().all(|r| r.weight == 0.0)
+            {
+                return Err("Launch-weight sum must be finite and positive".into());
+            }
+            rays.len()
+        }
+        None => scene.ray_generator()?.len(),
+    };
+    if input_count == 0 {
         return Err("Supply a source or ray CSV".into());
     }
-    if !rays.iter().map(|r| r.weight).sum::<f64>().is_finite()
-        || rays.iter().all(|r| r.weight == 0.0)
-    {
-        return Err("Launch-weight sum must be finite and positive".into());
-    }
-    pool.install(|| {
-        std::hint::black_box(trace(&scene, &rays, options));
-    });
+    let run = || match &rays {
+        Some(rays) => Ok(trace(&scene, rays, options)),
+        None => trace_generated(&scene, options),
+    };
+    std::hint::black_box(pool.install(run)?);
     let mut timings = Vec::with_capacity(repeat);
     let mut report = None;
     for _ in 0..repeat {
         let start = Instant::now();
-        let result = pool.install(|| trace(&scene, &rays, options));
+        let result = pool.install(run)?;
         timings.push(start.elapsed().as_secs_f64());
         report = Some(result);
     }
     let report = report.unwrap();
+    if !report.budget.launched.is_finite() || report.budget.launched <= 0. {
+        return Err("Launch-weight sum must be finite and positive".into());
+    }
     timings.sort_by(f64::total_cmp);
     let median = if repeat % 2 == 0 {
         (timings[repeat / 2 - 1] + timings[repeat / 2]) * 0.5
     } else {
         timings[repeat / 2]
     };
-    let benchmark = Benchmark { repetitions: repeat, worker_threads: pool.current_num_threads(), input_rays: rays.len(),
-        minimum_seconds: timings[0], median_seconds: median, launched_rays_per_second: rays.len() as f64/median,
-        surface_intersections_per_second: report.surface_intersections as f64/median,
-        timed_scope: "Trace, branch traversal, and report accumulation; excludes scene/ray input, JSON output, and one warmup" };
+    let benchmark = Benchmark {
+        repetitions: repeat,
+        worker_threads: pool.current_num_threads(),
+        input_rays: input_count,
+        minimum_seconds: timings[0],
+        median_seconds: median,
+        launched_rays_per_second: input_count as f64 / median,
+        surface_intersections_per_second: report.surface_intersections as f64 / median,
+        timed_scope: if explicit {
+            "Trace, branch traversal, and report accumulation; excludes scene/ray input, JSON output, and one warmup"
+        } else {
+            "Source ray generation, trace, branch traversal, and report accumulation; excludes scene input, JSON output, and one warmup"
+        },
+    };
     let reference = report.budget.launched;
     let raw = serde_json::to_value(&report.budget)?;
     let percentages: serde_json::Map<String, serde_json::Value> = raw
@@ -403,7 +432,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let calculation = RunContext::capture(
         &project,
         &scene.spec,
-        explicit.then_some(rays.as_slice()),
+        rays.as_deref(),
         pool.current_num_threads(),
         options,
     );
@@ -422,13 +451,13 @@ fn run() -> Result<(), Box<dyn Error>> {
     println!("Reference: {} = 100%", scene.spec.reference_plane);
     println!(
         "Launches: {}; detected: {:.6}%",
-        rays.len(),
+        input_count,
         100.0 * result["report"]["budget"]["detected"].as_f64().unwrap() / reference
     );
     println!(
         "Trace median: {:.3} ms; {:.3} million launches/s; {} threads",
         median * 1000.0,
-        rays.len() as f64 / median / 1e6,
+        input_count as f64 / median / 1e6,
         pool.current_num_threads()
     );
     println!(

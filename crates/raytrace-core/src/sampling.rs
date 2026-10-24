@@ -62,6 +62,7 @@ fn directions() -> [[u64; BITS]; DIMS] {
 pub(crate) struct Sobol {
     directions: [[u64; BITS]; DIMS],
     state: [u64; DIMS],
+    shift: [u64; DIMS],
     index: u64,
 }
 
@@ -85,8 +86,23 @@ impl Sobol {
         Self {
             directions,
             state,
+            shift: state,
             index: 0,
         }
+    }
+
+    pub(crate) fn seek(&mut self, index: u64) {
+        assert!(index < 1 << BITS, "Sobol sequence exhausted");
+        self.state = self.shift;
+        let gray = index ^ (index >> 1);
+        for b in 0..BITS {
+            if gray & (1 << b) != 0 {
+                for d in 0..DIMS {
+                    self.state[d] ^= self.directions[d][b];
+                }
+            }
+        }
+        self.index = index;
     }
 
     pub(crate) fn next(&mut self) -> [f64; DIMS] {
@@ -315,6 +331,41 @@ fn gamma_log_p(a: f64, log_x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seek_matches_sequential_points() {
+        for seed in [0, 1, 42, u64::MAX] {
+            for n in [
+                0,
+                1,
+                2,
+                3,
+                31,
+                32,
+                1000,
+                123_457,
+                (1 << 40) - 3,
+                (1 << BITS) - 1,
+            ] {
+                let mut sought = Sobol::new(seed);
+                sought.seek(n);
+                let mut sequential = Sobol::new(seed);
+                if n > 123_457 {
+                    sequential.seek(n - 1);
+                    sequential.next();
+                } else {
+                    for _ in 0..n {
+                        sequential.next();
+                    }
+                }
+                assert_eq!(sought.next(), sequential.next(), "seed={seed}, n={n}");
+                sought.seek(3);
+                sequential.seek(2);
+                sequential.next();
+                assert_eq!(sought.next(), sequential.next());
+            }
+        }
+    }
 
     #[test]
     fn supergaussian_quantiles_match_independent_gamma_reference() {

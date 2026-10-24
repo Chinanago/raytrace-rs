@@ -2,7 +2,7 @@
 use raytrace_rs::{
     model::Scene,
     spectrum::Spectrum,
-    trace::{trace, TraceOptions},
+    trace::{trace, trace_generated, TraceOptions},
 };
 use std::{hint::black_box, time::Instant};
 fn median(mut a: Vec<f64>) -> f64 {
@@ -36,6 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut prepare_times = Vec::new();
         let mut generation_times = Vec::new();
         let mut trace_times = Vec::new();
+        let mut streaming_times = Vec::new();
         let mut signature = 0u64;
         let mut report_json = serde_json::Value::Null;
         for run in 0..6 {
@@ -49,10 +50,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let report =
                 pool.install(|| trace(&prepared, black_box(&rays), TraceOptions::default()));
             let seconds = start.elapsed().as_secs_f64();
+            let start = Instant::now();
+            let streamed = pool.install(|| trace_generated(&prepared, TraceOptions::default()))?;
+            let streaming = start.elapsed().as_secs_f64();
+            assert_eq!(
+                serde_json::to_value(&report)?,
+                serde_json::to_value(&streamed)?
+            );
             if run > 0 {
                 prepare_times.push(prep);
                 generation_times.push(generation);
                 trace_times.push(seconds);
+                streaming_times.push(streaming);
             }
             signature = 0xcbf29ce484222325;
             for r in &rays {
@@ -68,12 +77,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             report_json = serde_json::to_value(&report)?;
         }
-        results.push(serde_json::json!({"wavelengths":waves,"rays":count,"threads":1,"repeats":5,"prepare_seconds":median(prepare_times),"generation_seconds":median(generation_times),"trace_seconds":median(trace_times),"launch_signature":format!("{signature:016x}"),"ray_storage_bytes":count*std::mem::size_of::<raytrace_rs::model::Ray>(),"report":report_json}));
+        results.push(serde_json::json!({"wavelengths":waves,"rays":count,"threads":1,"repeats":5,"prepare_seconds":median(prepare_times),"generation_seconds":median(generation_times),"trace_seconds":median(trace_times),"streaming_seconds":median(streaming_times),"launch_signature":format!("{signature:016x}"),"ray_storage_bytes":count*std::mem::size_of::<raytrace_rs::model::Ray>(),"report":report_json}));
     }
     println!(
         "{}",
         serde_json::to_string_pretty(
-            &serde_json::json!({"software_version":env!("CARGO_PKG_VERSION"),"timing":"Median of five runs after one warmup; preparation, ray generation, and tracing measured separately; output excluded.","cases":results})
+            &serde_json::json!({"software_version":env!("CARGO_PKG_VERSION"),"timing":"Median of five runs after one warmup; preparation, ray generation, and tracing measured separately, with combined streaming generation/tracing alongside; output excluded.","cases":results})
         )?
     );
     Ok(())

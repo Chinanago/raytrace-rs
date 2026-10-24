@@ -7,7 +7,7 @@ mod material;
 mod source;
 
 pub use material::Material;
-pub use source::{Diode, PupilIllumination, Ray, Source};
+pub use source::{Diode, PupilIllumination, Ray, RayGenerator, Source};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]

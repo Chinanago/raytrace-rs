@@ -1776,6 +1776,7 @@ version = "0.11.0"
 dependencies = [
  "encoding_rs",
  "image",
+ "rayon",
  "raytrace-core",
  "serde",
  "serde_json",

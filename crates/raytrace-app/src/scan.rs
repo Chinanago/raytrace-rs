@@ -2,7 +2,7 @@
 use raytrace_core::{
     model::Interaction,
     screen::ScreenAnalysis,
-    trace::{trace_controlled, TraceControl, TraceOptions},
+    trace::{trace_generated_controlled, TraceControl, TraceOptions},
 };
 use raytrace_io::{
     project::Project,
@@ -444,18 +444,18 @@ impl ScanManifest {
                 }
                 if scene.surfaces.iter().any(|s| matches!(s.interaction,Interaction::Detector{pixels} if pixels[0].saturating_mul(pixels[1])>1_000_000)) {return Err("スクリーンは100万画素までです".into());}
                 let prepared = scene.clone().prepare()?;
-                let rays = prepared.generate_rays()?;
-                let power = rays.iter().map(|r| r.weight).sum::<f64>();
-                if !power.is_finite() || power <= 0.0 {
-                    return Err("発射基準光量は正の有限値で指定してください".into());
-                }
                 let start = Instant::now();
                 let Some(report) = pool.install(|| {
-                    trace_controlled(&prepared, &rays, TraceOptions::default(), control)
-                }) else {
+                    trace_generated_controlled(&prepared, TraceOptions::default(), control)
+                })?
+                else {
                     return Ok(None);
                 };
                 let seconds = start.elapsed().as_secs_f64();
+                let power = report.budget.launched;
+                if !power.is_finite() || power <= 0.0 {
+                    return Err("発射基準光量は正の有限値で指定してください".into());
+                }
                 let mut detectors = Vec::new();
                 for d in &report.detectors {
                     let a = ScreenAnalysis::from_detector(d)?;

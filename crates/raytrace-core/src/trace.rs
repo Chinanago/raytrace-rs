@@ -300,7 +300,15 @@ pub struct TraceOptions {
 
 /// Rays must pass Ray::validate or originate from PreparedScene::generate_rays.
 pub fn trace(scene: &PreparedScene, rays: &[Ray], options: TraceOptions) -> Report {
-    trace_impl(scene, rays, options, None).expect("uncontrolled tracing cannot be cancelled")
+    trace_impl(
+        scene,
+        rays.len(),
+        |range| rays[range].iter().copied().map(Ok),
+        options,
+        None,
+    )
+    .expect("explicit rays cannot fail generation")
+    .expect("uncontrolled tracing cannot be cancelled")
 }
 
 /// A cancelled calculation returns no partial report; callers retain completed runs.
@@ -313,22 +321,67 @@ pub fn trace_controlled(
 ) -> Option<Report> {
     control.completed.store(0, Ordering::Relaxed);
     control.total.store(rays.len(), Ordering::Relaxed);
-    trace_impl(scene, rays, options, Some(control))
+    trace_impl(
+        scene,
+        rays.len(),
+        |range| rays[range].iter().copied().map(Ok),
+        options,
+        Some(control),
+    )
+    .expect("explicit rays cannot fail generation")
 }
 
-fn trace_impl(
+/// Trace source rays without retaining the launch array.
+pub fn trace_generated(scene: &PreparedScene, options: TraceOptions) -> Result<Report, String> {
+    generated_impl(scene, options, None)
+        .map(|r| r.expect("uncontrolled tracing cannot be cancelled"))
+}
+
+pub fn trace_generated_controlled(
     scene: &PreparedScene,
-    rays: &[Ray],
+    options: TraceOptions,
+    control: &TraceControl,
+) -> Result<Option<Report>, String> {
+    generated_impl(scene, options, Some(control))
+}
+
+fn generated_impl(
+    scene: &PreparedScene,
     options: TraceOptions,
     control: Option<&TraceControl>,
-) -> Option<Report> {
+) -> Result<Option<Report>, String> {
+    let generator = scene.ray_generator()?;
+    if let Some(c) = control {
+        c.completed.store(0, Ordering::Relaxed);
+        c.total.store(generator.len(), Ordering::Relaxed);
+        if c.cancel.load(Ordering::Relaxed) {
+            return Ok(None);
+        }
+    }
+    trace_impl(
+        scene,
+        generator.len(),
+        |range| generator.rays(range),
+        options,
+        control,
+    )
+}
+
+fn trace_impl<I: Iterator<Item = Result<Ray, String>>>(
+    scene: &PreparedScene,
+    len: usize,
+    rays: impl Fn(std::ops::Range<usize>) -> I + Sync,
+    options: TraceOptions,
+    control: Option<&TraceControl>,
+) -> Result<Option<Report>, String> {
     // Fixed indexed chunks give a fixed reduction order independent of worker count.
     // At most 32 dense detector-map copies exist, including the final reduction.
-    let chunk_size = rays.len().div_ceil(31).max(1);
-    let reports: Vec<_> = rays
-        .par_chunks(chunk_size)
-        .enumerate()
-        .map(|(chunk_index, chunk)| {
+    let chunk_size = len.div_ceil(31).max(1);
+    let reports: Vec<_> = (0..len.div_ceil(chunk_size))
+        .into_par_iter()
+        .map(|chunk_index| -> Result<Option<Report>, String> {
+            let start = chunk_index * chunk_size;
+            let chunk = rays(start..start.saturating_add(chunk_size).min(len));
             let mut report = Report::new(scene);
             // Bound optical-data caches to ~64 KiB per chunk (at most 31 chunks).
             // Explicit rays with many distinct wavelengths fall back to direct evaluation.
@@ -337,22 +390,23 @@ fn trace_impl(
             .clamp(1, 256);
             let mut cache = std::collections::HashMap::new();
             let mut completed = 0;
-            for (position, ray) in chunk.iter().enumerate() {
+            for (position, ray) in chunk.enumerate() {
                 let record_paths =
                     ((chunk_index * chunk_size + position) as u64) < options.path_launch_count;
                 if control.is_some_and(|c| c.cancel.load(Ordering::Relaxed)) {
-                    return None;
+                    return Ok(None);
                 }
+                let ray = ray?;
                 let key = ray.wavelength_um.to_bits();
                 if cache.len() < capacity && !cache.contains_key(&key) {
                     cache.insert(key, evaluate_optics(scene, ray.wavelength_um));
                 }
                 if let Some(optics) = cache.get(&key) {
-                    trace_one(scene, *ray, &mut report, options, record_paths, optics);
+                    trace_one(scene, ray, &mut report, options, record_paths, optics);
                 } else {
                     trace_one(
                         scene,
-                        *ray,
+                        ray,
                         &mut report,
                         options,
                         record_paths,
@@ -370,14 +424,16 @@ fn trace_impl(
             if let Some(c) = control {
                 c.completed.fetch_add(completed, Ordering::Relaxed);
             }
-            Some(report)
+            Ok(Some(report))
         })
         .collect();
-    reports
-        .into_iter()
-        .try_fold(Report::new(scene), |report, next| {
-            next.map(|r| report.merge(r))
-        })
+    let mut report = Some(Report::new(scene));
+    // Inspect every chunk in launch order so the earliest generation error wins.
+    for next in reports {
+        let next = next?;
+        report = report.zip(next).map(|(a, b)| a.merge(b));
+    }
+    Ok(report)
 }
 
 #[derive(Clone, Copy)]

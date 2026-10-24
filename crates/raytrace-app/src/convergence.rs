@@ -2,7 +2,7 @@
 use raytrace_core::{
     model::{Interaction, Shape},
     screen::ScreenAnalysis,
-    trace::{trace, DetectorMap, TraceOptions},
+    trace::{trace_generated, DetectorMap, TraceOptions},
 };
 use raytrace_io::{project::Project, record::RunContext};
 use serde::{Deserialize, Serialize};
@@ -264,12 +264,11 @@ pub fn run(
                             );
                         }
                         let prepared = scene.clone().prepare()?;
-                        let rays = prepared.generate_rays()?;
                         let started = Instant::now();
                         let report =
-                            pool.install(|| trace(&prepared, &rays, TraceOptions::default()));
+                            pool.install(|| trace_generated(&prepared, TraceOptions::default()))?;
                         row.trace_seconds = started.elapsed().as_secs_f64();
-                        row.rays = rays.len();
+                        row.rays = total as usize;
                         row.reference_weight = report.budget.launched;
                         let budget =
                             serde_json::to_value(&report.budget).map_err(|e| e.to_string())?;
