@@ -1,4 +1,5 @@
-use crate::geometry::{dielectric, intersect, intersect_ordered, search_start, Hit, Miss};
+use crate::acceleration::SurfaceIndex;
+use crate::geometry::{dielectric_with_reflectance, intersect_ordered, Miss};
 use crate::math::V3;
 use crate::model::{Interaction, Mode, PreparedScene, Ray};
 use crate::Result;
@@ -375,6 +376,9 @@ fn trace_impl<I: Iterator<Item = Result<Ray>>>(
     options: TraceOptions,
     control: Option<&TraceControl>,
 ) -> Result<Option<Report>> {
+    let surface_index = (scene.spec.mode == Mode::NonSequential)
+        .then(|| SurfaceIndex::new(&scene.surfaces))
+        .flatten();
     // Fixed indexed chunks give a fixed reduction order independent of worker count.
     // At most 32 dense detector-map copies exist, including the final reduction.
     let chunk_size = len.div_ceil(31).max(1);
@@ -384,12 +388,11 @@ fn trace_impl<I: Iterator<Item = Result<Ray>>>(
             let start = chunk_index * chunk_size;
             let chunk = rays(start..start.saturating_add(chunk_size).min(len));
             let mut report = Report::new(scene);
-            // Bound optical-data caches to ~64 KiB per chunk (at most 31 chunks).
-            // Explicit rays with many distinct wavelengths fall back to direct evaluation.
-            let capacity = (65536
-                / (scene.spec.materials.len().max(1) * std::mem::size_of::<(f64, f64)>()))
-            .clamp(1, 256);
-            let mut cache = std::collections::HashMap::new();
+            let mut cache = OpticalCache::new(scene);
+            let mut traversal = Traversal {
+                stack: WorkQueue::new(scene.spec.mode),
+                surface_index: surface_index.as_ref(),
+            };
             let mut completed = 0;
             for (position, ray) in chunk.enumerate() {
                 let record_paths =
@@ -398,22 +401,16 @@ fn trace_impl<I: Iterator<Item = Result<Ray>>>(
                     return Ok(None);
                 }
                 let ray = ray?;
-                let key = ray.wavelength_um.to_bits();
-                if cache.len() < capacity && !cache.contains_key(&key) {
-                    cache.insert(key, evaluate_optics(scene, ray.wavelength_um));
-                }
-                if let Some(optics) = cache.get(&key) {
-                    trace_one(scene, ray, &mut report, options, record_paths, optics);
-                } else {
-                    trace_one(
-                        scene,
-                        ray,
-                        &mut report,
-                        options,
-                        record_paths,
-                        &evaluate_optics(scene, ray.wavelength_um),
-                    );
-                }
+                let optics = cache.get(scene, ray.wavelength_um);
+                trace_one(
+                    scene,
+                    ray,
+                    &mut report,
+                    options,
+                    record_paths,
+                    optics,
+                    &mut traversal,
+                );
                 if let Some(c) = control {
                     completed += 1;
                     if completed == 256 {
@@ -443,6 +440,10 @@ struct Work {
     next_surface: usize,
     depth: usize,
 }
+struct Traversal<'a> {
+    stack: WorkQueue,
+    surface_index: Option<&'a SurfaceIndex>,
+}
 struct WeightedWork {
     work: Work,
     order: u64,
@@ -468,22 +469,30 @@ impl Ord for WeightedWork {
     }
 }
 enum WorkQueue {
-    Sequential(Vec<Work>),
+    Sequential(Option<Work>),
     NonSequential(std::collections::BinaryHeap<WeightedWork>, u64),
 }
 impl WorkQueue {
-    fn new(mode: Mode, first: Work) -> Self {
-        let mut q = if mode == Mode::Sequential {
-            Self::Sequential(Vec::new())
+    fn new(mode: Mode) -> Self {
+        if mode == Mode::Sequential {
+            Self::Sequential(None)
         } else {
             Self::NonSequential(std::collections::BinaryHeap::new(), 0)
-        };
-        q.push(first);
-        q
+        }
+    }
+    fn start(&mut self, first: Work) {
+        if let Self::NonSequential(q, order) = self {
+            debug_assert!(q.is_empty());
+            *order = 0;
+        }
+        self.push(first);
     }
     fn push(&mut self, work: Work) {
         match self {
-            Self::Sequential(q) => q.push(work),
+            Self::Sequential(q) => {
+                debug_assert!(q.is_none());
+                *q = Some(work);
+            }
             Self::NonSequential(q, order) => {
                 q.push(WeightedWork {
                     work,
@@ -495,26 +504,70 @@ impl WorkQueue {
     }
     fn pop(&mut self) -> Option<Work> {
         match self {
-            Self::Sequential(q) => q.pop(),
+            Self::Sequential(q) => q.take(),
             Self::NonSequential(q, _) => q.pop().map(|w| w.work),
         }
     }
 }
 
-fn evaluate_optics(scene: &PreparedScene, wavelength: f64) -> Vec<(f64, f64)> {
+struct OpticalCache {
+    primary_key: u64,
+    primary: Vec<(f64, f64)>,
+    other: std::collections::HashMap<u64, Vec<(f64, f64)>>,
+    uncached: Vec<(f64, f64)>,
+    capacity: usize,
+}
+impl OpticalCache {
+    fn new(scene: &PreparedScene) -> Self {
+        Self {
+            // Positive finite wavelengths cannot have the all-zero bit pattern.
+            primary_key: 0,
+            primary: Vec::new(),
+            other: std::collections::HashMap::new(),
+            uncached: Vec::new(),
+            // Bound cached material data to ~64 KiB per chunk, up to 256 wavelengths.
+            capacity: (65536
+                / (scene.spec.materials.len().max(1) * std::mem::size_of::<(f64, f64)>()))
+            .clamp(1, 256),
+        }
+    }
+    fn get(&mut self, scene: &PreparedScene, wavelength: f64) -> &[(f64, f64)] {
+        let key = wavelength.to_bits();
+        if key == self.primary_key {
+            return &self.primary;
+        }
+        if self.primary.is_empty() {
+            self.primary_key = key;
+            self.primary = evaluate_optics(scene, wavelength).collect();
+            return &self.primary;
+        }
+        if self.other.len() + 1 < self.capacity {
+            self.other
+                .entry(key)
+                .or_insert_with(|| evaluate_optics(scene, wavelength).collect())
+        } else if let Some(optics) = self.other.get(&key) {
+            optics
+        } else {
+            // Preserve exact wavelength evaluation beyond the cache budget; reuse storage.
+            self.uncached.clear();
+            self.uncached.extend(evaluate_optics(scene, wavelength));
+            &self.uncached
+        }
+    }
+}
+
+fn evaluate_optics(
+    scene: &PreparedScene,
+    wavelength: f64,
+) -> impl Iterator<Item = (f64, f64)> + '_ {
     // Every branch keeps its launch wavelength; evaluate dispersion and spectral
     // absorption once per material, rather than on every internal reflection.
-    scene
-        .spec
-        .materials
-        .iter()
-        .map(|m| {
-            (
-                m.index(wavelength).expect("validated wavelength"),
-                m.absorption_at(wavelength).expect("validated wavelength"),
-            )
-        })
-        .collect()
+    scene.spec.materials.iter().map(move |m| {
+        (
+            m.index(wavelength).expect("validated wavelength"),
+            m.absorption_at(wavelength).expect("validated wavelength"),
+        )
+    })
 }
 fn trace_one(
     scene: &PreparedScene,
@@ -523,18 +576,17 @@ fn trace_one(
     options: TraceOptions,
     record_paths: bool,
     optics: &[(f64, f64)],
+    traversal: &mut Traversal<'_>,
 ) {
+    let stack = &mut traversal.stack;
     report.budget.launched += launch.weight;
     // Resolve the strongest pending NSC branches first. A launch-wide event
     // allowance must not strand a strong reflection behind many weak descendants.
-    let mut stack = WorkQueue::new(
-        scene.spec.mode,
-        Work {
-            ray: launch,
-            next_surface: 0,
-            depth: 0,
-        },
-    );
+    stack.start(Work {
+        ray: launch,
+        next_surface: 0,
+        depth: 0,
+    });
     let mut events = 0;
     let mut path_events = 0;
     while let Some(work) = stack.pop() {
@@ -582,36 +634,12 @@ fn trace_one(
                 None => Ok(None),
             }
         } else {
-            // Linear nearest-hit traversal is deliberate in v0.1. BVH is a future
-            // acceleration layer and does not change interaction semantics.
-            let mut nearest: Option<(usize, Hit)> = None;
-            let mut numerical: Option<(usize, f64)> = None;
-            for (i, s) in scene.surfaces.iter().enumerate() {
-                match intersect(s, ray.position_mm, ray.direction) {
-                    Ok(hit)
-                        if nearest
-                            .as_ref()
-                            .is_none_or(|(_, h)| hit.distance_mm < h.distance_mm) =>
-                    {
-                        nearest = Some((i, hit))
-                    }
-                    Err(Miss::Numerical) => {
-                        if let Some(start) = search_start(s, ray.position_mm, ray.direction) {
-                            if numerical.is_none_or(|(_, previous)| start < previous) {
-                                numerical = Some((i, start));
-                            }
-                        }
-                    }
-                    _ => (),
-                }
-            }
-            if let Some((i, _)) = numerical
-                .filter(|(_, start)| nearest.as_ref().is_none_or(|(_, h)| *start < h.distance_mm))
-            {
-                Err((Miss::Numerical, Some(i)))
-            } else {
-                Ok(nearest)
-            }
+            crate::acceleration::nearest(
+                &scene.surfaces,
+                traversal.surface_index,
+                ray.position_mm,
+                ray.direction,
+            )
         };
         let (index, hit) = match selection {
             Ok(Some(value)) => value,
@@ -661,7 +689,9 @@ fn trace_one(
         let (n_before, absorption) = optics[ray.medium];
         let origin_mm = ray.position_mm;
         let before_bulk = ray.weight;
-        ray.weight *= (-absorption * hit.distance_mm).exp();
+        if absorption != 0.0 {
+            ray.weight *= (-absorption * hit.distance_mm).exp();
+        }
         report.budget.bulk_absorbed += before_bulk - ray.weight;
         ray.optical_path_mm += n_before * hit.distance_mm;
         ray.position_mm = hit.point;
@@ -768,7 +798,18 @@ fn trace_one(
                 }
                 let n_after = optics[after].0;
                 let mut normal = hit.normal;
-                let mut result = dielectric(ray.direction, normal, n_before, n_after);
+                let bare_power = if surface.spec.coating.is_some() {
+                    Some(0.0)
+                } else {
+                    reflectance
+                };
+                let mut result = dielectric_with_reflectance(
+                    ray.direction,
+                    normal,
+                    n_before,
+                    n_after,
+                    bare_power,
+                );
                 let incoming = ray.direction.dot(hit.geometric_normal);
                 if !normal.finite()
                     || ray.direction.dot(normal) * incoming < 0.
@@ -778,7 +819,13 @@ fn trace_one(
                         .is_some_and(|t| t.dot(hit.geometric_normal) * incoming < -1e-14)
                 {
                     normal = hit.geometric_normal;
-                    result = dielectric(ray.direction, normal, n_before, n_after);
+                    result = dielectric_with_reflectance(
+                        ray.direction,
+                        normal,
+                        n_before,
+                        n_after,
+                        bare_power,
+                    );
                     report.surfaces[index].normal_fallbacks += 1;
                 }
                 let r = if result.transmitted.is_none() {

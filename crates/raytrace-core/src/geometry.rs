@@ -181,16 +181,17 @@ pub fn intersect_ordered(surface: &PreparedSurface, p_world: V3, d_world: V3) ->
             && surface.spec.aperture.contains(p.0[0], p.0[1])
         {
             if let Some((z, gx, gy)) = sag(&surface.spec.shape, p.0[0], p.0[1]) {
-                let normal = surface
-                    .frame
-                    .world_vector(V3([-gx, -gy, 1.0]).unit())
-                    .unit();
+                let normal = if matches!(surface.spec.shape, Shape::Plane) {
+                    surface.frame.plane_normal()
+                } else {
+                    surface
+                        .frame
+                        .world_vector(V3([-gx, -gy, 1.0]).unit())
+                        .unit()
+                };
                 if (p.0[2] - z).abs() <= tolerance && d_world.dot(normal).abs() > 1e-14 {
                     return Ok(Hit {
-                        geometric_normal: surface
-                            .frame
-                            .world_vector(V3([-gx, -gy, 1.]).unit())
-                            .unit(),
+                        geometric_normal: normal,
                         distance_mm: 0.0,
                         point: p_world,
                         local_point: p,
@@ -210,6 +211,30 @@ pub fn intersect(surface: &PreparedSurface, p_world: V3, d_world: V3) -> Result<
 }
 
 fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss> {
+    if matches!(surface.spec.shape, Shape::Plane) {
+        if d.0[2].abs() < 1e-14 {
+            return Err(Miss::Geometry);
+        }
+        let t = -p.0[2] / d.0[2];
+        if !t.is_finite() || t <= RAY_EPS_MM {
+            return Err(Miss::Geometry);
+        }
+        let point = p + d * t;
+        if !surface.spec.aperture.contains(point.0[0], point.0[1]) {
+            return Err(Miss::Geometry);
+        }
+        // Keep the original bounding predicate for all possible hits, including
+        // grazing circular apertures. Reject ordinary misses before that work.
+        bounded_interval(surface, p, d).ok_or(Miss::Geometry)?;
+        let normal = surface.frame.plane_normal();
+        return Ok(Hit {
+            distance_mm: t,
+            point: surface.frame.world_point(point),
+            local_point: point,
+            normal,
+            geometric_normal: normal,
+        });
+    }
     let (t_low, t_high) = bounded_interval(surface, p, d).ok_or(Miss::Geometry)?;
     if let Shape::ConicalSide {
         radius_start_mm,
@@ -273,12 +298,7 @@ fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss>
     }
     let t = match &surface.spec.shape {
         Shape::TriangleMesh { .. } | Shape::ConicalSide { .. } => unreachable!(),
-        Shape::Plane => {
-            if d.0[2].abs() < 1e-14 {
-                return Err(Miss::Geometry);
-            }
-            -p.0[2] / d.0[2]
-        }
+        Shape::Plane => unreachable!(),
         Shape::Sphere { radius_mm } => {
             let q = p - V3([0.0, 0.0, *radius_mm]);
             let a = d.dot(d);
@@ -524,6 +544,18 @@ pub struct InterfaceResult {
 
 /// Scalar, unpolarized Fresnel power coefficients for real refractive indices.
 pub fn dielectric(direction: V3, normal: V3, n_before: f64, n_after: f64) -> InterfaceResult {
+    dielectric_with_reflectance(direction, normal, n_before, n_after, None)
+}
+
+/// A supplied power coefficient still preserves Snell refraction and TIR. Coated
+/// interfaces compute their power separately and can skip the unused bare Fresnel work.
+pub(crate) fn dielectric_with_reflectance(
+    direction: V3,
+    normal: V3,
+    n_before: f64,
+    n_after: f64,
+    power: Option<f64>,
+) -> InterfaceResult {
     let facing = if direction.dot(normal) > 0.0 {
         -normal
     } else {
@@ -535,7 +567,7 @@ pub fn dielectric(direction: V3, normal: V3, n_before: f64, n_after: f64) -> Int
         return InterfaceResult {
             reflected,
             transmitted: Some(direction),
-            reflectance: 0.0,
+            reflectance: power.unwrap_or(0.0),
         };
     }
     let eta = n_before / n_after;
@@ -549,11 +581,16 @@ pub fn dielectric(direction: V3, normal: V3, n_before: f64, n_after: f64) -> Int
     }
     let cos_t = (1.0 - sin2_t).sqrt();
     let transmitted = (direction * eta + facing * (eta * cos_i - cos_t)).unit();
-    let rs = ((n_before * cos_i - n_after * cos_t) / (n_before * cos_i + n_after * cos_t)).powi(2);
-    let rp = ((n_before * cos_t - n_after * cos_i) / (n_before * cos_t + n_after * cos_i)).powi(2);
+    let reflectance = power.unwrap_or_else(|| {
+        let rs =
+            ((n_before * cos_i - n_after * cos_t) / (n_before * cos_i + n_after * cos_t)).powi(2);
+        let rp =
+            ((n_before * cos_t - n_after * cos_i) / (n_before * cos_t + n_after * cos_i)).powi(2);
+        (0.5 * (rs + rp)).clamp(0.0, 1.0)
+    });
     InterfaceResult {
         reflected,
         transmitted: Some(transmitted),
-        reflectance: (0.5 * (rs + rp)).clamp(0.0, 1.0),
+        reflectance,
     }
 }

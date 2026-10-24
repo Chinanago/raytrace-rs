@@ -67,6 +67,31 @@ cargo clippy --locked --workspace --all-features --all-targets -- -D warnings
 
 スクリーン解析はGaussianの既知の半値幅、複数ピーク、画面端で欠けた分布、受光ゼロ、光量を変えた場合の幅の不変性を検証します。
 
+## 大量光線の速度比較
+
+`throughput_check` は自作の単色レンズ、200波長のレンズ、非球面レンズ、256面の配置、分散を持つロッドを測ります。引数は `光線数 スレッド数 反復回数 ケース 計測対象` です。ケースは `lens`、`lens_200`、`asphere`、`array_256`、`rod`、`all`、計測対象は `explicit`、`streaming`、`both` を指定します。
+
+`explicit` は準備済みの同一光線の追跡とレポート集計、`streaming` は光線生成から追跡・集計までを測ります。入力と出力、結果の照合は計測時間から外します。各対象を一度ウォームアップし、反復の中央値を保存します。両経路の全レポートが一致することも検査します。
+
+```powershell
+cargo build --release --locked --example throughput_check
+./target/release/examples/throughput_check.exe 1048576 4 3 all both > results/throughput.json
+```
+
+改修前後で同一のベンチマークをビルドし、実行ファイルを別名で保存します。次のスクリプトは実行順を交互に変えて3組を測り、全画素、光量収支、面ごとの集計、反射回数、診断を含む全レポートと光線の署名が一致することを確認します。差があれば比較を失敗させます。
+
+```powershell
+python scripts/benchmark_compare.py --baseline results/before.exe --candidate results/after.exe --output results/comparison --rays 1048576 --threads 4 --repeats 3 --pairs 3
+```
+
+PコアとEコアが混在するPCなどで配置による差が大きい場合は、Windowsの `--affinity マスク` で両方の子プロセスを同じ論理CPU群に固定できます。マスクはそのPCのコア構成に合わせて選びます。例えば `--affinity 0x35` は論理CPU 0・2・4・5を指定します。スレッド数と、選んだ物理コア・SMTの対応も計測条件に記録してください。
+
+Windowsではプロセスのピークワーキングセットと、定期取得したプライベートメモリの最大値も保存します。このメモリ値には、比較用の全入力光線と、時間外に行う光線の署名作成・結果照合も含みます。小分け生成だけを使うアプリケーションのメモリ量を評価するときは、比較用の一括生成を別に扱ってください。
+
+計算核は光線の集計順を固定したまま、単色の屈折率検索、分岐管理用の領域、平面法線、吸収ゼロの区間、固定反射率・コーティングで上書きされるFresnel計算を効率化しています。材料データは波長のビット列が一致したときだけ再利用し、キャッシュ上限を超えた波長も元の分散式・吸収式で評価します。
+
+16面以上の非シーケンシャル系では、光学面全体のBVHで交点候補を絞ります。探索構造は各追跡呼出しの冒頭に一度作り、全ワーカーで共有します。その構築時間も上記の追跡時間に含まれます。各候補の交点計算には従来の形状ソルバーを使い、同距離の面の優先順と、手前にある数値計算失敗の診断を保持します。回帰テストは平面・球面・非球面・円すい側面・メッシュ、回転配置、開口端、遠方・浅い角度の入射、全終端光線・光路・画素・分岐順、キャッシュ上限を超える分散と吸収を確認します。
+
 ## OpticStudioとの実機照合
 
 OpticStudioとの光線比較には `examples/exchange_check.rs` と `scripts/zemax_exchange_probe.py` を使えます。入力はダミー平面・レンズ2面・像面からなるZMXです。中心厚を0.25 mm増やして書き出し、同じ7本の光線を比較します。Python側にはpythonnetと有効なOpticStudio APIライセンスが必要で、インストール先は `RAYTRACE_ZEMAX_ROOT` で指定できます。

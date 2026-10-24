@@ -72,6 +72,7 @@ pub struct Pose {
 pub struct Frame {
     pub origin: V3,
     axes: [V3; 3],
+    plane_normal: V3,
 }
 
 impl Frame {
@@ -81,10 +82,10 @@ impl Frame {
             translation_mm: V3::default(),
             rotation_deg: -pose.rotation_deg,
         });
-        Self {
-            origin: pose.translation_mm,
-            axes: std::array::from_fn(|i| V3(inverse.axes.map(|a| a.0[i]))),
-        }
+        Self::from_axes(
+            pose.translation_mm,
+            std::array::from_fn(|i| V3(inverse.axes.map(|a| a.0[i]))),
+        )
     }
     pub fn pose(&self) -> Pose {
         Self::pose_from_axes(self.origin, self.axes)
@@ -140,14 +141,27 @@ impl Frame {
         let (sx, cx) = x.sin_cos();
         let (sy, cy) = y.sin_cos();
         let (sz, cz) = z.sin_cos();
-        Self {
-            origin: pose.translation_mm,
-            axes: [
+        Self::from_axes(
+            pose.translation_mm,
+            [
                 V3([cz * cy, sz * cy, -sy]),
                 V3([cz * sy * sx - sz * cx, sz * sy * sx + cz * cx, cy * sx]),
                 V3([cz * sy * cx + sz * sx, sz * sy * cx - cz * sx, cy * cx]),
             ],
-        }
+        )
+    }
+    fn from_axes(origin: V3, axes: [V3; 3]) -> Self {
+        let mut frame = Self {
+            origin,
+            axes,
+            plane_normal: V3::default(),
+        };
+        // Use the exact former plane-hit expression, including signed zero.
+        frame.plane_normal = frame.world_vector(V3([-0.0, -0.0, 1.0]).unit()).unit();
+        frame
+    }
+    pub(crate) fn plane_normal(&self) -> V3 {
+        self.plane_normal
     }
     pub fn local_vector(&self, v: V3) -> V3 {
         V3(self.axes.map(|axis| axis.dot(v)))

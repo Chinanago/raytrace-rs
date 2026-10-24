@@ -1,4 +1,5 @@
 //! Pure geometric optics kernel and ray propagation.
+mod acceleration;
 pub mod coating;
 pub mod dispersion;
 pub mod geometry;
