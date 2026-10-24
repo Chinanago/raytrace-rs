@@ -6,11 +6,23 @@ impl App {
         self.update_window_title(ctx);
         egui::TopBottomPanel::top("toolbar")
             .exact_height(TOOLBAR_HEIGHT)
+            .show_separator_line(false)
             .frame(theme::toolbar_frame())
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    theme::tab(ui, &mut self.view, View::Layout, "光学系");
-                    theme::tab(ui, &mut self.view, View::Screen, "スクリーン");
+                let row = ui.max_rect().expand2(Vec2::new(SPACE_4, 0.0));
+                let mut selected = egui::Rect::NOTHING;
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
+                    ui.set_height(TOOLBAR_HEIGHT);
+                    ui.spacing_mut().item_spacing.x = -theme::TAB_LINE_WIDTH;
+                    let layout = theme::tab(ui, &mut self.view, View::Layout, "光学系", BG_PANEL);
+                    let screen =
+                        theme::tab(ui, &mut self.view, View::Screen, "スクリーン", BG_CANVAS);
+                    selected = if self.view == View::Layout {
+                        layout.rect
+                    } else {
+                        screen.rect
+                    };
+                    ui.spacing_mut().item_spacing.x = SPACE_2;
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if theme::primary_scope(ui, |ui| {
                             ui.add_enabled(
@@ -65,6 +77,7 @@ impl App {
                         }
                     });
                 });
+                theme::tab_baseline(ui, row, selected);
             });
     }
 
@@ -374,6 +387,56 @@ mod tests {
             .rect
             .height();
         assert_eq!(height, TOOLBAR_HEIGHT);
+    }
+
+    #[test]
+    fn toolbar_tabs_touch_content_and_actions_stay_centered() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut app = App::demo();
+        for view in [View::Layout, View::Screen] {
+            app.view = view;
+            frame(&mut app, &ctx, vec![]);
+            let out = frame(&mut app, &ctx, vec![]);
+            let fill = if view == View::Layout {
+                BG_PANEL
+            } else {
+                BG_CANVAS
+            };
+            let tabs: Vec<_> = out
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Rect(r)
+                        if r.rect.height() == theme::TAB_HEIGHT
+                            && r.rect.bottom() == TOOLBAR_HEIGHT
+                            && r.corner_radius == egui::CornerRadius::ZERO =>
+                    {
+                        Some(r)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(tabs.len(), 2);
+            let active = usize::from(view == View::Screen);
+            assert_eq!(tabs[active].fill, fill);
+            assert_eq!(tabs[0].rect.top(), TOOLBAR_HEIGHT - theme::TAB_HEIGHT);
+            let action = ctx.read_response(egui::Id::new("toolbar")).unwrap();
+            assert_eq!(action.rect.height(), TOOLBAR_HEIGHT);
+            let button = out
+                .shapes
+                .iter()
+                .find_map(|s| match &s.shape {
+                    egui::Shape::Rect(r)
+                        if r.fill == PRIMARY && r.rect.width() >= PRIMARY_BUTTON_WIDTH =>
+                    {
+                        Some(r.rect)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(button.center().y, TOOLBAR_HEIGHT / 2.0);
+        }
     }
 
     #[test]

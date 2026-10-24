@@ -83,12 +83,22 @@ pub const SPACE_6: f32 = 24.0;
 pub const SPACE_8: f32 = 32.0;
 pub const CONTROL_HEIGHT: f32 = SPACE_8;
 pub const TOOLBAR_HEIGHT: f32 = CONTROL_HEIGHT + SPACE_2 * 2.0;
+// gray-420 is below 3:1 on gray-50; use the DADS gray-536 fallback.
+pub const TAB_BORDER: Color32 = primitive::GRAY_536;
+pub const TAB_HOVER_BAR: Color32 = primitive::GRAY_420;
+pub const TAB_HOVER_FILL: Color32 = primitive::GRAY_50;
+pub const TAB_BAR_HEIGHT: f32 = 6.0;
+pub const TAB_HEIGHT: f32 = 40.0;
+pub const TAB_PADDING_X: f32 = SPACE_4;
+pub const TAB_PADDING_Y: f32 = 7.0;
+pub const TAB_LINE_WIDTH: f32 = 1.0;
+pub const TAB_UNDERLINE_OFFSET: f32 = 3.0;
 pub const PRIMARY_BUTTON_WIDTH: f32 = 118.0;
 
 pub fn toolbar_frame() -> egui::Frame {
     egui::Frame::new()
         .fill(BG_PANEL)
-        .inner_margin(egui::Margin::symmetric(SPACE_4 as i8, SPACE_2 as i8))
+        .inner_margin(egui::Margin::symmetric(SPACE_4 as i8, 0))
 }
 
 pub fn history_button(ui: &mut egui::Ui, enabled: bool, glyph: &str) -> egui::Response {
@@ -335,27 +345,88 @@ pub fn component_button(ui: &mut egui::Ui, label: String, selected: bool) -> egu
     response
 }
 
+/// Paint the panel's top border, leaving the selected folder ear open.
+pub fn tab_baseline(ui: &egui::Ui, row: egui::Rect, selected: egui::Rect) {
+    let y = row.bottom() - TAB_LINE_WIDTH / 2.0;
+    let stroke = Stroke::new(TAB_LINE_WIDTH, TAB_BORDER);
+    ui.painter().hline(row.left()..=selected.left(), y, stroke);
+    ui.painter()
+        .hline(selected.right()..=row.right(), y, stroke);
+}
+
 pub fn tab<T: PartialEq>(
     ui: &mut egui::Ui,
     value: &mut T,
     target: T,
     label: &str,
+    selected_fill: Color32,
 ) -> egui::Response {
     let selected = *value == target;
-    let mut response = ui.selectable_label(
-        selected,
-        RichText::new(label).color(if selected { PRIMARY } else { TEXT }),
+    let font = if selected {
+        bold_font(SIZE_BODY)
+    } else {
+        FontId::proportional(SIZE_BODY)
+    };
+    let galley = ui.painter().layout_no_wrap(label.into(), font, TEXT);
+    let mut response = ui.allocate_response(
+        Vec2::new(galley.size().x + TAB_PADDING_X * 2.0, TAB_HEIGHT),
+        egui::Sense::click(),
     );
-    if selected {
-        ui.painter().hline(
-            response.rect.x_range(),
-            response.rect.bottom(),
-            Stroke::new(2.0_f32, PRIMARY),
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            selected,
+            label,
+        )
+    });
+    let rect = response.rect;
+    let hover = response.hovered() && !selected;
+    ui.painter().rect_filled(
+        rect,
+        0,
+        if selected {
+            selected_fill
+        } else if hover {
+            TAB_HOVER_FILL
+        } else {
+            BG_CANVAS
+        },
+    );
+    let stroke = Stroke::new(TAB_LINE_WIDTH, TAB_BORDER);
+    let border = rect.shrink(TAB_LINE_WIDTH / 2.0);
+    ui.painter().vline(border.left(), border.y_range(), stroke);
+    ui.painter().vline(border.right(), border.y_range(), stroke);
+    ui.painter().hline(border.x_range(), border.top(), stroke);
+    if !selected {
+        ui.painter()
+            .hline(border.x_range(), border.bottom(), stroke);
+    }
+    if selected || hover {
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(
+                rect.min + Vec2::splat(TAB_LINE_WIDTH),
+                Vec2::new(rect.width() - TAB_LINE_WIDTH * 2.0, TAB_BAR_HEIGHT),
+            ),
+            0,
+            if selected { PRIMARY } else { TAB_HOVER_BAR },
         );
     }
+    let text_pos = rect.min + Vec2::new(TAB_PADDING_X, TAB_BAR_HEIGHT + TAB_PADDING_Y);
+    if hover {
+        ui.painter().hline(
+            text_pos.x..=text_pos.x + galley.size().x,
+            text_pos.y + galley.size().y + TAB_UNDERLINE_OFFSET,
+            Stroke::new(TAB_LINE_WIDTH, TEXT),
+        );
+    }
+    ui.painter().galley(text_pos, galley, TEXT);
     if response.clicked() && !selected {
         *value = target;
         response.mark_changed();
+        // Repaint the entire row in this frame so a click cannot leave two bold
+        // labels (the previously selected ear may already have been painted).
+        ui.ctx().request_discard("tab selection changed");
     }
     response
 }
@@ -487,6 +558,130 @@ mod tests {
         check(status::ERROR_ICON, status::ERROR_SUBTLE, 3.0);
         check(status::WARNING_PANEL_ICON, status::WARNING_SUBTLE, 3.0);
         check(FOCUS_RING, FOCUS_INNER, 3.0);
+    }
+
+    #[test]
+    fn tab_contrast_on_toolbar_and_window_surfaces() {
+        assert!(contrast(primitive::GRAY_420, BG_PANEL) < 3.0);
+        for bg in [BG_CANVAS, TAB_HOVER_FILL] {
+            check(TEXT, bg, 4.5);
+            check(PRIMARY, bg, 3.0);
+            check(TAB_BORDER, bg, 3.0);
+        }
+    }
+
+    #[test]
+    fn folder_tabs_have_one_bold_label_top_bar_and_open_baseline() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        for active in 0..3 {
+            let mut value = active;
+            let mut rects = Vec::new();
+            let output = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let row = ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = -TAB_LINE_WIDTH;
+                        for (target, label) in ["First", "Second", "Third"].into_iter().enumerate()
+                        {
+                            rects.push(tab(ui, &mut value, target, label, BG_RAISED).rect);
+                        }
+                    });
+                    let row = egui::Rect::from_min_max(
+                        row.response.rect.min,
+                        egui::pos2(ui.max_rect().right(), row.response.rect.bottom()),
+                    );
+                    tab_baseline(ui, row, rects[active]);
+                });
+            });
+            let labels: Vec<_> = output
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Text(text)
+                        if ["First", "Second", "Third"]
+                            .contains(&text.galley.job.text.as_str()) =>
+                    {
+                        Some(text)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(labels.len(), 3);
+            let bold: Vec<_> = labels
+                .iter()
+                .enumerate()
+                .filter(|(_, text)| {
+                    text.galley.job.sections[0].format.font_id == bold_font(SIZE_BODY)
+                })
+                .map(|(i, _)| i)
+                .collect();
+            assert_eq!(bold, [active]);
+            assert_eq!(rects[0].right() - rects[1].left(), TAB_LINE_WIDTH);
+            assert!(rects.iter().all(|rect| rect.height() == TAB_HEIGHT));
+            let selected = rects[active];
+            let label_bottom = labels[active].pos.y + labels[active].galley.size().y;
+            let mut bars = 0;
+            for shape in &output.shapes {
+                match &shape.shape {
+                    egui::Shape::LineSegment { points, .. } => {
+                        // Includes both a former blue underline and an accidental
+                        // baseline/bottom border across the selected opening.
+                        let horizontal = points[0].y == points[1].y;
+                        let overlaps_label = points[0].x.min(points[1].x)
+                            < selected.right() - TAB_PADDING_X
+                            && points[0].x.max(points[1].x) > selected.left() + TAB_PADDING_X;
+                        assert!(
+                            !(horizontal
+                                && overlaps_label
+                                && points[0].y >= label_bottom
+                                && points[0].y <= selected.bottom())
+                        );
+                    }
+                    egui::Shape::Rect(rect) if rect.fill == PRIMARY => {
+                        bars += 1;
+                        assert_eq!(rect.rect.height(), TAB_BAR_HEIGHT);
+                        assert!(rect.rect.bottom() < labels[active].pos.y);
+                        assert_eq!(rect.corner_radius, egui::CornerRadius::ZERO);
+                    }
+                    _ => {}
+                }
+            }
+            assert_eq!(bars, 1);
+        }
+    }
+
+    #[test]
+    fn only_unselected_hover_has_an_underline_and_gray_bar() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let mut rect = egui::Rect::NOTHING;
+        for hovered in [false, true] {
+            let input = egui::RawInput {
+                events: if hovered {
+                    vec![egui::Event::PointerMoved(rect.center())]
+                } else {
+                    vec![]
+                },
+                ..Default::default()
+            };
+            let output = ctx.run(input, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    rect = tab(ui, &mut false, true, "Hover", BG_RAISED).rect;
+                });
+            });
+            if hovered {
+                let text = output
+                    .shapes
+                    .iter()
+                    .find_map(|s| match &s.shape {
+                        egui::Shape::Text(text) => Some(text),
+                        _ => None,
+                    })
+                    .unwrap();
+                assert!(output.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::LineSegment { points, stroke } if stroke.color == TEXT && points[0].y == text.pos.y + text.galley.size().y + TAB_UNDERLINE_OFFSET)));
+                assert!(output.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.fill == TAB_HOVER_BAR && r.rect.height() == TAB_BAR_HEIGHT)));
+            }
+        }
     }
 
     #[test]

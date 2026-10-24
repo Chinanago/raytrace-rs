@@ -15,12 +15,20 @@ impl App {
             .max_height((ctx.screen_rect().height() - 200.0).max(240.0))
             .min_width(540.0)
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    theme::tab(ui, &mut page, Details::Calculation, "計算条件");
-                    theme::tab(ui, &mut page, Details::Import, "読込レポート");
-                    theme::tab(ui, &mut page, Details::Budget, "光量収支");
+                let mut selected = egui::Rect::NOTHING;
+                let row = ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = -theme::TAB_LINE_WIDTH;
+                    for (target, label) in [
+                        (Details::Calculation, "計算条件"),
+                        (Details::Import, "読込レポート"),
+                        (Details::Budget, "光量収支"),
+                    ] {
+                        let response = theme::tab(ui, &mut page, target, label, BG_RAISED);
+                        if page == target {
+                            selected = response.rect;
+                        }
+                    }
                 });
-                ui.separator();
                 egui::ScrollArea::vertical()
                     .id_salt("details_content")
                     .max_height((ctx.screen_rect().height() - 300.0).max(160.0))
@@ -29,6 +37,13 @@ impl App {
                         Details::Import => self.import_report(ui, ctx),
                         Details::Budget => self.power_budget(ui),
                     });
+                // Windows shrink to their laid-out content, which can be narrower
+                // than max_rect. Paint only after the final content width is known.
+                let row = egui::Rect::from_min_max(
+                    row.response.rect.min,
+                    egui::pos2(ui.min_rect().right(), row.response.rect.bottom()),
+                );
+                theme::tab_baseline(ui, row, selected);
             });
         self.details = if self.details.is_some() {
             open.then_some(page)
@@ -364,6 +379,57 @@ mod tests {
             (86.934, "86.93%"),
         ] {
             assert_eq!(display_percent(value), expected);
+        }
+    }
+
+    #[test]
+    fn tab_baseline_stays_inside_each_settings_page() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut app = App::demo();
+        calculate_demo(&mut app);
+        for page in [Details::Calculation, Details::Import, Details::Budget] {
+            app.details = Some(page);
+            for _ in 0..30 {
+                frame(&mut app, &ctx, vec![]);
+            }
+            let out = frame(&mut app, &ctx, vec![]);
+            let window = ctx
+                .memory(|m| m.area_rect(egui::Id::new("設定とレポート")))
+                .unwrap();
+            let tabs: Vec<_> = out
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::Rect(r)
+                        if r.rect.height() == theme::TAB_HEIGHT
+                            && r.rect.top() > TOOLBAR_HEIGHT
+                            && r.fill == BG_RAISED =>
+                    {
+                        Some(r.rect)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(tabs.len(), 3);
+            let y = tabs[0].bottom() - theme::TAB_LINE_WIDTH / 2.0;
+            let right = out
+                .shapes
+                .iter()
+                .filter_map(|s| match &s.shape {
+                    egui::Shape::LineSegment { points, stroke }
+                        if stroke.color == theme::TAB_BORDER
+                            && points[0].y == y
+                            && points[1].y == y =>
+                    {
+                        Some(points[0].x.max(points[1].x))
+                    }
+                    _ => None,
+                })
+                .reduce(f32::max)
+                .unwrap();
+            assert!(right <= window.right() - SPACE_4 + theme::TAB_LINE_WIDTH);
+            assert!(right >= window.right() - SPACE_4 - theme::TAB_LINE_WIDTH);
         }
     }
 
