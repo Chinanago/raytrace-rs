@@ -85,6 +85,6 @@ v0.11.0 CLI output uses `format: raytrace-run-v1`, `schema_version: 2`:
 | `report.budget`, `relative_budget_closure_error` | Accounted powers and `(accounted - launched) / launched`. Inspect unresolved categories as well as closure. |
 | `surface_encounter_percent_of_reference` | Includes repeated encounters; derive physical stage budgets with that distinction in mind. |
 | `calculation` | Frozen effective model, source settings, software version and limits. CSV input rays are embedded for replay. |
-| `benchmark.timed_scope` | Measured scope. `--repeat N` reports median tracing/report-accumulation time after a warmup, excluding import, ray generation, I/O and drawing. |
+| `benchmark.timed_scope` | Actual measurement scope. Generated-source runs include ray generation, tracing and accumulation; explicit-ray runs include tracing and accumulation. `--repeat N` reports their median after a warmup, excluding scene preparation, file I/O and drawing. Older builds can exclude generation; use the saved field when comparing runs. |
 
 Use the GUI or existing screen/export functions for peak normalization, profiles, FWHM and ROI. Wave optics, full diffraction PSF/MTF and general automatic optimization are outside the v0.11.0 feature set; check newer documentation before repeating versioned limitations.

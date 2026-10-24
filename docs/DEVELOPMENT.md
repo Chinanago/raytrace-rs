@@ -52,7 +52,7 @@ cargo run --release --locked --example step_check -- --generate-owned results/st
 
 波長・角度・表裏別のコーティング収支、13式のAGFと内部透過率、スペクトル、座標変換、有限物体と視野、入射瞳の近軸計算、波長別のRay Aiming、視野の瞳補正、Source Diodeの超Gaussian・非点収差、ミラー、ZMXの参照ファイル復元、2軸・連動の中止と再開、ROIと任意断面を自作データで検査します。
 
-`cargo run --release --example performance_check` は単色／200波長の各131,072光線を1スレッドで測り、準備・光線生成・追跡を分けて5回の中央値、光線の署名、全画素と光量収支をJSONへ出力します。性能の比較には同じPC・入力・精度を使用してください。
+`cargo run --release --example performance_check` は単色／200波長の各131,072光線を1スレッドで測り、準備・光線生成・追跡を分けた時間と、光線生成から追跡までをまとめた時間を、それぞれ5回の中央値としてJSONへ出力します。一括生成と小分け生成のレポートが一致することも確認し、光線の署名・全画素・光量収支を保存します。性能の比較には同じPC・入力・精度を使用してください。
 
 ```powershell
 cargo test --locked --workspace --all-features
