@@ -31,7 +31,8 @@ def dependency_notices():
         "--filter-platform", "x86_64-pc-windows-msvc", "--format-version", "1",
     ], cwd=ROOT, text=True, encoding="utf-8"))
     active = {node["id"] for node in metadata["resolve"]["nodes"]}
-    supplements = tomllib.loads((ROOT / "scripts/third_party_notices.toml").read_text(encoding="utf-8"))["notice"]
+    catalog = tomllib.loads((ROOT / "scripts/third_party_notices.toml").read_text(encoding="utf-8"))
+    supplements = catalog["notice"]
     sections = ["Third-party components retain their respective licenses.\n"]
     for package in sorted(metadata["packages"], key=lambda p: (p["name"], p["version"])):
         if package["id"] not in active or package["id"] in metadata["workspace_members"]:
@@ -64,6 +65,11 @@ def dependency_notices():
             required = {"fonts/Hack-Regular.txt", "fonts/OFL.txt", "fonts/UFL.txt", "fonts/emoji-icon-font-mit-license.txt"}
             if required - included:
                 raise ValueError(f"Missing font notices: {sorted(required - included)}")
+    for asset in catalog["asset"]:
+        content = (ROOT / asset["file"]).read_text(encoding="utf-8") if "file" in asset else asset["text"]
+        if not content.strip():
+            raise ValueError(f"Missing bundled asset license: {asset['name']}")
+        sections.append(f"\n{'=' * 72}\n{asset['name']}\nLicense: {asset['license']}\nSource: {asset['source']}\n{content}\n")
     return "".join(sections).encode("utf-8")
 
 

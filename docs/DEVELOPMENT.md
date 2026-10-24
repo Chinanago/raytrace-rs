@@ -98,3 +98,39 @@ Cargo workspaceとして、`crates/` 以下の5クレートに分けています
 依存方向は `core ← io ← app ← {cli, gui}` で、各層は必要な下位層を参照します。リポジトリ直下の `raytrace-rs` はcore・io・appのモジュールを再公開する窓口で、既存の `raytrace_rs::model` などのパスを使えます。`tests/` と `examples/` も直下に残しています。
 
 ライブラリのPNG出力には `--features png` を指定します。SPCDの文字列解析は `Spectrum::parse_spcd`、ファイルの読込・文字コード判定は `raytrace_rs::zemax::read_spcd` を使います。
+
+## GUIのスタイル
+
+`crates/raytrace-gui/src/gui/theme.rs` がGUIの色・文字・余白・角丸・影を定義し、
+`App::new` から `theme::install` を一度呼びます。DADSのデザイントークン
+`@digital-go-jp/design-tokens` 2.1.0に基づくローカルのスタイルガイドです。
+GUIではプリミティブ色や数値の文字サイズを直接指定せず、`TEXT`、`BG_PANEL`、
+`PRIMARY`、`BORDER_CONTROL` など用途を示すトークンを使います。
+データ描画の色とヒートマップは `theme::viz` に分けています。
+
+文字は最小14 px（eguiのpoint、100%表示時）、密な操作部も14 px、説明文は16 px、
+見出しは16/18/20 pxです。Noto Sans JPのRegular/BoldとNoto Sans Monoを埋め込み、
+egui既定フォントを記号・絵文字のフォールバックとして残しています。
+同梱済みフォントの再生成時のみ、未加工の元フォントがあるディレクトリを指定します。
+
+```sh
+uv run --no-project --with fonttools python scripts/subset_fonts.py SOURCE_DIR
+```
+
+通常の文字は使用背景に対し4.5:1以上、操作境界・アイコン・データの線とマーカーは
+3:1以上を `theme.rs` のテストで検証します。無効状態の文字と装飾用グリッド、連続値の
+ヒートマップ、重みに応じて半透明に重ねる光路はこの対象から除きます。DADSのred-800とorange-800の文字は白背景でのみ
+使います（gray-50や淡い通知背景では4.5:1未満）。orange-600のアイコンも白背景専用で、
+灰色パネルではorange-800を使います。淡い通知背景に色付き文字を追加する際は、
+使用する組合せをテストに追加してください。
+
+フォーカスは黄色の外周と黒の内周の二重リングです。egui 0.31の描画終了時に
+フォーカス中のウィジェットへ重ねて描きます。マウス操作で得たフォーカスにも表示し、
+スクロールで一部が隠れた項目では見えている操作領域を囲みます。
+OS標準ダイアログのフォーカス表示は対象外です。
+
+デジタル庁デザインシステムウェブサイト https://design.digital.go.jp/dads/ のコンテンツを加工して作成
+
+raytrace-rsはデジタル庁と提携しておらず、デジタル庁の公式製品ではありません。
+トークンのMITライセンスとNotoのSIL OFL 1.1はWindows配布物の
+`THIRD_PARTY_LICENSES.txt` に収録します。

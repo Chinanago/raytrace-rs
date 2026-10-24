@@ -102,7 +102,10 @@ impl App {
                         ui.columns(2, |cols| {
                             for (i, c) in self.study.comparisons.iter_mut().take(2).enumerate() {
                                 let ui = &mut cols[i];
-                                ui.label(egui::RichText::new(&c.label).strong());
+                                ui.label(
+                                    egui::RichText::new(&c.label)
+                                        .family(egui::FontFamily::Name("bold".into())),
+                                );
                                 if c.texture.is_none() {
                                     let max = display
                                         .maximum_weight(c.analysis.peak_weight, c.reference)
@@ -154,8 +157,8 @@ impl App {
                                         "基準面：{} = 100%",
                                         c.reference_plane
                                     ))
-                                    .size(10.0)
-                                    .color(MUTED),
+                                    .size(SIZE_CAPTION)
+                                    .color(TEXT_MUTED),
                                 );
                             }
                         });

@@ -118,7 +118,7 @@ fn draw_paths(
         egui::Sense::click_and_drag(),
     );
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 6.0, Color32::from_rgb(248, 250, 253));
+    painter.rect_filled(rect, 6.0, BG_CANVAS);
     let axes = [(2, 0), (2, 1), (0, 1)][projection];
     let mut lines: Vec<Vec<V3>> = Vec::new();
     let mut points = Vec::new();
@@ -231,8 +231,8 @@ fn draw_paths(
             rect.center(),
             egui::Align2::CENTER_CENTER,
             "光学面を読み込んでください",
-            egui::FontId::proportional(13.0),
-            MUTED,
+            egui::FontId::proportional(SIZE_CAPTION),
+            TEXT_MUTED,
         );
         return None;
     }
@@ -244,7 +244,7 @@ fn draw_paths(
             high[a] = high[a].max(p.0[k]);
         }
     }
-    let inner = rect.shrink2(Vec2::new(44.0, 36.0));
+    let inner = rect.shrink2(Vec2::new(64.0, 44.0));
     let grid_id = ui.id().with(("part_grid", projection));
     let active_id = grid_id.with("active");
     if focus_points.is_empty() {
@@ -335,19 +335,19 @@ fn draw_paths(
         let y = inner.top() + inner.height() * i as f32 / 4.0;
         painter.line_segment(
             [Pos2::new(inner.left(), y), Pos2::new(inner.right(), y)],
-            Stroke::new(0.5_f32, LINE),
+            Stroke::new(0.5_f32, GRID),
         );
         painter.text(
             Pos2::new(inner.left() - 8.0, y),
             egui::Align2::RIGHT_CENTER,
             format!("{:.1}", grid[1] + grid[3] * (1.0 - i as f64 / 4.0)),
-            egui::FontId::proportional(10.0),
-            MUTED,
+            egui::FontId::proportional(SIZE_CAPTION),
+            TEXT_MUTED,
         );
         let x = inner.left() + inner.width() * i as f32 / 4.0;
         painter.line_segment(
             [Pos2::new(x, inner.top()), Pos2::new(x, inner.bottom())],
-            Stroke::new(0.5_f32, LINE),
+            Stroke::new(0.5_f32, GRID),
         );
     }
     let max = paths
@@ -363,16 +363,13 @@ fn draw_paths(
         }
         geometry_painter.line_segment(
             [map(p.start_mm), map(p.end_mm)],
-            Stroke::new(
-                1.0_f32,
-                Color32::from_rgba_unmultiplied(224, 135, 48, (25.0 + 155.0 * t.sqrt()) as u8),
-            ),
+            Stroke::new(1.0_f32, viz::ray(t)),
         );
     }
     for line in lines {
         geometry_painter.add(egui::Shape::line(
             line.into_iter().map(map).collect(),
-            Stroke::new(1.0_f32, Color32::from_rgb(104, 139, 172)),
+            Stroke::new(1.0_f32, viz::GEOMETRY),
         ));
     }
     for m in markers.iter().filter(|m| m.position.finite()) {
@@ -380,15 +377,22 @@ fn draw_paths(
         if !inner.contains(p) {
             continue;
         }
-        let color = if m.enabled { BLUE } else { MUTED };
+        let color = if m.enabled {
+            viz::MARKER
+        } else {
+            viz::MARKER_MUTED
+        };
         geometry_painter.circle_filled(p, if m.index == selected { 6.0 } else { 4.0 }, color);
         if m.index == selected {
-            geometry_painter.circle_stroke(p, 9.0, Stroke::new(1.0_f32, BLUE));
+            geometry_painter.circle_stroke(p, 9.0, Stroke::new(1.0_f32, viz::MARKER));
         }
-        let label =
-            painter.layout_no_wrap(m.label.clone(), egui::FontId::proportional(10.0), color);
+        let label = painter.layout_no_wrap(
+            m.label.clone(),
+            egui::FontId::proportional(SIZE_CAPTION),
+            color,
+        );
         let size = label.size();
-        let left = if p.x + 8.0 + size.x < rect.right() - 6.0 {
+        let left = if p.x + 8.0 + size.x < inner.right() - 6.0 {
             p.x + 8.0
         } else {
             p.x - size.x - 8.0
@@ -403,7 +407,7 @@ fn draw_paths(
         geometry_painter.rect_filled(
             egui::Rect::from_min_size(pos, size).expand(2.0),
             2.0,
-            Color32::from_rgb(248, 250, 253),
+            BG_CANVAS,
         );
         geometry_painter.galley(pos, label, color);
     }
@@ -416,15 +420,15 @@ fn draw_paths(
             grid[0],
             grid[0] + grid[2]
         ),
-        egui::FontId::proportional(10.0),
-        MUTED,
+        egui::FontId::proportional(SIZE_CAPTION),
+        TEXT_MUTED,
     );
     painter.text(
         rect.left_top() + Vec2::new(8.0, 7.0),
         egui::Align2::LEFT_TOP,
         format!("{} [mm]  ·  光路は表示用サンプル", ["X", "Y", "Z"][axes.1]),
-        egui::FontId::proportional(10.0),
-        MUTED,
+        egui::FontId::proportional(SIZE_CAPTION),
+        TEXT_MUTED,
     );
     ui.label(
         egui::RichText::new(if markers.is_empty() {
@@ -432,8 +436,8 @@ fn draw_paths(
         } else {
             "丸印をドラッグして配置 · ホイールで拡大 · 背景をドラッグして表示を移動"
         })
-        .size(10.0)
-        .color(MUTED),
+        .size(SIZE_CAPTION)
+        .color(TEXT_MUTED),
     );
     let mut action = None;
     if editable && response.clicked_by(egui::PointerButton::Primary) {
@@ -518,6 +522,7 @@ mod tests {
     #[test]
     fn drag_handle_changes_the_component_in_the_selected_projection() {
         let ctx = egui::Context::default();
+        theme::install(&ctx);
         let scene = assembly::empty_scene("drag check");
         let markers = [
             PartMarker {
@@ -592,6 +597,7 @@ mod tests {
     fn zoom_and_background_pan_change_only_the_view_and_all_restores_auto_fit() {
         let mut app = App::demo();
         let ctx = egui::Context::default();
+        theme::install(&ctx);
         for _ in 0..3 {
             frame(&mut app, &ctx, vec![]);
         }

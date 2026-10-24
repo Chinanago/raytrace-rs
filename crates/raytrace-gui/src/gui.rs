@@ -21,11 +21,8 @@ use std::{
     },
     time::{Duration, Instant},
 };
-const BLUE: Color32 = Color32::from_rgb(40, 90, 180);
-const INK: Color32 = Color32::from_rgb(34, 45, 62);
-const MUTED: Color32 = Color32::from_rgb(105, 117, 132);
-const LINE: Color32 = Color32::from_rgb(221, 226, 234);
-const HALF_COLOR: Color32 = Color32::from_rgb(188, 48, 92);
+mod theme;
+use theme::{viz, *};
 
 mod camera;
 mod components;
@@ -163,30 +160,7 @@ struct App {
 }
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, args: &[String]) -> Self {
-        let mut fonts = egui::FontDefinitions::default();
-        for path in [
-            "C:/Windows/Fonts/meiryo.ttc",
-            "C:/Windows/Fonts/msgothic.ttc",
-        ] {
-            if let Ok(bytes) = std::fs::read(path) {
-                fonts
-                    .font_data
-                    .insert("Japanese".into(), egui::FontData::from_owned(bytes).into());
-                fonts
-                    .families
-                    .get_mut(&egui::FontFamily::Proportional)
-                    .unwrap()
-                    .insert(0, "Japanese".into());
-                break;
-            }
-        }
-        cc.egui_ctx.set_fonts(fonts);
-        cc.egui_ctx.set_visuals(egui::Visuals::light());
-        let mut style = (*cc.egui_ctx.style()).clone();
-        style.spacing.item_spacing = Vec2::new(9.0, 8.0);
-        style.visuals.panel_fill = Color32::from_rgb(246, 248, 251);
-        style.visuals.selection.bg_fill = BLUE;
-        cc.egui_ctx.set_style(style);
+        theme::install(&cc.egui_ctx);
         let mut app = Self::demo();
         app.data_directory = raytrace_io::storage::data_dir();
         app.preferences =
@@ -453,15 +427,15 @@ impl eframe::App for App {
         self.history_shortcuts(ctx);
         self.toolbar(ctx);
         egui::TopBottomPanel::bottom("status")
-            .exact_height(30.0)
+            .exact_height(38.0)
             .frame(
                 egui::Frame::new()
-                    .fill(Color32::from_rgb(248, 250, 252))
+                    .fill(BG_PANEL)
                     .inner_margin(egui::Margin::symmetric(18, 5)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(&self.status).size(11.0).color(MUTED));
+                    ui.label(theme::muted(&self.status));
                     if let Some(control) = &self.control {
                         let total = control.total.load(Ordering::Relaxed);
                         let completed = control.completed.load(Ordering::Relaxed).min(total);
@@ -481,8 +455,8 @@ impl eframe::App for App {
                                     r.calculation.input_count(),
                                     r.seconds * 1000.0
                                 ))
-                                .size(11.0)
-                                .color(MUTED),
+                                .size(SIZE_CAPTION)
+                                .color(TEXT_MUTED),
                             );
                         }
                     });

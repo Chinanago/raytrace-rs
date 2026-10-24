@@ -14,7 +14,7 @@ FILES = {
     "examples/trace_limits.rs",
     "examples/step_check.rs",
     ".github/workflows/windows.yml",
-    "scripts/check_portable.py",
+    "scripts/check_portable.py", "scripts/subset_fonts.py",
     "scripts/package_windows.py",
     "scripts/third_party_notices.toml",
     "scripts/check_publish.py", "scripts/zemax_exchange_probe.py",
@@ -26,6 +26,10 @@ DEMOS = {
     "examples/integrator_rod.json", "examples/folded_mirror.json",
 }
 FIXTURES = {"tests/fixtures/step_legacy_hits.json"}
+FONT_ASSETS = {"crates/raytrace-gui/assets/fonts/" + name for name in (
+    "NotoSansJP-Regular.otf", "NotoSansJP-Bold.otf", "NotoSansMono-Regular.ttf",
+    "OFL-NotoSansJP.txt", "OFL-NotoSansMono.txt",
+)}
 CRATES = {"raytrace-core", "raytrace-io", "raytrace-app", "raytrace-cli", "raytrace-gui"}
 
 
@@ -59,10 +63,16 @@ def main():
             and (part.parts[2:] == ("Cargo.toml",)
                  or (part.parts[2] == "src" and part.suffix == ".rs"))
         )
-        if mode != b"100644" or stage != b"0" or not (path in FILES | DEMOS | FIXTURES or source):
+        if mode != b"100644" or stage != b"0" or not (path in FILES | DEMOS | FIXTURES | FONT_ASSETS or source):
             failures.append(f"Unapproved publication path or mode: {path}")
             continue
         content = git("show", f":{path}")
+        if path in FONT_ASSETS and part.suffix in {".otf", ".ttf"}:
+            signature = b"OTTO" if part.suffix == ".otf" else b"\x00\x01\x00\x00"
+            if not content.startswith(signature):
+                failures.append(f"Invalid bundled font signature: {path}")
+            checked += 1
+            continue
         if b"\0" in content:
             failures.append(f"Binary content: {path}")
             continue

@@ -51,8 +51,8 @@ impl App {
                 ui.add_space(ui.available_height() * 0.35);
                 ui.label(
                     egui::RichText::new("計算するとスクリーンの分布が表示されます")
-                        .size(17.0)
-                        .color(MUTED),
+                        .size(SIZE_BODY_LARGE)
+                        .color(TEXT_MUTED),
                 );
             });
             return;
@@ -94,11 +94,11 @@ impl App {
                 ui.add_space(8.0);
                 ui.label(
                     egui::RichText::new(format!("基準面：{} = 100%", r.scene.reference_plane))
-                        .size(11.0)
-                        .color(MUTED),
+                        .size(SIZE_CAPTION)
+                        .color(TEXT_MUTED),
                 );
                 if self.stale {
-                    ui.label(egui::RichText::new("前回の計算結果を表示中").color(MUTED));
+                    ui.label(egui::RichText::new("前回の計算結果を表示中").color(TEXT_MUTED));
                 }
             });
     }
@@ -241,8 +241,8 @@ fn draw_detector(
                     egui::RichText::new(
                         "赤破線：各断面の最大値の50%とその交点。画素中心の値を線形補間。",
                     )
-                    .size(11.0)
-                    .color(MUTED),
+                    .size(SIZE_CAPTION)
+                    .color(TEXT_MUTED),
                 );
             } else {
                 ui.label("受光がありません。");
@@ -268,8 +268,8 @@ fn draw_detector(
                     egui::RichText::new(
                         "ROI端の画素は重なる面積で按分。画素内の光量密度を一定とする後処理です。",
                     )
-                    .size(10.)
-                    .color(MUTED),
+                    .size(SIZE_CAPTION)
+                    .color(TEXT_MUTED),
                 );
             }
             Err(e) => {
@@ -292,8 +292,8 @@ pub(super) fn draw_detector_map(
     let maximum = display.maximum_weight(peak, reference);
     let [hx, hy] = map.half_extent_mm;
     let aspect = (hx / hy) as f32;
-    let width = (ui.available_width() - 90.0)
-        .min((height - 150.0).max(80.0) * aspect)
+    let width = (ui.available_width() - 150.0)
+        .min((height - 210.0).max(80.0) * aspect)
         .max(30.0);
     let size = Vec2::new(width, width / aspect);
     let (area, _) = ui.allocate_exact_size(
@@ -301,7 +301,7 @@ pub(super) fn draw_detector_map(
         egui::Sense::hover(),
     );
     let rect = egui::Rect::from_min_size(
-        Pos2::new(area.center().x - (size.x + 80.0) * 0.5, area.top() + 7.0),
+        Pos2::new(area.center().x - (size.x + 140.0) * 0.5, area.top() + 7.0),
         size,
     );
     let painter = ui.painter_at(area);
@@ -309,7 +309,7 @@ pub(super) fn draw_detector_map(
         texture.id(),
         rect,
         egui::Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
-        Color32::WHITE,
+        BG_CANVAS,
     );
     let colorbar = egui::Rect::from_min_size(
         Pos2::new(rect.right() + 12.0, rect.top()),
@@ -354,8 +354,8 @@ pub(super) fn draw_detector_map(
             ),
             egui::Align2::LEFT_CENTER,
             label,
-            egui::FontId::proportional(9.0),
-            MUTED,
+            egui::FontId::proportional(SIZE_CAPTION),
+            TEXT_MUTED,
         );
     }
     if display.half_maximum {
@@ -378,7 +378,7 @@ pub(super) fn draw_detector_map(
             painter.rect_stroke(
                 egui::Rect::from_two_pos(pos(roi.minimum_mm), pos(roi.maximum_mm)),
                 0.,
-                Stroke::new(1.5_f32, Color32::from_rgb(46, 139, 87)),
+                Stroke::new(1.5_f32, viz::ROI),
                 egui::StrokeKind::Inside,
             );
         }
@@ -388,8 +388,8 @@ pub(super) fn draw_detector_map(
             "X ±{hx:.3} / Y ±{hy:.3} mm  ·  画素 {:.4} × {:.4} mm",
             analysis.pixel_pitch_mm[0], analysis.pixel_pitch_mm[1],
         ))
-        .size(10.0)
-        .color(MUTED),
+        .size(SIZE_CAPTION)
+        .color(TEXT_MUTED),
     );
     ui.label(
         egui::RichText::new(format!(
@@ -397,8 +397,8 @@ pub(super) fn draw_detector_map(
             100.0 * map.weights.iter().sum::<f64>() / reference,
             100.0 * peak / reference,
         ))
-        .size(11.0)
-        .color(MUTED),
+        .size(SIZE_CAPTION)
+        .color(TEXT_MUTED),
     );
     if display.half_maximum {
         let width = |axis: &str, p: &Option<Profile>| match p {
@@ -411,7 +411,7 @@ pub(super) fn draw_detector_map(
         ui.label(egui::RichText::new(format!(
             "FWHM  {}  /  {}",
             width("X", &analysis.x_profile), width("Y", &analysis.y_profile)
-        )).size(11.0).color(HALF_COLOR))
+        )).size(SIZE_CAPTION).color(viz::HALF_COLOR))
             .on_hover_text("画素中心の値を線形補間した幅です。平滑化は行いません。半値の交点が両側で得られると幅を表示します。");
         if [&analysis.x_profile, &analysis.y_profile]
             .iter()
@@ -419,16 +419,15 @@ pub(super) fn draw_detector_map(
         {
             ui.label(
                 egui::RichText::new("複数の山：主ピーク周囲の半値幅")
-                    .size(10.0)
-                    .color(MUTED),
+                    .size(SIZE_CAPTION)
+                    .color(TEXT_MUTED),
             );
         }
     }
 }
 
 pub(super) fn screen_color(fraction: f64, scale: ScreenScale) -> Color32 {
-    let [r, g, b] = raytrace_io::export::rgb(fraction, scale == ScreenScale::SquareRoot);
-    Color32::from_rgb(r, g, b)
+    viz::heatmap(fraction, scale == ScreenScale::SquareRoot)
 }
 
 fn dashed_line(painter: &egui::Painter, a: Pos2, b: Pos2) {
@@ -444,7 +443,7 @@ fn dashed_line(painter: &egui::Painter, a: Pos2, b: Pos2) {
                 a + direction * start,
                 a + direction * (start + 4.0).min(distance),
             ],
-            Stroke::new(1.0_f32, HALF_COLOR),
+            Stroke::new(1.0_f32, viz::HALF_COLOR),
         );
     }
 }
@@ -488,11 +487,11 @@ fn draw_half_width_guides(
         );
         painter.line_segment(
             [p - Vec2::new(4.0, 0.0), p + Vec2::new(4.0, 0.0)],
-            Stroke::new(1.0_f32, HALF_COLOR),
+            Stroke::new(1.0_f32, viz::HALF_COLOR),
         );
         painter.line_segment(
             [p - Vec2::new(0.0, 4.0), p + Vec2::new(0.0, 4.0)],
-            Stroke::new(1.0_f32, HALF_COLOR),
+            Stroke::new(1.0_f32, viz::HALF_COLOR),
         );
     }
 }
@@ -512,11 +511,17 @@ pub(super) fn draw_profile(
         ScreenNormalization::Reference => format!("{:.5}%", maximum * 100.0 / reference),
     };
     ui.label(format!("{axis}断面 · 上端 {top}"));
-    let (rect, _) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 170.0), egui::Sense::hover());
+    let plot_height = ((ui.ctx().screen_rect().height() - 480.0) * 0.5).clamp(96.0, 170.0);
+    let (rect, _) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), plot_height),
+        egui::Sense::hover(),
+    );
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 4.0, Color32::from_rgb(248, 250, 253));
-    let inner = rect.shrink2(Vec2::new(10.0, 16.0));
+    painter.rect_filled(rect, 4.0, BG_CANVAS);
+    let inner = egui::Rect::from_min_max(
+        rect.min + Vec2::new(10.0, 16.0),
+        rect.max - Vec2::new(10.0, 28.0),
+    );
     let x =
         |v: f64| inner.left() + ((v + half_extent) / (2.0 * half_extent)) as f32 * inner.width();
     let y = |v: f64| {
@@ -534,7 +539,7 @@ pub(super) fn draw_profile(
             .enumerate()
             .map(|(i, w)| Pos2::new(x(profile.coordinate_mm(i)), y(*w)))
             .collect(),
-        Stroke::new(1.5_f32, BLUE),
+        Stroke::new(1.5_f32, viz::SERIES[0]),
     ));
     if display.half_maximum {
         dashed_line(
@@ -557,7 +562,7 @@ pub(super) fn draw_profile(
         Pos2::new(rect.center().x, rect.bottom()),
         egui::Align2::CENTER_BOTTOM,
         format!("{axis} [{:.3} … {half_extent:.3}] mm", -half_extent),
-        egui::FontId::proportional(10.0),
-        MUTED,
+        egui::FontId::proportional(SIZE_CAPTION),
+        TEXT_MUTED,
     );
 }

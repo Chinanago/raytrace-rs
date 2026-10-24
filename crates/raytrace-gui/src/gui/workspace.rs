@@ -4,12 +4,12 @@ use super::*;
 impl App {
     pub(super) fn content(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(Color32::WHITE).inner_margin(20.0))
+            .frame(egui::Frame::new().fill(BG_CANVAS).inner_margin(20.0))
             .show(ctx, |ui| {
                 if self.stale {
                     ui.horizontal(|ui| {
                         ui.colored_label(
-                            Color32::from_rgb(173, 93, 20),
+                            WARNING,
                             "配置・条件を変更しました。計算すると結果が更新されます。",
                         );
                     });

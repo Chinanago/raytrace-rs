@@ -385,6 +385,7 @@ mod tests {
     fn gui_checks_the_total_before_generating_rays_and_can_cancel_a_single_trace() {
         let mut app = App::demo();
         let ctx = egui::Context::default();
+        theme::install(&ctx);
         for s in &mut app.project.assembly.as_mut().unwrap().components[0]
             .project
             .scene
@@ -427,6 +428,7 @@ mod tests {
     fn study_can_run_select_a_saved_case_and_compare_screens_without_retracing_the_full_case() {
         let mut app = App::demo();
         let ctx = egui::Context::default();
+        theme::install(&ctx);
         let dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
             .join("target/study_ui_tests")
             .join(format!("{}", std::process::id()));

@@ -18,8 +18,8 @@ impl App {
                 egui::RichText::new(
                     "プレビューは各光源256本まで。光路図は合計64本までのサンプルです。",
                 )
-                .size(11.0)
-                .color(MUTED),
+                .size(SIZE_BODY_LARGE)
+                .color(TEXT_MUTED),
             );
             let mut changed = false;
             if let Some(first) = self.project.scene.sources.first() {
@@ -55,20 +55,22 @@ impl App {
                         egui::RichText::new(
                             "光源ごとに設定が異なります。上の値を変更すると全光源へ適用します。",
                         )
-                        .size(11.0)
-                        .color(MUTED),
+                        .size(SIZE_BODY_LARGE)
+                        .color(TEXT_MUTED),
                     );
                 }
             } else {
-                ui.label(egui::RichText::new("光源を追加すると本数を設定できます。").color(MUTED));
+                ui.label(
+                    egui::RichText::new("光源を追加すると本数を設定できます。").color(TEXT_MUTED),
+                );
             }
             section_label(ui, "追跡方式");
             if self.project.assembly.is_some() {
                 ui.label("非シーケンシャル");
                 ui.label(
                     egui::RichText::new("組立光学系は、光線が次に当たる部品を探索して追跡します。")
-                        .size(11.0)
-                        .color(MUTED),
+                        .size(SIZE_BODY_LARGE)
+                        .color(TEXT_MUTED),
                 );
             } else {
                 ui.horizontal(|ui| {
@@ -114,7 +116,7 @@ impl App {
 
 pub(super) fn section_label(ui: &mut egui::Ui, label: &str) {
     ui.add_space(10.0);
-    ui.label(egui::RichText::new(label).strong().size(12.0).color(INK));
+    ui.label(theme::heading(label));
 }
 
 pub(super) fn number_row(
@@ -127,8 +129,8 @@ pub(super) fn number_row(
 ) -> bool {
     ui.horizontal(|ui| {
         ui.add_sized(
-            [60.0, 20.0],
-            egui::Label::new(egui::RichText::new(label).size(12.0)),
+            [88.0, 32.0],
+            egui::Label::new(egui::RichText::new(label).size(SIZE_CAPTION)),
         );
         ui.add(
             egui::DragValue::new(value)
@@ -189,7 +191,7 @@ pub(super) fn source_controls(
     let mut apply = false;
     let s = &mut sources[*index];
     ui.horizontal(|ui| {
-        ui.add_sized([60.0, 20.0], egui::Label::new("光線数"));
+        ui.add_sized([88.0, 32.0], egui::Label::new("光線数"));
         changed |= ui
             .add(
                 egui::DragValue::new(&mut s.count)
@@ -230,8 +232,8 @@ pub(super) fn source_controls(
                 "単色指定中：計算には {:.1} nm を使用",
                 value * 1000.0
             ))
-            .size(11.0)
-            .color(MUTED),
+            .size(SIZE_CAPTION)
+            .color(TEXT_MUTED),
         );
     }
     egui::CollapsingHeader::new("分布・サンプリング").show(ui, |ui| {
@@ -239,8 +241,8 @@ pub(super) fn source_controls(
         if s.sampling == Sampling::Sobol && !s.count.is_power_of_two() {
             ui.label(
                 egui::RichText::new("Sobol推奨：256 / 1024 / 4096…本")
-                    .size(11.0)
-                    .color(MUTED),
+                    .size(SIZE_CAPTION)
+                    .color(TEXT_MUTED),
             );
         }
         ui.horizontal(|ui| {

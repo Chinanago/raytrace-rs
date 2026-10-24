@@ -8,16 +8,16 @@ impl App {
             return;
         }
         egui::SidePanel::left("parts")
-            .exact_width(264.0)
+            .exact_width(340.0)
             .resizable(false)
-            .frame(
-                egui::Frame::new()
-                    .fill(Color32::from_rgb(248, 250, 252))
-                    .inner_margin(16.0),
-            )
+            .frame(egui::Frame::new().fill(BG_PANEL).inner_margin(16.0))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("部品").strong().size(15.0));
+                    ui.label(
+                        egui::RichText::new("部品")
+                            .family(egui::FontFamily::Name("bold".into()))
+                            .size(SIZE_HEADING_S),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_enabled_ui(self.job.is_none(), |ui| {
                             ui.menu_button("＋ 追加", |ui| self.add_menu(ui, ctx));
@@ -50,7 +50,7 @@ impl App {
             ui.add_space(16.0);
             ui.label(
                 egui::RichText::new("光源と光学部品を追加すると、ここに一覧が表示されます。")
-                    .color(MUTED),
+                    .color(TEXT_MUTED),
             );
             return;
         }
@@ -67,13 +67,7 @@ impl App {
                             .on_hover_text("この部品を使用")
                             .changed();
                         let text = format!("{:02}  {}", i + 1, short_name(&c.name, 15));
-                        if ui
-                            .add(
-                                egui::Button::new(text)
-                                    .min_size(Vec2::new(ui.available_width(), 26.0))
-                                    .selected(self.component == i)
-                                    .frame(self.component == i),
-                            )
+                        if theme::component_button(ui, text, self.component == i)
                             .on_hover_text(format!(
                                 "{}\n{} · Z = {:.3} mm",
                                 c.name,
@@ -99,7 +93,11 @@ impl App {
             .show(ui, |ui| {
                 let c = &mut assembly.components[self.component];
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(kind_label(c.kind)).strong().color(INK));
+                    ui.label(
+                        egui::RichText::new(kind_label(c.kind))
+                            .family(egui::FontFamily::Name("bold".into()))
+                            .color(TEXT),
+                    );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.menu_button("操作", |ui| {
                             if ui.button("この部品の値を走査…").clicked() {
@@ -129,8 +127,8 @@ impl App {
                         ComponentKind::Rod => "基準：ロッド入口の中心",
                         _ => "部品全体の位置と傾き",
                     })
-                    .size(10.0)
-                    .color(MUTED),
+                    .size(SIZE_CAPTION)
+                    .color(TEXT_MUTED),
                 );
                 if let Some(r) = &mut c.rod {
                     section_label(ui, "寸法");
@@ -188,7 +186,7 @@ impl App {
                                 .zip(&c.project.scene.materials)
                                 .skip(1)
                             {
-                                ui.label(egui::RichText::new(name).size(11.0));
+                                ui.label(egui::RichText::new(name).size(SIZE_CAPTION));
                                 index_label(ui, material, wavelength);
                             }
                         });
@@ -279,11 +277,13 @@ impl App {
                 }
                 self.selected = self.selected.min(self.project.scene.surfaces.len() - 1);
                 let s = &mut self.project.scene.surfaces[self.selected];
-                ui.label(egui::RichText::new(&s.name).strong());
+                ui.label(
+                    egui::RichText::new(&s.name).family(egui::FontFamily::Name("bold".into())),
+                );
                 ui.label(
                     egui::RichText::new(shape_name(&s.shape))
-                        .size(11.0)
-                        .color(MUTED),
+                        .size(SIZE_CAPTION)
+                        .color(TEXT_MUTED),
                 );
                 changed |= pose_controls(ui, &mut s.pose);
                 match &mut s.shape {
@@ -293,8 +293,8 @@ impl App {
                     Shape::TriangleMesh { triangles, .. } => {
                         ui.label(
                             egui::RichText::new(format!("CAD · {} triangles", triangles.len()))
-                                .size(11.0)
-                                .color(MUTED),
+                                .size(SIZE_CAPTION)
+                                .color(TEXT_MUTED),
                         );
                     }
                     _ => (),
@@ -315,7 +315,11 @@ impl App {
                     section_label(ui, "材料");
                     for (label, value) in [("法線 − 側", minus_medium), ("法線 ＋ 側", plus_medium)]
                     {
-                        ui.label(egui::RichText::new(label).size(11.0).color(MUTED));
+                        ui.label(
+                            egui::RichText::new(label)
+                                .size(SIZE_CAPTION)
+                                .color(TEXT_MUTED),
+                        );
                         egui::ComboBox::from_id_salt(label)
                             .width(ui.available_width() - 8.0)
                             .selected_text(short_name(
@@ -378,7 +382,11 @@ pub(super) fn short_name(name: &str, count: usize) -> String {
 
 fn pose_controls(ui: &mut egui::Ui, pose: &mut Pose) -> bool {
     let mut changed = false;
-    ui.label(egui::RichText::new("位置").strong().size(12.0));
+    ui.label(
+        egui::RichText::new("位置")
+            .family(egui::FontFamily::Name("bold".into()))
+            .size(SIZE_CAPTION),
+    );
     for a in 0..3 {
         changed |= number_row(
             ui,
@@ -408,8 +416,8 @@ fn index_label(ui: &mut egui::Ui, material: &Material, wavelength: f64) {
     if let Some(n) = material.index(wavelength) {
         ui.label(
             egui::RichText::new(format!("n({:.1} nm) = {:.7}", wavelength * 1000.0, n))
-                .size(11.0)
-                .color(MUTED),
+                .size(SIZE_CAPTION)
+                .color(TEXT_MUTED),
         );
     }
 }
@@ -453,6 +461,7 @@ mod tests {
     #[test]
     fn workspace_switches_and_part_selection_preserve_the_optical_system() {
         let ctx = egui::Context::default();
+        theme::install(&ctx);
         let mut app = App::demo();
         let a = app.project.assembly.as_mut().unwrap();
         a.components[0].project.scene.sources[0].count = 3_000_000;

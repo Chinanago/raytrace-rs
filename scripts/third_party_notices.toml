@@ -508,3 +508,45 @@ text = '''
    See the License for the specific language governing permissions and
    limitations under the License.
 '''
+
+# Non-Cargo assets embedded in raytrace-gui.
+[[asset]]
+name = "@digital-go-jp/design-tokens 2.1.0"
+license = "MIT"
+source = "https://github.com/digital-go-jp/design-tokens/blob/f4127b6d85e9b8fb698ea849c20fb15b6215521a/LICENSE"
+text = '''
+MIT License
+
+Copyright (c) 2023 デジタル庁
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+'''
+
+[[asset]]
+name = "Noto Sans JP (subset)"
+license = "OFL-1.1"
+source = "https://github.com/notofonts/noto-cjk"
+file = "crates/raytrace-gui/assets/fonts/OFL-NotoSansJP.txt"
+
+[[asset]]
+name = "Noto Sans Mono (subset)"
+license = "OFL-1.1"
+source = "https://github.com/notofonts/notofonts.github.io"
+file = "crates/raytrace-gui/assets/fonts/OFL-NotoSansMono.txt"

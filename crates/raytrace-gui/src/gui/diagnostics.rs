@@ -10,18 +10,20 @@ impl App {
         egui::Window::new("設定とレポート")
             .open(&mut open)
             .collapsible(false)
-            .default_width(540.0)
+            .default_width(680.0)
             .default_height(500.0)
-            .min_width(410.0)
+            .max_height((ctx.screen_rect().height() - 200.0).max(240.0))
+            .min_width(540.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut page, Details::Calculation, "計算条件");
-                    ui.selectable_value(&mut page, Details::Import, "読込レポート");
-                    ui.selectable_value(&mut page, Details::Budget, "光量収支");
+                    theme::tab(ui, &mut page, Details::Calculation, "計算条件");
+                    theme::tab(ui, &mut page, Details::Import, "読込レポート");
+                    theme::tab(ui, &mut page, Details::Budget, "光量収支");
                 });
                 ui.separator();
                 egui::ScrollArea::vertical()
                     .id_salt("details_content")
+                    .max_height((ctx.screen_rect().height() - 300.0).max(160.0))
                     .show(ui, |ui| match page {
                         Details::Calculation => self.calculation_controls(ui),
                         Details::Import => self.import_report(ui, ctx),
@@ -41,7 +43,7 @@ impl App {
             section_label(ui, "計算に使う条件");
             if self.project.issues.iter().any(|i| i.code == "coating") || self.project.scene.surfaces.iter().any(|s| s.coating.is_some()) {
                 changed |= ui.checkbox(&mut self.project.allow_uncoated, "未コートFresnelで計算").changed();
-                ui.label(egui::RichText::new("元のコーティング名を保持し、界面の反射率は未コートとして計算します。").size(11.0).color(MUTED));
+                ui.label(egui::RichText::new("元のコーティング名を保持し、界面の反射率は未コートとして計算します。").size(SIZE_CAPTION).color(TEXT_MUTED));
             }
             let mut mono = self.project.monochromatic_override_um.is_some();
             if ui.checkbox(&mut mono, "全光源の計算波長を単色で指定").changed() {
@@ -68,7 +70,7 @@ impl App {
                                 let mode = match g.aiming { raytrace_core::illumination::RayAiming::Off => "近軸瞳へ照射", raytrace_core::illumination::RayAiming::Paraxial => "近軸半径のSTOPへ照準", raytrace_core::illumination::RayAiming::Real => "実光線半径のSTOPへ照準" };
                                 ui.label(format!("主波長 {:.1} nm · {mode}", g.primary_wavelength_um * 1000.));
                             }
-                            if let Some(e) = &pupil.error { ui.colored_label(Color32::from_rgb(173, 93, 20), e); }
+                            if let Some(e) = &pupil.error { ui.colored_label(WARNING, e); }
                         }
                     });
                 }
@@ -76,22 +78,22 @@ impl App {
             section_label(ui, "読込の確認");
             let report = self.project.compatibility_report();
             ui.label(egui::RichText::new(if report.traceable { "指定した条件で計算できます" } else { "計算前に確認が必要な項目があります" })
-                .color(if report.traceable { BLUE } else { Color32::from_rgb(173, 93, 20) }));
+                .color(if report.traceable { SUCCESS } else { WARNING }));
             for component in report.components {
                 egui::CollapsingHeader::new(format!("{}{}", component.name, if component.enabled { "" } else { "（使用停止）" }))
                     .id_salt(("compatibility", component.component)).default_open(true).show(ui, |ui| {
                     for entry in &component.entries {
-                        ui.label(egui::RichText::new(format!("{} · {}", entry.status.label(), entry.code)).size(11.0).color(
-                            if entry.status.blocks() && component.enabled { Color32::from_rgb(173, 93, 20) } else { MUTED }));
-                        ui.label(egui::RichText::new(&entry.message).size(12.0));
+                        ui.label(egui::RichText::new(format!("{} · {}", entry.status.label(), entry.code)).size(SIZE_CAPTION).color(
+                            if entry.status.blocks() && component.enabled { WARNING } else { TEXT_MUTED }));
+                        ui.label(egui::RichText::new(&entry.message).size(SIZE_BODY_LARGE));
                     }
                     egui::CollapsingHeader::new("計算波長・屈折率・吸収").id_salt(("optics", component.component)).show(ui, |ui| {
                         for material in &component.materials {
-                            ui.label(egui::RichText::new(&material.name).strong().size(11.0));
+                            ui.label(egui::RichText::new(&material.name).family(egui::FontFamily::Name("bold".into())).size(SIZE_CAPTION));
                             for sample in &material.samples {
                                 ui.label(egui::RichText::new(format!("{:.2} nm · n={} · 吸収係数 {} /mm", sample.wavelength_um * 1000.0,
                                     sample.refractive_index.map_or_else(|| "範囲外".into(), |v| format!("{v:.7}")),
-                                    sample.absorption_per_mm.map_or_else(|| "範囲外".into(), |v| format!("{v:.6}")))).size(11.0).color(MUTED));
+                                    sample.absorption_per_mm.map_or_else(|| "範囲外".into(), |v| format!("{v:.6}")))).size(SIZE_CAPTION).color(TEXT_MUTED));
                             }
                         }
                     });
@@ -104,7 +106,7 @@ impl App {
                     self.status = "材料カタログを追加しました。次のファイル読込から使います".into();
                 }
             }
-            for dir in &self.catalogs { ui.label(egui::RichText::new(dir.display().to_string()).size(11.0).color(MUTED)); }
+            for dir in &self.catalogs { ui.label(egui::RichText::new(dir.display().to_string()).size(SIZE_CAPTION).color(TEXT_MUTED)); }
             if let Some(path) = self.path.clone() {
                 if ui.button("現在のファイルを読み直す").on_hover_text("配置・編集をファイルの内容へ戻し、追加した材料カタログを使って読み直します").clicked() {
                     self.load(path, ctx);
@@ -119,7 +121,7 @@ impl App {
             return;
         };
         if self.stale {
-            ui.colored_label(Color32::from_rgb(173, 93, 20), "前回の計算結果");
+            ui.colored_label(WARNING, "前回の計算結果");
         }
         let b = &r.report.budget;
         let reference = b.launched.max(1e-300);
@@ -128,7 +130,9 @@ impl App {
         ui.add_space(10.0);
         egui::Grid::new("budget")
             .num_columns(2)
-            .spacing([30.0, 10.0])
+            .min_col_width(260.0)
+            .min_row_height(SIZE_BODY + SPACE_1)
+            .spacing([SPACE_6, SPACE_2])
             .show(ui, |ui| {
                 for (label, value) in [
                     ("スクリーン合計", b.detected),
@@ -159,8 +163,8 @@ impl App {
                 r.seconds * 1000.0,
                 r.scene.surfaces.len()
             ))
-            .size(11.0)
-            .color(MUTED),
+            .size(SIZE_CAPTION)
+            .color(TEXT_MUTED),
         );
         section_label(ui, "追跡の診断");
         let fallbacks = r
@@ -178,8 +182,8 @@ impl App {
         if r.report.diagnostics.is_empty() {
             ui.label(
                 egui::RichText::new("未解決の光線・打切りはありません")
-                    .size(12.0)
-                    .color(MUTED),
+                    .size(SIZE_CAPTION)
+                    .color(TEXT_MUTED),
             );
         }
         let mut locate = None;
@@ -285,6 +289,7 @@ mod tests {
     #[test]
     fn diagnostic_navigation_selects_the_component_without_changing_the_model() {
         let ctx = egui::Context::default();
+        theme::install(&ctx);
         ctx.style_mut(|s| s.animation_time = 0.0);
         let mut app = App::demo();
         for source in &mut app.project.assembly.as_mut().unwrap().components[0]
@@ -325,7 +330,26 @@ mod tests {
         });
         app.details = Some(Details::Budget);
         frame(&mut app, &ctx, vec![]);
-        let out = frame(&mut app, &ctx, vec![]);
+        let mut out = frame(&mut app, &ctx, vec![]);
+        let body = text_rect(&out, "光量収支").unwrap().center() + Vec2::new(0.0, 150.0);
+        if text_rect(&out, &label).is_none() {
+            // Larger controls put the diagnostic groups below the budget table.
+            frame(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(body),
+                    egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: Vec2::new(0.0, -400.0),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+            for _ in 0..30 {
+                out = frame(&mut app, &ctx, vec![]);
+            }
+        }
         let header = text_rect(&out, &label).expect("diagnostic group").center();
         click(&mut app, &ctx, header);
         let mut out = frame(&mut app, &ctx, vec![]);
@@ -334,7 +358,7 @@ mod tests {
                 &mut app,
                 &ctx,
                 vec![
-                    egui::Event::PointerMoved(header),
+                    egui::Event::PointerMoved(body),
                     egui::Event::MouseWheel {
                         unit: egui::MouseWheelUnit::Point,
                         delta: Vec2::new(0.0, -600.0),

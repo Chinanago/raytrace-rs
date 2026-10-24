@@ -4,16 +4,16 @@ use super::*;
 impl App {
     pub(super) fn toolbar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("toolbar")
-            .exact_height(62.0)
-            .frame(egui::Frame::new().fill(Color32::WHITE).inner_margin(16.0))
+            .exact_height(72.0)
+            .frame(egui::Frame::new().fill(BG_PANEL).inner_margin(16.0))
             .show(ctx, |ui| {
                 ui.horizontal_centered(|ui| {
-                    ui.label(egui::RichText::new("●").color(BLUE).size(19.0));
+                    ui.label(egui::RichText::new("●").color(PRIMARY).size(SIZE_HEADING_M));
                     ui.label(
                         egui::RichText::new("Raytrace")
-                            .color(INK)
-                            .size(22.0)
-                            .strong(),
+                            .color(TEXT)
+                            .size(SIZE_TITLE)
+                            .family(egui::FontFamily::Name("bold".into())),
                     );
                     ui.add_space(12.0);
                     let title = format!(
@@ -23,16 +23,20 @@ impl App {
                     );
                     ui.add_sized(
                         [(ui.available_width() - 420.0).clamp(60.0, 360.0), 24.0],
-                        egui::Label::new(egui::RichText::new(title).size(12.0).color(MUTED))
-                            .truncate(),
+                        egui::Label::new(
+                            egui::RichText::new(title)
+                                .size(SIZE_CAPTION)
+                                .color(TEXT_MUTED),
+                        )
+                        .truncate(),
                     )
                     .on_hover_text(self.path.as_ref().map_or_else(
                         || "保存先：未設定".into(),
                         |p| format!("保存先：{}", p.display()),
                     ));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add_enabled(
+                        if theme::primary_scope(ui, |ui| {
+                            ui.add_enabled(
                                 self.job.is_none() || self.control.is_some(),
                                 egui::Button::new(
                                     egui::RichText::new(if self.control.is_some() {
@@ -42,12 +46,13 @@ impl App {
                                     } else {
                                         "▶  計算する"
                                     })
-                                    .color(Color32::WHITE),
+                                    .color(TEXT_ON_PRIMARY)
+                                    .font(theme::bold_font(SIZE_BODY)),
                                 )
-                                .fill(BLUE)
                                 .min_size(Vec2::new(118.0, 32.0)),
                             )
-                            .clicked()
+                        })
+                        .clicked()
                         {
                             if let Some(control) = &self.control {
                                 control.cancel.store(true, Ordering::Relaxed);
@@ -83,16 +88,16 @@ impl App {
                 });
             });
         egui::TopBottomPanel::top("workspace_tabs")
-            .exact_height(43.0)
+            .exact_height(50.0)
             .frame(
                 egui::Frame::new()
-                    .fill(Color32::WHITE)
+                    .fill(BG_PANEL)
                     .inner_margin(egui::Margin::symmetric(18, 7)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut self.view, View::Layout, "光学系");
-                    ui.selectable_value(&mut self.view, View::Screen, "スクリーン");
+                    theme::tab(ui, &mut self.view, View::Layout, "光学系");
+                    theme::tab(ui, &mut self.view, View::Screen, "スクリーン");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if ui.small_button("読込レポート").clicked() {
                             self.details = Some(Details::Import);
@@ -104,8 +109,8 @@ impl App {
                         if !self.project.issues.is_empty() {
                             ui.label(
                                 egui::RichText::new(format!("{} 件", self.project.issues.len()))
-                                    .size(11.0)
-                                    .color(MUTED),
+                                    .size(SIZE_CAPTION)
+                                    .color(TEXT_MUTED),
                             );
                         }
                     });

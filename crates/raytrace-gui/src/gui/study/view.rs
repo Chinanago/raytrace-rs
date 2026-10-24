@@ -15,7 +15,7 @@ impl App {
             .vscroll(true)
             .max_height((ctx.screen_rect().height() - 70.0).max(300.0))
             .open(&mut open)
-            .default_width(740.0)
+            .default_width(860.0)
             .default_height(620.0)
             .min_width(540.0)
             .show(ctx, |ui| {
@@ -204,8 +204,8 @@ impl App {
                                 egui::RichText::new(
                                     "各ケースで光源の方式・seedを揃えて比較します。",
                                 )
-                                .size(11.0)
-                                .color(MUTED),
+                                .size(SIZE_CAPTION)
+                                .color(TEXT_MUTED),
                             );
                             ui.horizontal(|ui| {
                                 if ui.button("保存先…").clicked() {
@@ -315,8 +315,8 @@ impl App {
                     if let Some(dir) = &self.study.directory {
                         ui.label(
                             egui::RichText::new(dir.display().to_string())
-                                .size(10.0)
-                                .color(MUTED),
+                                .size(SIZE_CAPTION)
+                                .color(TEXT_MUTED),
                         );
                     }
                 }
@@ -421,14 +421,14 @@ fn study_plot(
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 160.0), egui::Sense::click());
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 4.0, Color32::from_rgb(248, 250, 253));
+    painter.rect_filled(rect, 4.0, BG_CANVAS);
     if points.is_empty() {
         return None;
     }
     let minx = points.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
     let maxx = points.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
     let maxy = points.iter().map(|p| p.2).fold(0.0, f64::max).max(1e-12);
-    let area = rect.shrink2(Vec2::new(45.0, 22.0));
+    let area = rect.shrink2(Vec2::new(64.0, 28.0));
     let pos = |x: f64, y: f64| {
         Pos2::new(
             area.left() + ((x - minx) / (maxx - minx).max(1e-12)) as f32 * area.width(),
@@ -446,14 +446,7 @@ fn study_plot(
             })
             .unwrap_or(0)
     };
-    let palette = [
-        BLUE,
-        Color32::from_rgb(201, 78, 75),
-        Color32::from_rgb(49, 143, 101),
-        Color32::from_rgb(149, 89, 183),
-        Color32::from_rgb(203, 137, 38),
-        Color32::from_rgb(45, 146, 166),
-    ];
+    let palette = viz::SERIES;
     for k in 0..m.plan.secondary.as_ref().map_or(1, |s| s.values.len()) {
         let mut line = points
             .iter()
@@ -483,8 +476,8 @@ fn study_plot(
         rect.left_top() + Vec2::new(4.0, 4.0),
         egui::Align2::LEFT_TOP,
         format!("{maxy:.4} {}", if metric == 0 { "%" } else { "mm" }),
-        egui::FontId::proportional(10.0),
-        MUTED,
+        egui::FontId::proportional(SIZE_CAPTION),
+        TEXT_MUTED,
     );
     if let Some(s) = &m.plan.secondary {
         ui.horizontal_wrapped(|ui| {
@@ -500,15 +493,15 @@ fn study_plot(
         Pos2::new(area.left(), rect.bottom() - 2.0),
         egui::Align2::LEFT_BOTTOM,
         format!("{minx:.4}"),
-        egui::FontId::proportional(10.0),
-        MUTED,
+        egui::FontId::proportional(SIZE_CAPTION),
+        TEXT_MUTED,
     );
     painter.text(
         Pos2::new(area.right(), rect.bottom() - 2.0),
         egui::Align2::RIGHT_BOTTOM,
         format!("{maxx:.4} {}", unit(&m.plan.parameter)),
-        egui::FontId::proportional(10.0),
-        MUTED,
+        egui::FontId::proportional(SIZE_CAPTION),
+        TEXT_MUTED,
     );
     None
 }
