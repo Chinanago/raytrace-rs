@@ -1,4 +1,5 @@
 //! Native ZMX/AGF parsing. Unknown data stays in the original document.
+use crate::Result;
 mod exchange;
 mod illumination;
 use crate::project::Project;
@@ -36,25 +37,29 @@ pub struct ZmxDocument {
     pub surface_numbers: Vec<usize>,
     pub glass_records: BTreeMap<String, String>,
 }
-pub fn read_zmx(path: &Path, extra: &[PathBuf]) -> Result<Project, String> {
+pub fn read_zmx(path: &Path, extra: &[PathBuf]) -> Result<Project> {
     read_zmx_with_cad_tolerance(path, extra, 0.02)
 }
 pub fn read_zmx_with_cad_tolerance(
     path: &Path,
     extra: &[PathBuf],
     deflection_mm: f64,
-) -> Result<Project, String> {
+) -> Result<Project> {
     if !deflection_mm.is_finite() || deflection_mm <= 0.0 {
-        return Err("CAD分割精度が不正です".into());
+        return Err(crate::Error::zmx("CAD分割精度が不正です".into()));
     }
-    let (text, encoding) = decode(&fs::read(path).map_err(|e| e.to_string())?);
+    let (text, encoding) = decode(&fs::read(path).map_err(|e| crate::Error::io(path, e))?);
     let all: Vec<String> = text.lines().map(str::to_owned).collect();
     if field(&all, "UNIT").is_some_and(|s| s.split_whitespace().next() != Some("MM")) {
-        return Err("現在はmm単位のZMXに対応しています".into());
+        return Err(crate::Error::zmx(
+            "現在はmm単位のZMXに対応しています".into(),
+        ));
     }
     let mode = field(&all, "MODE").unwrap_or("SEQ");
     if !["SEQ", "NSC"].contains(&mode) {
-        return Err(format!("未対応のZMX追跡方式です: {mode}"));
+        return Err(crate::Error::zmx(format!(
+            "未対応のZMX追跡方式です: {mode}"
+        )));
     }
     let wavelengths = checked_parameters(&all, "WAVM")?;
     for line in &all {
@@ -64,12 +69,15 @@ pub fn read_zmx_with_cad_tolerance(
                 || w[1].parse::<usize>().ok().is_none_or(|i| i == 0)
                 || number(w[2]).ok().is_none_or(|v| !v.is_finite() || v <= 0.0))
         {
-            return Err(format!("ZMXの波長定義が不正です: {}", line.trim()));
+            return Err(crate::Error::zmx(format!(
+                "ZMXの波長定義が不正です: {}",
+                line.trim()
+            )));
         }
     }
     let primary_value = scalar(&all, "PWAV", 1.0)?;
     if !primary_value.is_finite() || primary_value < 1.0 || primary_value.fract() != 0.0 {
-        return Err("ZMXの主波長番号が不正です".into());
+        return Err(crate::Error::zmx("ZMXの主波長番号が不正です".into()));
     }
     let primary = primary_value as usize;
     let wavelength = *wavelengths

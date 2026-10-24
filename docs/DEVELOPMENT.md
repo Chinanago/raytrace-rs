@@ -2,6 +2,8 @@
 
 ソースリポジトリでのビルド・検証・配布物の作成方法です。通常の操作は[操作ガイド](GUIDE.md)、機能ごとの対応条件は[機能と対応範囲](FEATURES.md)を参照してください。
 
+ライブラリの失敗は `raytrace-core`・`raytrace-io`・`raytrace-app` の各 `Error` 列挙型と `Result<T>` で返します。`Error` は `#[non_exhaustive]` のため、呼出側のパターンマッチには残りのケースを扱う分岐が必要です。材料番号・波長・光線ID・ファイルパスなどはフィールドで取得でき、表示文は日本語です。ルートクレートからは `raytrace_rs::error::{CoreError, IoError, AppError}` として参照できます。GUIやレポート内のエラー文字列には `error.to_string()` を使います。光源番号の `source_index` は既存の表示に合わせて1から数えます。
+
 ## ソースからビルドして起動
 
 WindowsとRust（Cargo）が必要です。初回ビルド時に依存ライブラリを取得します。

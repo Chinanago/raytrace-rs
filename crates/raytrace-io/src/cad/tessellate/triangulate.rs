@@ -1,4 +1,5 @@
 use super::*;
+use crate::Result;
 
 pub(super) fn area(points: &[[f64; 2]]) -> f64 {
     let origin = points[0];
@@ -40,7 +41,7 @@ pub(super) fn triangulate(
     boundary: &HashSet<(usize, usize)>,
     rings: &[Vec<[f64; 2]>],
     metric: [f64; 2],
-) -> Result<Vec<[usize; 3]>, String> {
+) -> Result<Vec<[usize; 3]>> {
     use spade::{ConstrainedDelaunayTriangulation, Triangulation};
     let lo = std::array::from_fn::<_, 2, _>(|a| {
         rings[0].iter().map(|p| p[a]).fold(f64::INFINITY, f64::min)
@@ -53,7 +54,7 @@ pub(super) fn triangulate(
             - lo[a]
     });
     if span.iter().any(|x| !x.is_finite() || *x <= 0.) {
-        return Err("STEP: 面の展開範囲が不正です".into());
+        return Err(crate::Error::step("STEP: 面の展開範囲が不正です".into()));
     }
     let points = vertices
         .iter()
@@ -74,9 +75,11 @@ pub(super) fn triangulate(
         edges,
         |_| conflict = true,
     )
-    .map_err(|e| format!("STEP: 面の三角形分割に失敗しました: {e}"))?;
+    .map_err(|e| crate::Error::step(format!("STEP: 面の三角形分割に失敗しました: {e}")))?;
     if conflict || cdt.num_vertices() != vertices.len() {
-        return Err("STEP: 面境界が交差、または展開点が重複しています".into());
+        return Err(crate::Error::step(
+            "STEP: 面境界が交差、または展開点が重複しています".into(),
+        ));
     }
     // Crossing a trim constraint toggles inside/outside. This also retains
     // extremely thin faces whose floating-point centroid rounds onto an edge.
@@ -93,7 +96,9 @@ pub(super) fn triangulate(
             if neighbor == 0 {
                 let value = constrained as u8;
                 if parity[i] != 2 && parity[i] != value {
-                    return Err("STEP: 面境界の内外が矛盾しています".into());
+                    return Err(crate::Error::step(
+                        "STEP: 面境界の内外が矛盾しています".into(),
+                    ));
                 }
                 if parity[i] == 2 {
                     parity[i] = value;
@@ -110,7 +115,9 @@ pub(super) fn triangulate(
                 parity[neighbor] = value;
                 queue.push_back(neighbor);
             } else if parity[neighbor] != value {
-                return Err("STEP: 面境界が閉じていないか交差しています".into());
+                return Err(crate::Error::step(
+                    "STEP: 面境界が閉じていないか交差しています".into(),
+                ));
             }
         }
     }
@@ -120,7 +127,9 @@ pub(super) fn triangulate(
         .map(|f| f.vertices().map(|v| v.data().index))
         .collect::<Vec<_>>();
     if triangles.len() > MAX_TRIANGLES {
-        return Err("STEP: 曲面の分割数が100万三角形を超えました".into());
+        return Err(crate::Error::step(
+            "STEP: 曲面の分割数が100万三角形を超えました".into(),
+        ));
     }
     Ok(triangles)
 }

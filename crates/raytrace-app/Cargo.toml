@@ -11,6 +11,7 @@ keywords = ["optics", "raytracing"]
 categories = ["science", "simulation"]
 
 [dependencies]
+thiserror = { workspace = true }
 raytrace-core = { workspace = true }
 raytrace-io = { workspace = true }
 rayon = { workspace = true }

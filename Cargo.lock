@@ -1731,6 +1731,7 @@ dependencies = [
  "raytrace-io",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1753,6 +1754,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1781,6 +1783,7 @@ dependencies = [
  "serde",
  "serde_json",
  "spade",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

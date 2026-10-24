@@ -116,7 +116,16 @@ fn generation_errors_keep_the_first_launch_error() {
     let scene = scene.prepare().unwrap();
     let error = scene.generate_rays().unwrap_err();
     // The on-axis source succeeds before the second source fails aiming.
-    assert!(error.contains("光源 2"), "{error}");
+    assert!(
+        matches!(
+            error,
+            raytrace_core::Error::RayAiming {
+                source_index: 2,
+                ..
+            }
+        ),
+        "{error}"
+    );
     let generator = scene.ray_generator().unwrap();
     let first = generator
         .rays(0..generator.len())

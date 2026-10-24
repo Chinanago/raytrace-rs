@@ -1,18 +1,21 @@
 use super::*;
+use crate::Result;
 
 pub(super) fn read_source_spectrum(
     path: &Path,
     all: &[String],
     lines: &[String],
     wave_index: f64,
-) -> Result<Option<raytrace_core::spectrum::Spectrum>, String> {
+) -> Result<Option<raytrace_core::spectrum::Spectrum>> {
     let settings = lines.iter().find(|l| {
         let w = words(l);
         w.starts_with(&["NSCS", "7", "3"])
     });
     let parts = settings.map(|l| words(l));
     if parts.as_ref().is_some_and(|w| w.len() < 10) {
-        return Err("NSCS 7 3のスペクトル条件が不足しています".into());
+        return Err(crate::Error::zmx(
+            "NSCS 7 3のスペクトル条件が不足しています".into(),
+        ));
     }
     let mode = parts
         .as_ref()
@@ -23,11 +26,13 @@ pub(super) fn read_source_spectrum(
         0. => {
             let waves = parameters(all, "WAVM");
             if !wave_index.is_finite() || wave_index < 0. || wave_index.fract() != 0. {
-                return Err("光源の波長番号が不正です".into());
+                return Err(crate::Error::zmx("光源の波長番号が不正です".into()));
             }
             if wave_index > 0. {
                 if !waves.contains_key(&(wave_index as usize)) {
-                    return Err("光源の指定波長番号が波長表にありません".into());
+                    return Err(crate::Error::zmx(
+                        "光源の指定波長番号が波長表にありません".into(),
+                    ));
                 }
                 return Ok(None);
             }
@@ -57,7 +62,7 @@ pub(super) fn read_source_spectrum(
             let name = line
                 .split('"')
                 .nth(1)
-                .ok_or("SPCDのファイル名が不足しています")?;
+                .ok_or_else(|| crate::Error::zmx("SPCDのファイル名が不足しています".into()))?;
             let mut files = vec![path.parent().unwrap_or(Path::new(".")).join(name)];
             if let Some(user) = std::env::var_os("USERPROFILE") {
                 files.push(
@@ -66,10 +71,9 @@ pub(super) fn read_source_spectrum(
                         .join(name),
                 );
             }
-            let file = files
-                .iter()
-                .find(|p| p.is_file())
-                .ok_or_else(|| format!("参照スペクトル{name}が見つかりません"))?;
+            let file = files.iter().find(|p| p.is_file()).ok_or_else(|| {
+                crate::Error::zmx(format!("参照スペクトル{name}が見つかりません"))
+            })?;
             return read_spcd(file).map(Some);
         }
         4. | 7. => {
@@ -84,7 +88,7 @@ pub(super) fn read_source_spectrum(
                 || !(2.0..=200.0).contains(&steps)
                 || steps.fract() != 0.
             {
-                return Err("スペクトルの範囲・点数が不正です".into());
+                return Err(crate::Error::zmx("スペクトルの範囲・点数が不正です".into()));
             }
             let mut v: Vec<_> = (0..steps as usize)
                 .map(|i| [lo + (hi - lo) * i as f64 / (steps - 1.), 1.])
@@ -92,7 +96,9 @@ pub(super) fn read_source_spectrum(
             if mode == 7. {
                 let temperature = number(w[4])?;
                 if !temperature.is_finite() || temperature <= 0. {
-                    return Err("黒体温度は正の有限値[K]で指定してください".into());
+                    return Err(crate::Error::zmx(
+                        "黒体温度は正の有限値[K]で指定してください".into(),
+                    ));
                 }
                 let logs: Vec<_> = v
                     .iter()
@@ -109,13 +115,13 @@ pub(super) fn read_source_spectrum(
             v
         }
         _ => {
-            return Err(format!(
+            return Err(crate::Error::zmx(format!(
                 "光源の色・スペクトルモデル{mode}は未対応です。単色波長を明示できます"
-            ))
+            )))
         }
     };
     if samples.is_empty() {
-        return Err("光源に波長と重みがありません".into());
+        return Err(crate::Error::zmx("光源に波長と重みがありません".into()));
     }
     let spectrum = raytrace_core::spectrum::Spectrum {
         samples: std::mem::take(&mut samples),
@@ -124,10 +130,12 @@ pub(super) fn read_source_spectrum(
     Ok(Some(spectrum))
 }
 
-pub(super) fn nsc_reference(value: &str, row: usize) -> Result<usize, String> {
+pub(super) fn nsc_reference(value: &str, row: usize) -> Result<usize> {
     let v = number(value)?;
     if !v.is_finite() || v.fract() != 0. || v.abs() > 1_000_000. {
-        return Err("参照番号は範囲内の整数で指定してください".into());
+        return Err(crate::Error::zmx(
+            "参照番号は範囲内の整数で指定してください".into(),
+        ));
     }
     let target = if v < 0. {
         row as i64 + v as i64
@@ -135,9 +143,9 @@ pub(super) fn nsc_reference(value: &str, row: usize) -> Result<usize, String> {
         v as i64
     };
     if target < 0 || target >= row as i64 {
-        return Err(
+        return Err(crate::Error::zmx(
             "参照先はこのオブジェクトより前にある必要があります（前方・自己・循環参照）".into(),
-        );
+        ));
     }
     Ok(target as usize)
 }
@@ -150,7 +158,7 @@ pub(super) fn read_nsc(
     glasses: &BTreeMap<String, Glass>,
     records: &mut BTreeMap<String, String>,
     deflection_mm: f64,
-) -> Result<(), String> {
+) -> Result<()> {
     let mut objects: Vec<Vec<String>> = Vec::new();
     for line in all {
         if line.trim_start().starts_with("NSOH ") {
@@ -166,7 +174,7 @@ pub(super) fn read_nsc(
     for (i, lines) in objects.iter().enumerate() {
         let head = words(field(lines, "NSOH").unwrap_or(""));
         if head.is_empty() {
-            return Err("NSOHオブジェクト型がありません".into());
+            return Err(crate::Error::zmx("NSOHオブジェクト型がありません".into()));
         }
         let typ = head[0];
         let reference = head
@@ -361,7 +369,7 @@ pub(super) fn read_nsc(
                             reflectance: None,
                         },
                     }),
-                    Err(e) => project.issue("cad", e, true),
+                    Err(e) => project.issue("cad", e.to_string(), true),
                 }
             }
             "NSC_NULL" => (),

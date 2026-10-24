@@ -1,4 +1,5 @@
 //! Local B-spline basis and rational derivatives; no modelling operations.
+use crate::Result;
 use raytrace_core::math::V3;
 
 #[derive(Clone, Debug)]
@@ -8,12 +9,7 @@ pub(super) struct Basis {
     pub count: usize,
 }
 impl Basis {
-    pub fn new(
-        degree: usize,
-        count: usize,
-        multiplicities: &[f64],
-        knots: &[f64],
-    ) -> Result<Self, String> {
+    pub fn new(degree: usize, count: usize, multiplicities: &[f64], knots: &[f64]) -> Result<Self> {
         if !(1..=16).contains(&degree)
             || count <= degree
             || count > 16_384
@@ -22,7 +18,9 @@ impl Basis {
             || knots.len() > count + degree + 1
             || knots.windows(2).any(|k| k[0] >= k[1])
         {
-            return Err("STEP: B-splineの次数・制御点・ノット列が不正です".into());
+            return Err(crate::Error::step(
+                "STEP: B-splineの次数・制御点・ノット列が不正です".into(),
+            ));
         }
         let mut expanded = Vec::new();
         for (&n, &value) in multiplicities.iter().zip(knots) {
@@ -32,7 +30,9 @@ impl Basis {
                 || n.fract() != 0.
                 || !value.is_finite()
             {
-                return Err("STEP: B-splineのノット重複度が不正です".into());
+                return Err(crate::Error::step(
+                    "STEP: B-splineのノット重複度が不正です".into(),
+                ));
             }
             expanded.extend(std::iter::repeat_n(value, n as usize));
         }
@@ -40,7 +40,9 @@ impl Basis {
             || expanded[degree] >= expanded[count]
             || !(expanded[count] - expanded[degree]).is_finite()
         {
-            return Err("STEP: B-splineのノット数・パラメーター範囲が不正です".into());
+            return Err(crate::Error::step(
+                "STEP: B-splineのノット数・パラメーター範囲が不正です".into(),
+            ));
         }
         Ok(Self {
             degree,
@@ -119,13 +121,15 @@ pub(super) struct Curve {
     pub weights: Vec<f64>,
 }
 impl Curve {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<()> {
         if self.points.len() != self.basis.count
             || self.weights.len() != self.points.len()
             || self.points.iter().any(|p| !p.finite())
             || self.weights.iter().any(|w| !w.is_finite() || *w <= 0.)
         {
-            return Err("STEP: 曲線の制御点・重みが不正です".into());
+            return Err(crate::Error::step(
+                "STEP: 曲線の制御点・重みが不正です".into(),
+            ));
         }
         Ok(())
     }
@@ -153,7 +157,7 @@ pub(super) struct Surface {
     pub closed: [bool; 2],
 }
 impl Surface {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<()> {
         if self
             .u
             .count
@@ -163,7 +167,9 @@ impl Surface {
             || self.points.iter().any(|p| !p.finite())
             || self.weights.iter().any(|w| !w.is_finite() || *w <= 0.)
         {
-            return Err("STEP: 曲面の制御点・重みが不正です".into());
+            return Err(crate::Error::step(
+                "STEP: 曲面の制御点・重みが不正です".into(),
+            ));
         }
         Ok(())
     }

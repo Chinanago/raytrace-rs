@@ -1,10 +1,11 @@
 use super::*;
+use crate::Result;
 
 pub(super) fn check_boundary(
     triangles: &[[usize; 3]],
     expected: &HashSet<(usize, usize)>,
     stage: &str,
-) -> Result<(), String> {
+) -> Result<()> {
     let mut counts = HashMap::new();
     for t in triangles {
         for j in 0..3 {
@@ -17,11 +18,11 @@ pub(super) fn check_boundary(
         .map(|(e, _)| e)
         .collect();
     if actual != *expected {
-        return Err(format!(
+        return Err(crate::Error::step(format!(
             "STEP: {stage}で境界が変化しました（不足 {}、追加 {}）",
             expected.difference(&actual).count(),
             actual.difference(expected).count()
-        ));
+        )));
     }
     Ok(())
 }
@@ -30,12 +31,14 @@ pub(super) fn validate_closed(
     vertices: &[V3],
     normals: &mut [V3],
     triangles: &mut Vec<[u32; 3]>,
-) -> Result<(), String> {
+) -> Result<()> {
     if vertices.is_empty()
         || vertices.iter().any(|p| !p.finite())
         || normals.iter().any(|p| !p.finite())
     {
-        return Err("STEP: 空または不正なメッシュです".into());
+        return Err(crate::Error::step(
+            "STEP: 空または不正なメッシュです".into(),
+        ));
     }
     let min = V3(std::array::from_fn(|a| {
         vertices
@@ -64,7 +67,9 @@ pub(super) fn validate_closed(
                         for &(id, q) in items {
                             comparisons += 1;
                             if comparisons > 100_000_000 {
-                                return Err("STEP: 縮退点の接続検査が上限に達しました".into());
+                                return Err(crate::Error::step(
+                                    "STEP: 縮退点の接続検査が上限に達しました".into(),
+                                ));
                             }
                             if p == q {
                                 duplicate = true;
@@ -119,7 +124,7 @@ pub(super) fn validate_closed(
         .filter(|(count, balance)| *count == 2 && *balance != 0)
         .count();
     if open > 0 || reversed > 0 {
-        return Err(format!("STEP: 閉じたソリッドを復元できません（未接続・非多様体の辺 {open}、向きの不一致 {reversed}）"));
+        return Err(crate::Error::step(format!("STEP: 閉じたソリッドを復元できません（未接続・非多様体の辺 {open}、向きの不一致 {reversed}）")));
     }
     let components = triangles
         .iter()
@@ -127,10 +132,14 @@ pub(super) fn validate_closed(
         .map(|&i| root(&mut parents, welded[i as usize]))
         .collect::<HashSet<_>>();
     if components.len() != 1 {
-        return Err("STEP: 接続した単一のソリッドが必要です".into());
+        return Err(crate::Error::step(
+            "STEP: 接続した単一のソリッドが必要です".into(),
+        ));
     }
     if !volume.is_finite() || volume.abs() < epsilon.powi(3) {
-        return Err("STEP: ソリッドの体積がゼロまたは不正です".into());
+        return Err(crate::Error::step(
+            "STEP: ソリッドの体積がゼロまたは不正です".into(),
+        ));
     }
     if volume < 0. {
         for t in triangles {
@@ -180,6 +189,7 @@ mod tests {
         normals.resize(points.len(), V3([1., 0., 0.]));
         assert!(validate_closed(&points, &mut normals, &mut triangles)
             .unwrap_err()
+            .to_string()
             .contains("単一"));
     }
 }

@@ -29,8 +29,10 @@ impl App {
         let context = ctx.clone();
         std::thread::spawn(move || {
             let result = (|| -> Result<PathBuf, String> {
-                raytrace_io::export::write_screen(&dir, &map, &plane, reference, display)?;
-                raytrace_io::export::write_postprocessing(&dir, &map, reference, cursor, roi)?;
+                raytrace_io::export::write_screen(&dir, &map, &plane, reference, display)
+                    .map_err(|e| e.to_string())?;
+                raytrace_io::export::write_postprocessing(&dir, &map, reference, cursor, roi)
+                    .map_err(|e| e.to_string())?;
                 std::fs::write(
                     dir.join("conditions.json"),
                     serde_json::to_vec_pretty(&conditions).map_err(|e| e.to_string())?,
@@ -183,7 +185,7 @@ fn draw_detector(
         match ScreenAnalysis::at(map, display.cursor_mm) {
             Ok(analysis) => result.screen = Some(analysis),
             Err(error) => {
-                ui.label(error);
+                ui.label(error.to_string());
                 return;
             }
         }
@@ -251,7 +253,10 @@ fn draw_detector(
     }
     if let Some(roi) = display.roi {
         if result.roi_cache.as_ref().is_none_or(|(r, _)| *r != roi) {
-            result.roi_cache = Some((roi, roi.integrate(map, reference)));
+            result.roi_cache = Some((
+                roi,
+                roi.integrate(map, reference).map_err(|e| e.to_string()),
+            ));
         }
         match &result.roi_cache.as_ref().unwrap().1 {
             Ok(r) => {

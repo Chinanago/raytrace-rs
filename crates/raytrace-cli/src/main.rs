@@ -17,21 +17,21 @@ const HELP: &str =
     raytrace-rs --convergence MODEL [--plan PLAN.json] [--output DIRECTORY]\n\
     raytrace-rs --scan MODEL [--plan PLAN.json] [--output DIRECTORY]\n\
     raytrace-rs --resume-scan DIRECTORY\n\
-Ray CSV header: id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium\n\
-Units: mm, um, arbitrary power weights. Launch-weight sum is the 100% reference.\n\
-Sequential follows transmission and explicit mirrors; TIR terminates the ray. Non-sequential splits R/T.\n\
-Benchmark timing includes generated source rays and tracing/report accumulation; excludes input/output and warmup.";
+光線CSVヘッダー: id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium\n\
+単位: mm、um、任意の光量重み。発射光線の重み合計を100%の基準とします。\n\
+シーケンシャルは透過光と指定したミラーを追跡し、全反射で光線を終了します。非シーケンシャルは反射光と透過光に分岐します。\n\
+ベンチマーク時間は光源光線の生成・追跡・レポート集計を含み、入出力とウォームアップを除きます。";
 
 fn read_csv(path: &str, scene: &PreparedScene) -> Result<Vec<Ray>, Box<dyn Error>> {
     let text = fs::read_to_string(path)?;
     let mut lines = text.lines();
     let header = lines
         .next()
-        .ok_or("Empty CSV")?
+        .ok_or("CSVが空です")?
         .trim_start_matches('\u{feff}')
         .trim();
     if header != "id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium" {
-        return Err("Unexpected ray CSV header (see --help)".into());
+        return Err("光線CSVのヘッダーが不正です（--helpを確認してください）".into());
     }
     let mut ids = std::collections::HashSet::new();
     lines
@@ -39,19 +39,41 @@ fn read_csv(path: &str, scene: &PreparedScene) -> Result<Vec<Ray>, Box<dyn Error
         .map(|line| {
             let v: Vec<_> = line.split(',').map(str::trim).collect();
             if v.len() != 10 {
-                return Err("Expected 10 CSV fields".into());
+                return Err("CSVは10列で指定してください".into());
             }
             let mut ray = Ray {
-                id: v[0].parse()?,
-                position_mm: V3([v[1].parse()?, v[2].parse()?, v[3].parse()?]),
-                direction: V3([v[4].parse()?, v[5].parse()?, v[6].parse()?]),
-                weight: v[7].parse()?,
-                wavelength_um: v[8].parse()?,
-                medium: v[9].parse()?,
+                id: v[0]
+                    .parse()
+                    .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
+                position_mm: V3([
+                    v[1].parse()
+                        .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
+                    v[2].parse()
+                        .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
+                    v[3].parse()
+                        .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
+                ]),
+                direction: V3([
+                    v[4].parse()
+                        .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
+                    v[5].parse()
+                        .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
+                    v[6].parse()
+                        .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
+                ]),
+                weight: v[7]
+                    .parse()
+                    .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
+                wavelength_um: v[8]
+                    .parse()
+                    .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
+                medium: v[9]
+                    .parse()
+                    .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
                 optical_path_mm: 0.0,
             };
             if !ids.insert(ray.id) {
-                return Err("CSV launch IDs must be unique".into());
+                return Err("CSVの発射光線IDが重複しています".into());
             }
             ray.validate(scene)?;
             Ok(ray)
@@ -82,48 +104,56 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     if args[0] == "--convergence" {
-        let model = args.get(1).ok_or("Missing convergence model")?;
+        let model = args.get(1).ok_or("収束確認のモデルを指定してください")?;
         let mut plan = raytrace_app::convergence::ConvergencePlan::default();
         let mut output = PathBuf::from("results/convergence");
         let mut i = 2;
         while i < args.len() {
-            let value = args.get(i + 1).ok_or("Missing convergence option value")?;
+            let value = args
+                .get(i + 1)
+                .ok_or("収束確認オプションの値を指定してください")?;
             match args[i].as_str() {
                 "--plan" => plan = serde_json::from_slice(&fs::read(value)?)?,
                 "--output" => output = value.into(),
-                option => return Err(format!("Unknown convergence option: {option}").into()),
+                option => return Err(format!("不明な収束確認オプションです: {option}").into()),
             }
             i += 2;
         }
         let report = raytrace_app::convergence::run(std::path::Path::new(model), &plan, &output)?;
         let failures = report.cases.iter().filter(|c| c.error.is_some()).count();
         println!(
-            "Convergence: {} cases, {} comparisons, {} failed; {}",
+            "収束確認: {}ケース、{}比較、{}失敗; {}",
             report.cases.len(),
             report.comparisons.len(),
             failures,
             output.join("convergence.json").display()
         );
         if failures > 0 {
-            return Err("Some convergence cases failed; inspect the saved summary".into());
+            return Err(
+                "収束確認で失敗したケースがあります。保存した概要を確認してください".into(),
+            );
         }
         return Ok(());
     }
     if args[0] == "--scan" || args[0] == "--resume-scan" {
         use raytrace_app::scan::{ScanManifest, ScanPlan};
         use raytrace_core::trace::TraceControl;
-        let input = args.get(1).ok_or("Missing scan model or directory")?;
+        let input = args
+            .get(1)
+            .ok_or("走査のモデルまたはディレクトリを指定してください")?;
         let mut output = PathBuf::from("results/scan");
         let mut plan = ScanPlan::default();
         let mut i = 2;
         while i < args.len() {
-            let value = args.get(i + 1).ok_or("Missing scan option value")?;
+            let value = args
+                .get(i + 1)
+                .ok_or("走査オプションの値を指定してください")?;
             match args[i].as_str() {
                 "--plan" if args[0] == "--scan" => {
                     plan = serde_json::from_slice(&fs::read(value)?)?
                 }
                 "--output" if args[0] == "--scan" => output = value.into(),
-                _ => return Err("Unknown scan option".into()),
+                _ => return Err("不明な走査オプションです".into()),
             }
             i += 2;
         }
@@ -133,7 +163,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         } else {
             if output.join("scan.json").exists() {
                 return Err(
-                    "Scan output already exists; use --resume-scan or a new directory".into(),
+                    "走査の出力先は既に存在します。--resume-scanまたは新しいディレクトリを指定してください".into(),
                 );
             }
             ScanManifest::new(&Project::open(std::path::Path::new(input), &[])?, plan)?
@@ -144,18 +174,19 @@ fn run() -> Result<(), Box<dyn Error>> {
                 .iter()
                 .filter(|c| c.state == "completed" || c.state == "failed")
                 .count();
-            println!("Scan: {completed}/{} cases", m.cases.len());
+            println!("走査: {completed}/{}ケース", m.cases.len());
         })?;
-        println!("Scan saved: {}", output.join("scan.json").display());
+        println!("走査を保存しました: {}", output.join("scan.json").display());
         if manifest.cases.iter().any(|c| c.state == "failed") {
-            return Err("Some scan cases failed; inspect scan.json".into());
+            return Err("走査で失敗したケースがあります。scan.jsonを確認してください".into());
         }
         return Ok(());
     }
     let replay = if args[0] == "--replay" {
         args.remove(0);
         Some(RunRecord::open(std::path::Path::new(
-            args.first().ok_or("Missing replay file")?,
+            args.first()
+                .ok_or("再計算する記録ファイルを指定してください")?,
         ))?)
     } else {
         None
@@ -198,41 +229,63 @@ fn run() -> Result<(), Box<dyn Error>> {
             }
             "--output" | "--rays-csv" | "--threads" | "--repeat" | "--mode" | "--paths"
             | "--export-zmx" | "--wavelength-um" | "--rays-per-source" | "--sampling" => (),
-            option => return Err(format!("Unknown option: {option}").into()),
+            option => return Err(format!("不明なオプションです: {option}").into()),
         }
-        let value = args.get(i + 1).ok_or("Missing option value")?;
+        let value = args.get(i + 1).ok_or("オプションの値を指定してください")?;
         match args[i].as_str() {
             "--sampling" => {
                 sampling = Some(match value.as_str() {
                     "sobol" => Sampling::Sobol,
                     "pseudorandom" => Sampling::Pseudorandom,
-                    _ => return Err("Sampling must be sobol or pseudorandom".into()),
+                    _ => {
+                        return Err("サンプリングはsobolまたはpseudorandomで指定してください".into())
+                    }
                 })
             }
-            "--rays-per-source" => rays_per_source = Some(value.parse::<usize>()?),
+            "--rays-per-source" => {
+                rays_per_source = Some(
+                    value
+                        .parse::<usize>()
+                        .map_err(|e| format!("オプションの数値が不正です: {e}"))?,
+                )
+            }
             "--export-zmx" => export_zmx = Some(PathBuf::from(value)),
-            "--wavelength-um" => wavelength = Some(value.parse::<f64>()?),
+            "--wavelength-um" => {
+                wavelength = Some(
+                    value
+                        .parse::<f64>()
+                        .map_err(|e| format!("オプションの数値が不正です: {e}"))?,
+                )
+            }
             "--output" => output = value.into(),
             "--rays-csv" => csv = Some(value.clone()),
             "--threads" => {
-                let n: usize = value.parse()?;
+                let n: usize = value
+                    .parse()
+                    .map_err(|e| format!("オプションの数値が不正です: {e}"))?;
                 if n == 0 {
-                    return Err("Thread count must be positive".into());
+                    return Err("スレッド数は正の値で指定してください".into());
                 }
                 threads = Some(n);
             }
             "--repeat" => {
-                repeat = value.parse()?;
+                repeat = value
+                    .parse()
+                    .map_err(|e| format!("オプションの数値が不正です: {e}"))?;
                 if repeat == 0 {
-                    return Err("Repeat must be positive".into());
+                    return Err("繰返し回数は正の値で指定してください".into());
                 }
             }
-            "--paths" => options.path_launch_count = value.parse()?,
+            "--paths" => {
+                options.path_launch_count = value
+                    .parse()
+                    .map_err(|e| format!("オプションの数値が不正です: {e}"))?
+            }
             "--mode" => {
                 mode = Some(match value.as_str() {
                     "sequential" => Mode::Sequential,
                     "non_sequential" => Mode::NonSequential,
-                    _ => return Err("Unknown mode".into()),
+                    _ => return Err("不明な追跡方式です".into()),
                 })
             }
             _ => unreachable!(),
@@ -250,11 +303,11 @@ fn run() -> Result<(), Box<dyn Error>> {
             || inspect
             || export_zmx.is_some())
     {
-        return Err("Replay keeps the recorded optical conditions; only output, threads, repeat, terminals and paths can be changed".into());
+        return Err("再計算では記録された光学条件を使います。変更できるのはoutput・threads・repeat・terminals・pathsだけです".into());
     }
     if let Some(n) = threads.or_else(|| replay.as_ref().map(|r| r.calculation.worker_threads)) {
         if n == 0 {
-            return Err("Thread count must be positive".into());
+            return Err("スレッド数は正の値で指定してください".into());
         }
         builder = builder.num_threads(n);
     }
@@ -276,7 +329,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         project.save(&output)?;
         println!(
-            "Native import: {} sources, {} surfaces, {} materials",
+            "読込結果: 光源{}個、面{}個、材料{}個",
             project.scene.sources.len(),
             project.scene.surfaces.len(),
             project.scene.materials.len()
@@ -285,7 +338,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             println!(
                 "{}{}",
                 component.name,
-                if component.enabled { "" } else { " [disabled]" }
+                if component.enabled { "" } else { " [無効]" }
             );
             for entry in component.entries {
                 println!("  {}: {}", entry.status.label(), entry.message);
@@ -319,7 +372,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .zip(fs::canonicalize(&args[0]).ok())
         .is_some_and(|(a, b)| a == b)
     {
-        return Err("Output must differ from the input model or calculation record".into());
+        return Err("出力先は入力モデル・計算記録と異なるパスを指定してください".into());
     }
     let explicit = csv.is_some()
         || replay
@@ -340,19 +393,19 @@ fn run() -> Result<(), Box<dyn Error>> {
     let input_count = match &rays {
         Some(rays) => {
             if rays.is_empty() {
-                return Err("Supply a source or ray CSV".into());
+                return Err("光源または光線CSVを指定してください".into());
             }
             if !rays.iter().map(|r| r.weight).sum::<f64>().is_finite()
                 || rays.iter().all(|r| r.weight == 0.0)
             {
-                return Err("Launch-weight sum must be finite and positive".into());
+                return Err("発射光線の重み合計は正の有限値にしてください".into());
             }
             rays.len()
         }
         None => scene.ray_generator()?.len(),
     };
     if input_count == 0 {
-        return Err("Supply a source or ray CSV".into());
+        return Err("光源または光線CSVを指定してください".into());
     }
     let run = || match &rays {
         Some(rays) => Ok(trace(&scene, rays, options)),
@@ -369,7 +422,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     }
     let report = report.unwrap();
     if !report.budget.launched.is_finite() || report.budget.launched <= 0. {
-        return Err("Launch-weight sum must be finite and positive".into());
+        return Err("発射光線の重み合計は正の有限値にしてください".into());
     }
     timings.sort_by(f64::total_cmp);
     let median = if repeat % 2 == 0 {
@@ -448,20 +501,20 @@ fn run() -> Result<(), Box<dyn Error>> {
         fs::create_dir_all(parent)?;
     }
     fs::write(&output, serde_json::to_vec_pretty(&result)?)?;
-    println!("Reference: {} = 100%", scene.spec.reference_plane);
+    println!("基準: {} = 100%", scene.spec.reference_plane);
     println!(
-        "Launches: {}; detected: {:.6}%",
+        "発射光線数: {}; 検出光量: {:.6}%",
         input_count,
         100.0 * result["report"]["budget"]["detected"].as_f64().unwrap() / reference
     );
     println!(
-        "Trace median: {:.3} ms; {:.3} million launches/s; {} threads",
+        "追跡時間の中央値: {:.3} ms; {:.3}百万光線/秒; {}スレッド",
         median * 1000.0,
         input_count as f64 / median / 1e6,
         pool.current_num_threads()
     );
     println!(
-        "Budget closure: {:.3e}; report: {}",
+        "光量収支の誤差: {:.3e}; レポート: {}",
         closure,
         output.display()
     );
@@ -470,14 +523,14 @@ fn run() -> Result<(), Box<dyn Error>> {
         .iter()
         .any(|key| budget[key].as_f64().unwrap() > 0.0)
     {
-        eprintln!("Unresolved ray weight exists; inspect numerical_failure, medium_mismatch, and interaction_limit in the saved report.");
+        eprintln!("未解決の光線重みがあります。保存したレポートのnumerical_failure・medium_mismatch・interaction_limitを確認してください。");
     }
     Ok(())
 }
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("Error: {error}");
+        eprintln!("エラー: {error}");
         std::process::exit(1);
     }
 }

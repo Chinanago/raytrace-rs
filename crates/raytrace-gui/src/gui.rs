@@ -324,7 +324,7 @@ impl App {
     }
     fn refresh_components(&mut self) {
         if let Err(e) = self.project.refresh_assembly() {
-            self.error = Some(e);
+            self.error = Some(e.to_string());
         }
         self.changed();
     }
@@ -364,7 +364,7 @@ impl App {
                 self.changed();
                 self.status = "部品を追加しました・位置を調整して計算してください".into();
             }
-            Err(e) => self.error = Some(e),
+            Err(e) => self.error = Some(e.to_string()),
         }
     }
     fn smoke(&mut self, ctx: &egui::Context) {
@@ -500,7 +500,7 @@ impl eframe::App for App {
                 .resizable(true)
                 .default_width(540.0)
                 .show(ctx, |ui| {
-                    ui.label(error);
+                    ui.label(error.to_string());
                     if ui.button("閉じる").clicked() {
                         close = true;
                     }

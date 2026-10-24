@@ -2,6 +2,7 @@ use super::{
     geometry::{self, Curve, Surface, Transform},
     step::{field, Table},
 };
+use crate::Result;
 use raytrace_core::{math::V3, model::Shape};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -94,13 +95,13 @@ impl<'a> Mesher<'a> {
             curves: HashMap::new(),
         }
     }
-    fn vertex_point(&self, id: usize) -> Result<V3, String> {
+    fn vertex_point(&self, id: usize) -> Result<V3> {
         geometry::point(
             self.table,
             field(self.table.args(id, "VERTEX_POINT")?, 1)?.reference()?,
         )
     }
-    fn edge(&mut self, id: usize) -> Result<&[V3], String> {
+    fn edge(&mut self, id: usize) -> Result<&[V3]> {
         if !self.edges.contains_key(&id) {
             let args = self.table.args(id, "EDGE_CURVE")?;
             let start = self.vertex_point(field(args, 1)?.reference()?)?;
@@ -126,13 +127,17 @@ impl<'a> Mesher<'a> {
                     t1 -= std::f64::consts::TAU;
                 }
             } else if (forward && t1 < t0 - 1e-12) || (!forward && t1 > t0 + 1e-12) {
-                return Err(format!("STEP #{id}: 境界曲線の向きと端点が一致しません"));
+                return Err(crate::Error::step(format!(
+                    "STEP #{id}: 境界曲線の向きと端点が一致しません"
+                )));
             }
             let endpoint_tol = (self.tolerance * 0.01).max(1e-8);
             if (curve.evaluate(t0).0 - start).norm() > endpoint_tol
                 || (curve.evaluate(t1).0 - end).norm() > endpoint_tol
             {
-                return Err(format!("STEP #{id}: 境界の端点が曲線上にありません"));
+                return Err(crate::Error::step(format!(
+                    "STEP #{id}: 境界の端点が曲線上にありません"
+                )));
             }
             let mut cuts = vec![t0, t1];
             cuts.extend(
@@ -154,7 +159,9 @@ impl<'a> Mesher<'a> {
                 p.1 = end;
             }
             if points.len() < 2 || points.len() > 65_536 {
-                return Err(format!("STEP #{id}: 境界の分割数が範囲外です"));
+                return Err(crate::Error::step(format!(
+                    "STEP #{id}: 境界の分割数が範囲外です"
+                )));
             }
             let (parameters, points) = points.into_iter().unzip();
             self.edges.insert(id, points);
@@ -170,7 +177,7 @@ impl<'a> Mesher<'a> {
         b: f64,
         depth: usize,
         out: &mut Vec<(f64, V3)>,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let (p, q) = (c.evaluate(a).0, c.evaluate(b).0);
         let error = [0.2, 0.4, 0.5, 0.6, 0.8]
             .into_iter()
@@ -178,7 +185,9 @@ impl<'a> Mesher<'a> {
             .fold(0., f64::max);
         if error > self.tolerance * 0.02 {
             if depth >= 24 || out.len() > 65_536 {
-                return Err("STEP: 曲線の分割が上限に達しました".into());
+                return Err(crate::Error::step(
+                    "STEP: 曲線の分割が上限に達しました".into(),
+                ));
             }
             let m = a + (b - a) * 0.5;
             self.subdivide_curve(c, a, m, depth + 1, out)?;
@@ -188,7 +197,7 @@ impl<'a> Mesher<'a> {
         }
         Ok(())
     }
-    fn refine_shared_edges(&mut self, id: usize) -> Result<(), String> {
+    fn refine_shared_edges(&mut self, id: usize) -> Result<()> {
         let a = self.table.args(id, "ADVANCED_FACE")?;
         let mut surface = geometry::read_surface(self.table, field(a, 2)?.reference()?)?;
         if matches!(surface, Surface::Plane(_)) {
@@ -253,7 +262,7 @@ impl<'a> Mesher<'a> {
         samples: [ChartSample; 2],
         depth: usize,
         out: &mut Vec<(f64, V3)>,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let [a, b] = samples;
         let middle = std::array::from_fn(|i| (a.uv[i] + b.uv[i]) * 0.5);
         let fit = (surface.point(a.uv) - a.point)
@@ -264,7 +273,9 @@ impl<'a> Mesher<'a> {
         let angle = surface.normal(a.uv)?.dot(surface.normal(b.uv)?);
         if error > target || angle < 0.1f64.cos() {
             if depth >= 24 || out.len() > 65_536 {
-                return Err("STEP: 曲面境界の分割が上限に達しました".into());
+                return Err(crate::Error::step(
+                    "STEP: 曲面境界の分割が上限に達しました".into(),
+                ));
             }
             let parameter = a.parameter + (b.parameter - a.parameter) * 0.5;
             let point = curve.evaluate(parameter).0;
@@ -282,12 +293,14 @@ impl<'a> Mesher<'a> {
         }
         Ok(())
     }
-    fn boundary(&mut self, id: usize) -> Result<Vec<BoundaryPoint>, String> {
+    fn boundary(&mut self, id: usize) -> Result<Vec<BoundaryPoint>> {
         let e = self.table.get(id)?;
         let args = e
             .part("FACE_OUTER_BOUND")
             .or_else(|| e.part("FACE_BOUND"))
-            .ok_or_else(|| format!("STEP #{id}: 未対応の面境界 {}", e.kind()))?;
+            .ok_or_else(|| {
+                crate::Error::step(format!("STEP #{id}: 未対応の面境界 {}", e.kind()))
+            })?;
         let loop_id = field(args, 1)?.reference()?;
         let sense = field(args, 2)?.boolean()?;
         let edges = field(self.table.args(loop_id, "EDGE_LOOP")?, 1)?.refs()?;
@@ -308,7 +321,9 @@ impl<'a> Mesher<'a> {
             }
             if let Some(last) = points.last() {
                 if (last.point - samples[0]).norm() > (self.tolerance * 0.001).max(1e-8) {
-                    return Err(format!("STEP #{id}: 境界の辺がつながっていません"));
+                    return Err(crate::Error::step(format!(
+                        "STEP #{id}: 境界の辺がつながっていません"
+                    )));
                 }
             }
             let occurrence = *seen.entry(edge_id).or_insert(0);
@@ -324,7 +339,9 @@ impl<'a> Mesher<'a> {
             || (points[0].point - points[points.len() - 1].point).norm()
                 > (self.tolerance * 0.001).max(1e-8)
         {
-            return Err(format!("STEP #{id}: 閉じていない面境界です"));
+            return Err(crate::Error::step(format!(
+                "STEP #{id}: 閉じていない面境界です"
+            )));
         }
         if !sense {
             points.reverse();
@@ -334,13 +351,15 @@ impl<'a> Mesher<'a> {
         }
         Ok(points)
     }
-    fn face(&mut self, id: usize) -> Result<(Vec<Vertex>, Vec<[usize; 3]>), String> {
+    fn face(&mut self, id: usize) -> Result<(Vec<Vertex>, Vec<[usize; 3]>)> {
         let a = self.table.args(id, "ADVANCED_FACE")?;
         let bounds = field(a, 1)?.refs()?;
         let mut surface = geometry::read_surface(self.table, field(a, 2)?.reference()?)?;
         let sign = if field(a, 3)?.boolean()? { 1. } else { -1. };
         if bounds.is_empty() {
-            return Err(format!("STEP #{id}: 面境界がありません"));
+            return Err(crate::Error::step(format!(
+                "STEP #{id}: 面境界がありません"
+            )));
         }
         let boundaries = bounds
             .iter()
@@ -465,7 +484,9 @@ impl<'a> Mesher<'a> {
                 }
             }
             if vertices.len() < 3 {
-                return Err(format!("STEP #{id}: 展開した境界が退化しています"));
+                return Err(crate::Error::step(format!(
+                    "STEP #{id}: 展開した境界が退化しています"
+                )));
             }
             loops.push(vertices);
         }
@@ -493,13 +514,15 @@ impl<'a> Mesher<'a> {
         let outer = loops[0].iter().map(|v| v.uv).collect::<Vec<_>>();
         let mut expected_area = area(&outer).abs();
         if expected_area < 1e-24 {
-            return Err(format!("STEP #{id}: 面の展開面積がゼロです"));
+            return Err(crate::Error::step(format!(
+                "STEP #{id}: 面の展開面積がゼロです"
+            )));
         }
         for hole in loops.iter().skip(1) {
             if !contains(&outer, hole[0].uv) {
-                return Err(format!(
+                return Err(crate::Error::step(format!(
                     "STEP #{id}: 内側の境界が外側の境界に収まっていません"
-                ));
+                )));
             }
             expected_area -= area(&hole.iter().map(|v| v.uv).collect::<Vec<_>>()).abs();
         }
@@ -585,7 +608,9 @@ impl<'a> Mesher<'a> {
             .map(|t| area(&t.map(|i| vertices[i].uv)).abs())
             .sum();
         if expected_area <= 0. || (actual_area - expected_area).abs() > expected_area * 1e-8 {
-            return Err(format!("STEP #{id}: 三角形と境界の面積が一致しません"));
+            return Err(crate::Error::step(format!(
+                "STEP #{id}: 三角形と境界の面積が一致しません"
+            )));
         }
         check_boundary(&triangles, &boundary_edges, "初期分割")?;
         if !matches!(surface, Surface::Plane(_)) {
@@ -615,7 +640,7 @@ impl<'a> Mesher<'a> {
         context: Refinement<'_>,
         vertices: &mut Vec<Vertex>,
         triangles: &mut Vec<[usize; 3]>,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let Refinement {
             surface,
             sign,
@@ -690,10 +715,10 @@ impl<'a> Mesher<'a> {
             *triangles = triangulate(vertices, boundary, rings, metric)?;
         }
 
-        Err("STEP: 曲面の分割が収束しません".into())
+        Err(crate::Error::step("STEP: 曲面の分割が収束しません".into()))
     }
 
-    pub fn solid(&mut self, id: usize, transform: Transform, scale: f64) -> Result<Shape, String> {
+    pub fn solid(&mut self, id: usize, transform: Transform, scale: f64) -> Result<Shape> {
         let root = self.table.args(id, "MANIFOLD_SOLID_BREP")?;
         let faces = field(
             self.table
@@ -704,11 +729,13 @@ impl<'a> Mesher<'a> {
         // Finish shared trim samples before any face is triangulated.
         for &id in &faces {
             self.refine_shared_edges(id)
-                .map_err(|e| format!("STEP face #{id}: {e}"))?;
+                .map_err(|e| crate::Error::step(format!("STEP face #{id}: {e}")))?;
         }
         let (mut vertices, mut normals, mut triangles) = (Vec::new(), Vec::new(), Vec::new());
         for id in faces {
-            let (v, t) = self.face(id).map_err(|e| format!("STEP face #{id}: {e}"))?;
+            let (v, t) = self
+                .face(id)
+                .map_err(|e| crate::Error::step(format!("STEP face #{id}: {e}")))?;
             let offset = vertices.len();
             for v in v {
                 vertices.push(transform.point(v.point) * scale);
@@ -716,7 +743,9 @@ impl<'a> Mesher<'a> {
             }
             triangles.extend(t.into_iter().map(|t| t.map(|i| (i + offset) as u32)));
             if triangles.len() > MAX_TRIANGLES {
-                return Err("STEP: 分割数が100万三角形を超えました".into());
+                return Err(crate::Error::step(
+                    "STEP: 分割数が100万三角形を超えました".into(),
+                ));
             }
         }
         if transform.axes[0].dot(transform.axes[1].cross(transform.axes[2])) < 0. {

@@ -27,7 +27,7 @@ impl App {
         let request = match request {
             Ok(r) => r,
             Err(e) => {
-                self.error = Some(e);
+                self.error = Some(e.to_string());
                 return;
             }
         };
@@ -38,7 +38,7 @@ impl App {
             let result = (|| -> Result<Vec<Comparison>, String> {
                 let mut images = Vec::new();
                 for (path, label, detector) in request {
-                    let r = RunRecord::open(&path)?;
+                    let r = RunRecord::open(&path).map_err(|e| e.to_string())?;
                     let map = r
                         .report
                         .detectors
@@ -50,7 +50,7 @@ impl App {
                         reference_plane: r.calculation.scene.reference_plane,
                         map: map.clone(),
                         reference: r.report.budget.launched,
-                        analysis: ScreenAnalysis::from_detector(&map)?,
+                        analysis: ScreenAnalysis::from_detector(&map).map_err(|e| e.to_string())?,
                         texture: None,
                     });
                 }

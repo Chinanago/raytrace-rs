@@ -219,7 +219,8 @@ impl App {
                     })
                     .collect::<Result<Vec<_>, _>>()?
             } else {
-                linear_values(self.study.start, self.study.end, self.study.count)?
+                linear_values(self.study.start, self.study.end, self.study.count)
+                    .map_err(|e| e.to_string())?
             };
             let values = values.into_iter().map(|v| v / scale(&parameter)).collect();
             let plan = ScanPlan {
@@ -248,7 +249,7 @@ impl App {
                 threads: self.threads,
                 rays_per_source: (!self.study.use_current).then_some(self.study.rays),
             };
-            let manifest = ScanManifest::new(&self.project, plan)?;
+            let manifest = ScanManifest::new(&self.project, plan).map_err(|e| e.to_string())?;
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -282,7 +283,7 @@ impl App {
                     context.request_repaint();
                 })
                 .map(|_| Box::new(manifest));
-            let _ = tx.send(Job::Scanned(result));
+            let _ = tx.send(Job::Scanned(result.map_err(|e| e.to_string())));
             context.request_repaint();
         });
     }
@@ -301,7 +302,11 @@ impl App {
         self.study.manifest = None;
         let context = ctx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(Job::Scanned(ScanManifest::open(&dir).map(Box::new)));
+            let _ = tx.send(Job::Scanned(
+                ScanManifest::open(&dir)
+                    .map(Box::new)
+                    .map_err(|e| e.to_string()),
+            ));
             context.request_repaint();
         });
     }
@@ -336,7 +341,7 @@ impl App {
             }
         }
         if let Err(error) = self.project.refresh_assembly() {
-            self.error = Some(error);
+            self.error = Some(error.to_string());
             return;
         }
         self.preview_limit = None;

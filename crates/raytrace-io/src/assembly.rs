@@ -1,5 +1,6 @@
 //! Rigid optical components with independent local coordinates and original documents.
 use crate::project::{Issue, Project};
+use crate::Result;
 use raytrace_core::{
     geometry::sag,
     math::{Frame, Pose, V3},
@@ -80,9 +81,11 @@ pub fn empty_scene(name: &str) -> Scene {
 }
 
 impl Component {
-    pub fn imported(mut project: Project, kind: ComponentKind) -> Result<Self, String> {
+    pub fn imported(mut project: Project, kind: ComponentKind) -> Result<Self> {
         if project.assembly.is_some() {
-            return Err("組立プロジェクトは「開く…」で読み込んでください".into());
+            return Err(crate::Error::Project(
+                "組立プロジェクトは「開く…」で読み込んでください".into(),
+            ));
         }
         if kind == ComponentKind::Source
             && project
@@ -90,9 +93,9 @@ impl Component {
                 .as_ref()
                 .is_some_and(|z| z.baseline_scene.mode == Mode::Sequential)
         {
-            return Err(
+            return Err(crate::Error::Project(
                 "光源部品にはNSC光源ZMX、または光源を定義したJSONを指定してください".into(),
-            );
+            ));
         }
         if !kind.includes_sources() {
             project.scene.sources.clear();
@@ -105,7 +108,7 @@ impl Component {
                             .scene
                             .surfaces
                             .get(i)
-                            .ok_or("Invalid pupil surface")?
+                            .ok_or_else(|| crate::Error::Project("瞳の参照面が不正です".into()))?
                             .pose
                             .clone();
                     }
@@ -135,10 +138,14 @@ impl Component {
             }
         }
         if kind == ComponentKind::Source && project.scene.sources.is_empty() {
-            return Err("指定したファイルに利用可能な光源がありません".into());
+            return Err(crate::Error::Project(
+                "指定したファイルに利用可能な光源がありません".into(),
+            ));
         }
         if kind == ComponentKind::Optic && project.scene.surfaces.is_empty() {
-            return Err("指定したファイルに利用可能な光学面がありません".into());
+            return Err(crate::Error::Project(
+                "指定したファイルに利用可能な光学面がありません".into(),
+            ));
         }
         let anchor_mm = if kind == ComponentKind::Source {
             let sources = &project.scene.sources;
@@ -228,7 +235,7 @@ impl Component {
         }
     }
 
-    fn local_surfaces(&self) -> Result<Vec<Surface>, String> {
+    fn local_surfaces(&self) -> Result<Vec<Surface>> {
         let Some(r) = &self.rod else {
             return Ok(self.project.scene.surfaces.clone());
         };
@@ -236,14 +243,18 @@ impl Component {
             .into_iter()
             .any(|v| !v.is_finite() || v <= 0.0)
         {
-            return Err("ロッドの寸法は正の有限値で指定してください".into());
+            return Err(crate::Error::Project(
+                "ロッドの寸法は正の有限値で指定してください".into(),
+            ));
         }
         let (x, y, z) = (r.width_mm / 2.0, r.height_mm / 2.0, r.length_mm);
         if r.coatings
             .keys()
             .any(|k| !["entrance", "exit", "sides"].contains(&k.as_str()))
         {
-            return Err("ロッドのコーティング対象はentrance/exit/sidesで指定してください".into());
+            return Err(crate::Error::Project(
+                "ロッドのコーティング対象はentrance/exit/sidesで指定してください".into(),
+            ));
         }
         let make = |name: &str, p, rot, hx, hy, minus, plus| Surface {
             coating: r
@@ -313,7 +324,7 @@ impl Component {
     }
 }
 
-fn close_sequential_lens(surfaces: &[Surface]) -> Result<Vec<Surface>, String> {
+fn close_sequential_lens(surfaces: &[Surface]) -> Result<Vec<Surface>> {
     let faces: Vec<_> = surfaces.iter().filter(|s| matches!(s.interaction, Interaction::Dielectric { minus_medium, plus_medium, .. } if minus_medium != plus_medium)).collect();
     let mut sides = Vec::new();
     for (i, a) in faces.iter().enumerate() {
@@ -327,10 +338,14 @@ fn close_sequential_lens(surfaces: &[Surface]) -> Result<Vec<Surface>, String> {
         if inside == 0 {
             continue;
         }
-        let b = faces.get(i + 1).ok_or("レンズの出口面がありません")?;
+        let b = faces
+            .get(i + 1)
+            .ok_or_else(|| crate::Error::Project("レンズの出口面がありません".into()))?;
         if !matches!(b.interaction, Interaction::Dielectric { minus_medium, .. } if minus_medium == inside)
         {
-            return Err("レンズの媒質が連続していません".into());
+            return Err(crate::Error::Project(
+                "レンズの媒質が連続していません".into(),
+            ));
         }
         let frame = Frame::new(&a.pose);
         let relative = frame.inverse_pose(&b.pose);
@@ -338,22 +353,28 @@ fn close_sequential_lens(surfaces: &[Surface]) -> Result<Vec<Surface>, String> {
             || relative.translation_mm.0[0].abs() > 1e-10
             || relative.translation_mm.0[1].abs() > 1e-10
         {
-            return Err("偏心した逐次レンズの側面生成は未対応です".into());
+            return Err(crate::Error::Project(
+                "偏心した逐次レンズの側面生成は未対応です".into(),
+            ));
         }
         let (Aperture::Circle { radius_mm: ra }, Aperture::Circle { radius_mm: rb }) =
             (&a.aperture, &b.aperture)
         else {
-            return Err("逐次レンズの部品読込は円形口径に対応しています".into());
+            return Err(crate::Error::Project(
+                "逐次レンズの部品読込は円形口径に対応しています".into(),
+            ));
         };
         let za = sag(&a.shape, *ra, 0.0)
-            .ok_or("レンズ口径端の形状が不正です")?
+            .ok_or_else(|| crate::Error::Project("レンズ口径端の形状が不正です".into()))?
             .0;
         let zb = relative.translation_mm.0[2]
             + sag(&b.shape, *rb, 0.0)
-                .ok_or("レンズ口径端の形状が不正です")?
+                .ok_or_else(|| crate::Error::Project("レンズ口径端の形状が不正です".into()))?
                 .0;
         if zb <= za + 1e-8 {
-            return Err("レンズ口径端で厚みが正になる形状が必要です".into());
+            return Err(crate::Error::Project(
+                "レンズ口径端で厚みが正になる形状が必要です".into(),
+            ));
         }
         sides.push(Surface {
             coating: None,
@@ -381,7 +402,7 @@ fn close_sequential_lens(surfaces: &[Surface]) -> Result<Vec<Surface>, String> {
 }
 
 impl Assembly {
-    pub fn compose(&self, template: &Scene) -> Result<(Scene, Vec<String>, Vec<Issue>), String> {
+    pub fn compose(&self, template: &Scene) -> Result<(Scene, Vec<String>, Vec<Issue>)> {
         let mut scene = empty_scene(&template.name);
         scene.reference_plane = template.reference_plane.clone();
         scene.settings = template.settings.clone();
@@ -398,7 +419,7 @@ impl Assembly {
                 || !c.pose.rotation_deg.finite()
                 || !c.anchor_mm.finite()
             {
-                return Err(format!("{}: 配置が不正です", c.name));
+                return Err(crate::Error::Project(format!("{}: 配置が不正です", c.name)));
             }
             let surfaces = c.local_surfaces()?;
             let mut used = vec![0];
@@ -424,10 +445,13 @@ impl Assembly {
                     .scene
                     .materials
                     .get(id)
-                    .ok_or("部品の材料番号が不正です")?;
-                let value = serde_json::to_value(material).map_err(|e| e.to_string())?;
+                    .ok_or_else(|| crate::Error::Project("部品の材料番号が不正です".into()))?;
+                let value =
+                    serde_json::to_value(material).map_err(|e| crate::Error::json(None, e))?;
                 if id == 0 && value != values[0] {
-                    return Err("部品の媒質0は屈折率1・吸収0の空気で指定してください".into());
+                    return Err(crate::Error::Project(
+                        "部品の媒質0は屈折率1・吸収0の空気で指定してください".into(),
+                    ));
                 }
                 let global = if let Some(i) = values.iter().position(|v| *v == value) {
                     i
@@ -560,9 +584,9 @@ impl Assembly {
     }
 }
 
-pub fn demo_project() -> Result<Project, String> {
+pub fn demo_project() -> Result<Project> {
     let lens: Scene = serde_json::from_str(include_str!("../../../examples/sequential_lens.json"))
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| crate::Error::json(None, e))?;
     let mut source = lens.clone();
     source.surfaces.clear();
     for s in &mut source.sources {

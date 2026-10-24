@@ -1,5 +1,6 @@
 use crate::math::{Frame, Pose, V3};
 pub use crate::sampling::Sampling;
+use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -192,20 +193,26 @@ fn fraction(v: f64) -> bool {
     v.is_finite() && (0.0..=1.0).contains(&v)
 }
 impl Scene {
-    pub fn prepare(self) -> Result<PreparedScene, String> {
+    pub fn prepare(self) -> Result<PreparedScene> {
         if self.materials.is_empty() || self.surfaces.is_empty() {
-            return Err("At least one material and surface are required".into());
+            return Err(crate::Error::InvalidScene(
+                "材料と面をそれぞれ1つ以上指定してください".into(),
+            ));
         }
         let s = &self.settings;
         if s.max_depth == 0
             || s.max_events_per_launch == 0
             || !fraction(s.min_relative_branch_weight)
         {
-            return Err("Invalid trace limits".into());
+            return Err(crate::Error::InvalidScene(
+                "追跡の上限設定が不正です".into(),
+            ));
         }
         for m in &self.materials {
             if !m.absorption().is_finite() || m.absorption() < 0.0 {
-                return Err("Absorption must be finite and nonnegative".into());
+                return Err(crate::Error::InvalidScene(
+                    "吸収係数は非負の有限値で指定してください".into(),
+                ));
             }
             match m {
                 Material::Catalog {
@@ -221,7 +228,9 @@ impl Scene {
                         || !positive(valid_range_um[1])
                         || valid_range_um[0] >= valid_range_um[1]
                     {
-                        return Err("Invalid AGF dispersion coefficients/range".into());
+                        return Err(crate::Error::InvalidScene(
+                            "AGFの分散係数・有効波長範囲が不正です".into(),
+                        ));
                     }
                 }
                 Material::WithAbsorption {
@@ -235,10 +244,14 @@ impl Scene {
                         || !samples.windows(2).all(|w| w[0][0] < w[1][0])
                         || !samples.iter().any(|s| dispersion.index(s[0]).is_some())
                     {
-                        return Err("Invalid catalog absorption/dispersion data".into());
+                        return Err(crate::Error::InvalidScene(
+                            "カタログの吸収・分散データが不正です".into(),
+                        ));
                     }
                 }
-                Material::Constant { n, .. } if !positive(*n) => return Err("Invalid index".into()),
+                Material::Constant { n, .. } if !positive(*n) => {
+                    return Err(crate::Error::InvalidScene("屈折率が不正です".into()))
+                }
                 Material::Sellmeier {
                     b,
                     c_um2,
@@ -250,7 +263,9 @@ impl Scene {
                         || !positive(valid_range_um[1])
                         || valid_range_um[0] >= valid_range_um[1]
                     {
-                        return Err("Invalid Sellmeier data/range".into());
+                        return Err(crate::Error::InvalidScene(
+                            "Sellmeierの係数・有効波長範囲が不正です".into(),
+                        ));
                     }
                 }
                 Material::Schott {
@@ -263,7 +278,9 @@ impl Scene {
                         || !positive(valid_range_um[1])
                         || valid_range_um[0] >= valid_range_um[1]
                     {
-                        return Err("Invalid Schott data/range".into());
+                        return Err(crate::Error::InvalidScene(
+                            "Schottの係数・有効波長範囲が不正です".into(),
+                        ));
                     }
                 }
                 Material::Tabulated { samples, .. }
@@ -271,7 +288,7 @@ impl Scene {
                         || !samples.iter().all(|s| positive(s[0]) && positive(s[1]))
                         || !samples.windows(2).all(|s| s[0][0] < s[1][0]) =>
                 {
-                    return Err("Invalid index table".into());
+                    return Err(crate::Error::InvalidScene("屈折率の表が不正です".into()));
                 }
                 _ => (),
             }
@@ -291,22 +308,27 @@ impl Scene {
                         if coating.front.opaque()
                             && coating.back.as_ref().is_none_or(|b| b.opaque()) => {}
                     _ => {
-                        return Err(format!(
+                        return Err(crate::Error::InvalidScene(format!(
                             "{}: コーティングには屈折界面、または透過率0のミラーを指定してください",
                             surface.name
-                        ))
+                        )))
                     }
                 }
             }
             if !names.insert(surface.name.clone()) {
-                return Err("Surface names must be unique".into());
+                return Err(crate::Error::InvalidScene(
+                    "面の名前が重複しています".into(),
+                ));
             }
             if !surface.pose.translation_mm.finite() || !surface.pose.rotation_deg.finite() {
-                return Err(format!("Invalid pose: {}", surface.name));
+                return Err(crate::Error::InvalidScene(format!(
+                    "位置・角度が不正です: {}",
+                    surface.name
+                )));
             }
             let (hx, hy) = surface.aperture.bounds();
             if !positive(hx) || !positive(hy) {
-                return Err("Invalid aperture".into());
+                return Err(crate::Error::InvalidScene("開口の寸法が不正です".into()));
             }
             match &surface.shape {
                 Shape::ConicalSide {
@@ -317,7 +339,9 @@ impl Scene {
                     || !positive(*radius_end_mm)
                     || !positive(*length_mm) =>
                 {
-                    return Err("Invalid lens barrel".into());
+                    return Err(crate::Error::InvalidScene(
+                        "レンズ側面の寸法が不正です".into(),
+                    ));
                 }
                 Shape::TriangleMesh {
                     vertices,
@@ -335,19 +359,25 @@ impl Scene {
                             .flatten()
                             .any(|&i| i as usize >= vertices.len())
                     {
-                        return Err("Invalid triangle mesh".into());
+                        return Err(crate::Error::InvalidScene(
+                            "三角形メッシュが不正です".into(),
+                        ));
                     }
                 }
                 Shape::Sphere { radius_mm }
                     if !positive(radius_mm.abs())
                         || surface.aperture.max_radius2() >= radius_mm * radius_mm =>
                 {
-                    return Err("Spherical sag cap requires aperture radius < |R|".into())
+                    return Err(crate::Error::InvalidScene(
+                        "球面の開口半径は曲率半径の絶対値より小さくしてください".into(),
+                    ))
                 }
                 Shape::FlatEvenAsphere { coefficients }
                     if coefficients.len() > 8 || !coefficients.iter().all(|v| v.is_finite()) =>
                 {
-                    return Err("Invalid or singular even-asphere over aperture".into());
+                    return Err(crate::Error::InvalidScene(
+                        "偶数次非球面が不正、または開口内に特異点があります".into(),
+                    ));
                 }
                 Shape::EvenAsphere {
                     radius_mm,
@@ -360,7 +390,9 @@ impl Scene {
                     || 1.0 - (1.0 + conic) * surface.aperture.max_radius2() / radius_mm.powi(2)
                         <= 1e-12 =>
                 {
-                    return Err("Invalid or singular even-asphere over aperture".into());
+                    return Err(crate::Error::InvalidScene(
+                        "偶数次非球面が不正、または開口内に特異点があります".into(),
+                    ));
                 }
                 _ => (),
             }
@@ -374,26 +406,34 @@ impl Scene {
                         || plus_medium >= self.materials.len()
                         || reflectance.is_some_and(|r| !fraction(r))
                     {
-                        return Err("Invalid dielectric".into());
+                        return Err(crate::Error::InvalidScene(
+                            "屈折界面の媒質・反射率が不正です".into(),
+                        ));
                     }
                     None
                 }
                 Interaction::Mirror { reflectance } if !fraction(reflectance) => {
-                    return Err("Invalid mirror reflectance".into())
+                    return Err(crate::Error::InvalidScene(
+                        "ミラーの反射率が不正です".into(),
+                    ))
                 }
                 Interaction::Detector { pixels } => {
                     if !matches!(surface.shape, Shape::Plane) || pixels.contains(&0) {
-                        return Err("Detector must be planar with nonzero pixel counts".into());
+                        return Err(crate::Error::InvalidScene(
+                            "検出面は平面とし、画素数は正の値で指定してください".into(),
+                        ));
                     }
                     total_pixels = total_pixels
-                        .checked_add(
-                            pixels[0]
-                                .checked_mul(pixels[1])
-                                .ok_or("Pixel count overflow")?,
-                        )
-                        .ok_or("Pixel count overflow")?;
+                        .checked_add(pixels[0].checked_mul(pixels[1]).ok_or_else(|| {
+                            crate::Error::Limit("画素数が整数の上限を超えています".into())
+                        })?)
+                        .ok_or_else(|| {
+                            crate::Error::Limit("画素数が整数の上限を超えています".into())
+                        })?;
                     if total_pixels > 1_000_000 {
-                        return Err("Prototype limit: 1 million detector pixels".into());
+                        return Err(crate::Error::Limit(
+                            "試作版の検出面は合計100万画素までです".into(),
+                        ));
                     }
                     detector_surfaces.push(i);
                     Some(detector_surfaces.len() - 1)
@@ -401,8 +441,9 @@ impl Scene {
                 _ => None,
             };
             let (local_bounds, max_sag_slope) =
-                crate::geometry::bounds(&surface.shape, &surface.aperture)
-                    .ok_or("Surface bounds overflow")?;
+                crate::geometry::bounds(&surface.shape, &surface.aperture).ok_or_else(|| {
+                    crate::Error::InvalidScene("面の境界が計算範囲を超えています".into())
+                })?;
             surfaces.push(PreparedSurface {
                 mesh: crate::mesh::MeshAccel::from_shape(&surface.shape),
                 spec: surface.clone(),
@@ -412,11 +453,12 @@ impl Scene {
                 max_sag_slope,
             });
         }
-        for source in &self.sources {
+        for (source_index, source) in self.sources.iter().enumerate() {
+            (|| -> Result<()> {
             if let Some(pupil) = &source.pupil {
                 pupil.vignetting.validate()?;
                 let pose = if let Some(i) = pupil.surface {
-                    &self.surfaces.get(i).ok_or("Invalid pupil surface")?.pose
+                    &self.surfaces.get(i).ok_or_else(|| crate::Error::InvalidScene("瞳の参照面が不正です".into()))?.pose
                 } else {
                     &pupil.pose
                 };
@@ -434,7 +476,7 @@ impl Scene {
                     || !pupil.finite_object
                         && frame.local_vector(source.direction.unit()).0[2] <= 1e-9
                 {
-                    return Err("Invalid pupil illumination: use a launch plane before the pupil and a forward direction".into());
+                    return Err(crate::Error::InvalidScene("瞳照明が不正です。発射面は瞳の前方に置き、光線は前向きに指定してください".into()));
                 }
             }
             if let Some(spectrum) = &source.spectrum {
@@ -450,10 +492,10 @@ impl Scene {
                         .iter()
                         .any(|s| s.coating.as_ref().is_some_and(|c| !c.covers(w)))
                 {
-                    return Err(format!(
+                    return Err(crate::Error::InvalidScene(format!(
                         "光源の {} um が材料・吸収表・コーティングの有効波長範囲に含まれません",
                         w
-                    ));
+                    )));
                 }
             }
             if let Some(d) = &source.diode {
@@ -471,16 +513,26 @@ impl Scene {
                 || !positive(source.total_weight)
                 || source.medium >= self.materials.len()
             {
-                return Err("Invalid source".into());
+                return Err(crate::Error::InvalidScene("光源の設定が不正です".into()));
             }
+                Ok(())
+            })().map_err(|error| crate::Error::InvalidSource {
+                source_index: source_index + 1,
+                detail: error.to_string(),
+            })?;
         }
         let prepared = PreparedScene {
             spec: self,
             surfaces,
             detector_surfaces,
         };
-        for source in &prepared.spec.sources {
-            crate::illumination::PreparedPupil::new(&prepared, source)?;
+        for (source_index, source) in prepared.spec.sources.iter().enumerate() {
+            crate::illumination::PreparedPupil::new(&prepared, source).map_err(|error| {
+                crate::Error::InvalidSource {
+                    source_index: source_index + 1,
+                    detail: error.to_string(),
+                }
+            })?;
         }
         Ok(prepared)
     }

@@ -15,6 +15,7 @@ default = []
 png = ["dep:image"]
 
 [dependencies]
+thiserror = { workspace = true }
 rayon = { workspace = true }
 raytrace-core = { workspace = true }
 serde = { workspace = true }

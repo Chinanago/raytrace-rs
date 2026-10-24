@@ -10,3 +10,6 @@ pub mod sampling;
 pub mod screen;
 pub mod spectrum;
 pub mod trace;
+
+pub mod error;
+pub use error::{Error, Result};

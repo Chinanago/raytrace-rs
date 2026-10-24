@@ -1,4 +1,5 @@
 //! Discrete wavelengths with relative radiometric power, including Zemax SPCD files.
+use crate::Result;
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -7,7 +8,7 @@ pub struct Spectrum {
     pub samples: Vec<[f64; 2]>,
 }
 impl Spectrum {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<()> {
         if self.samples.is_empty()
             || self.samples.len() > 200
             || !self
@@ -18,11 +19,11 @@ impl Spectrum {
             || !self.samples.iter().map(|v| v[1]).sum::<f64>().is_finite()
             || self.samples.iter().map(|v| v[1]).sum::<f64>() <= 0.
         {
-            return Err("スペクトルは昇順の波長と非負の光量重みで指定し、合計重みを正にしてください（最大200点）".into());
+            return Err(crate::Error::InvalidScene("スペクトルは昇順の波長と非負の光量重みで指定し、合計重みを正にしてください（最大200点）".into()));
         }
         Ok(())
     }
-    pub fn parse_spcd(text: &str) -> Result<Self, String> {
+    pub fn parse_spcd(text: &str) -> Result<Self> {
         let mut samples = Vec::new();
         for line in text.lines() {
             let body = line.split(['#', '!']).next().unwrap_or("").trim();
@@ -32,18 +33,22 @@ impl Spectrum {
             let values: Vec<f64> = body
                 .split_whitespace()
                 .map(|s| {
-                    s.replace(['D', 'd'], "E")
-                        .parse::<f64>()
-                        .map_err(|_| format!("SPCD数値を読めません: {s}"))
+                    s.replace(['D', 'd'], "E").parse::<f64>().map_err(|_| {
+                        crate::Error::InvalidScene(format!("SPCD数値を読めません: {s}"))
+                    })
                 })
                 .collect::<Result<_, _>>()?;
             if values.len() != 2 {
-                return Err("SPCDは波長[um]と相対光量の2列で指定してください".into());
+                return Err(crate::Error::InvalidScene(
+                    "SPCDは波長[um]と相対光量の2列で指定してください".into(),
+                ));
             }
             samples.push([values[0], values[1]]);
         }
         if samples.len() < 3 {
-            return Err("SPCDには3〜200点の波長と重みが必要です".into());
+            return Err(crate::Error::InvalidScene(
+                "SPCDには3〜200点の波長と重みが必要です".into(),
+            ));
         }
         let spectrum = Self { samples };
         spectrum.validate()?;

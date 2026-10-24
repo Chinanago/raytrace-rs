@@ -1,5 +1,6 @@
 //! Screen post-processing. Detector weights remain integrated power per pixel.
 use crate::trace::DetectorMap;
+use crate::Result;
 
 #[derive(Clone, Debug)]
 pub struct HalfMaximum {
@@ -79,12 +80,12 @@ impl ScreenAnalysis {
     /// FWHM uses the X/Y slices through the first global-maximum pixel (row-major).
     /// Crossings are linearly interpolated between pixel centres around that lobe.
     /// A missing crossing stays unknown; the detector edge is never a substitute.
-    pub fn from_detector(map: &DetectorMap) -> Result<Self, String> {
+    pub fn from_detector(map: &DetectorMap) -> Result<Self> {
         Self::at(map, None)
     }
     /// Optional local-mm cursor selects the nearest pixel row and column.
     /// Half-maximum is relative to each selected slice's own maximum.
-    pub fn at(map: &DetectorMap, cursor: Option<[f64; 2]>) -> Result<Self, String> {
+    pub fn at(map: &DetectorMap, cursor: Option<[f64; 2]>) -> Result<Self> {
         let [nx, ny] = map.pixels;
         if nx == 0
             || ny == 0
@@ -95,7 +96,9 @@ impl ScreenAnalysis {
                 .any(|v| !v.is_finite() || *v <= 0.0)
             || map.weights.iter().any(|v| !v.is_finite() || *v < 0.0)
         {
-            return Err("スクリーンの画素データが不正です".into());
+            return Err(crate::Error::InvalidScene(
+                "スクリーンの画素データが不正です".into(),
+            ));
         }
         let pixel_pitch_mm = [
             2.0 * map.half_extent_mm[0] / nx as f64,
@@ -114,7 +117,9 @@ impl ScreenAnalysis {
                 .enumerate()
                 .any(|(a, v)| !v.is_finite() || v.abs() > map.half_extent_mm[a])
             {
-                return Err("断面位置はスクリーンの範囲内で指定してください".into());
+                return Err(crate::Error::InvalidScene(
+                    "断面位置はスクリーンの範囲内で指定してください".into(),
+                ));
             }
             Some(std::array::from_fn(|a| {
                 (((c[a] + map.half_extent_mm[a]) / pixel_pitch_mm[a]).floor() as usize)
@@ -183,7 +188,7 @@ pub struct RoiIntegral {
     pub percent_of_reference_per_mm2: f64,
 }
 impl ScreenRoi {
-    pub fn integrate(&self, map: &DetectorMap, reference: f64) -> Result<RoiIntegral, String> {
+    pub fn integrate(&self, map: &DetectorMap, reference: f64) -> Result<RoiIntegral> {
         let a = ScreenAnalysis::from_detector(map)?;
         if !reference.is_finite()
             || reference <= 0.
@@ -193,7 +198,9 @@ impl ScreenRoi {
                     || self.minimum_mm[i] >= self.maximum_mm[i]
             })
         {
-            return Err("ROIの範囲・基準光量が不正です".into());
+            return Err(crate::Error::InvalidScene(
+                "ROIの範囲・基準光量が不正です".into(),
+            ));
         }
         let low =
             std::array::from_fn::<_, 2, _>(|i| self.minimum_mm[i].max(-map.half_extent_mm[i]));

@@ -1,4 +1,5 @@
 //! Deterministic, redistributable fixtures with explicit independent checks.
+use crate::Result;
 use raytrace_core::{
     math::{Frame, Pose, V3},
     model::*,
@@ -225,8 +226,9 @@ fn primary(report: &Report, id: u64, surface: usize) -> Option<&Ray> {
 }
 
 impl ValidationCase {
-    pub fn run(&self, directory: &Path) -> Result<CaseResult, String> {
-        fs::create_dir_all(directory).map_err(|e| e.to_string())?;
+    pub fn run(&self, directory: &Path) -> Result<CaseResult> {
+        fs::create_dir_all(directory)
+            .map_err(|e| crate::Error::from(raytrace_io::Error::io(directory, e)))?;
         let project = Project::new(self.scene.clone());
         let prepared = self.scene.clone().prepare()?;
         let mut rays = self.rays.clone();
@@ -275,9 +277,11 @@ impl ValidationCase {
             let mut weight: f64 = 0.0;
             for ray in &rays {
                 let a = primary(&report, ray.id, self.scene.surfaces.len() - 1)
-                    .ok_or("Missing primary detector ray")?;
-                let b = primary(&other, ray.id, self.scene.surfaces.len() - 1)
-                    .ok_or("Missing reimported detector ray")?;
+                    .ok_or_else(|| crate::Error::Plan("基準の検出光線が見つかりません".into()))?;
+                let b =
+                    primary(&other, ray.id, self.scene.surfaces.len() - 1).ok_or_else(|| {
+                        crate::Error::Plan("再読込後の検出光線が見つかりません".into())
+                    })?;
                 position = position.max((a.position_mm - b.position_mm).norm());
                 direction = direction.max((a.direction - b.direction).norm());
                 opl = opl.max((a.optical_path_mm - b.optical_path_mm).abs());
@@ -300,9 +304,12 @@ impl ValidationCase {
                 "scope":"Direct unpolarized geometric comparison. Fresnel power and optical path require separate independent validation."});
             fs::write(
                 directory.join("reference.json"),
-                serde_json::to_vec_pretty(&reference).map_err(|e| e.to_string())?,
+                serde_json::to_vec_pretty(&reference)
+                    .map_err(|e| raytrace_io::Error::json(None, e))?,
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                crate::Error::from(raytrace_io::Error::io(directory.join("reference.json"), e))
+            })?;
             zemax_file = path.file_name().map(|p| p.to_string_lossy().into());
         }
         match &self.oracle {
@@ -315,7 +322,7 @@ impl ValidationCase {
                         .detectors
                         .iter()
                         .find(|d| d.name == name)
-                        .ok_or("Missing collector")?
+                        .ok_or_else(|| crate::Error::Plan("集光面が見つかりません".into()))?
                         .weights
                         .iter()
                         .sum::<f64>()
@@ -334,7 +341,7 @@ impl ValidationCase {
                     .surfaces
                     .iter()
                     .position(|s| s.name == "forward_collector")
-                    .ok_or("Missing rod collector")?;
+                    .ok_or_else(|| crate::Error::Plan("ロッドの集光面が見つかりません".into()))?;
                 let mut position: f64 = 0.0;
                 let mut direction: f64 = 0.0;
                 let mut opl: f64 = 0.0;
@@ -360,7 +367,9 @@ impl ValidationCase {
                     let d = V3([incoming.0[0] * sign, 0.0, incoming.0[2]]);
                     let expected_p = frame.as_ref().map_or(p, |f| f.world_point(p));
                     let expected_d = frame.as_ref().map_or(d, |f| f.world_vector(d));
-                    let actual = primary(&report, ray.id, forward).ok_or("Missing rod primary")?;
+                    let actual = primary(&report, ray.id, forward).ok_or_else(|| {
+                        crate::Error::Plan("ロッドの基準光線が見つかりません".into())
+                    })?;
                     position = position.max((actual.position_mm - expected_p).norm());
                     direction = direction.max((actual.direction - expected_d).norm());
                     opl = opl.max(
@@ -392,7 +401,8 @@ impl ValidationCase {
                 let mut opl: f64 = 0.0;
                 let mut weight: f64 = 0.0;
                 for ray in &rays {
-                    let a = primary(&report, ray.id, 1).ok_or("Missing mirror ray")?;
+                    let a = primary(&report, ray.id, 1)
+                        .ok_or_else(|| crate::Error::Plan("ミラーの光線が見つかりません".into()))?;
                     position = position.max(
                         (a.position_mm - V3([40.0, ray.position_mm.0[1], ray.position_mm.0[0]]))
                             .norm(),

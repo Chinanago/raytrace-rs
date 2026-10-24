@@ -97,9 +97,9 @@ fn optical_scene(mesh: Shape, reference_bounds: [V3; 2]) -> Scene {
     }
 }
 fn optical_report(scene: Scene, rays: &[Ray]) -> Result<Report, String> {
-    let scene = scene.prepare()?;
+    let scene = scene.prepare().map_err(|e| e.to_string())?;
     for mut ray in rays.iter().copied() {
-        ray.validate(&scene)?;
+        ray.validate(&scene).map_err(|e| e.to_string())?;
     }
     Ok(trace(
         &scene,

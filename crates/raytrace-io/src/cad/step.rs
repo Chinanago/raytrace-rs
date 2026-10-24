@@ -1,4 +1,5 @@
 //! Bounded Part 21 syntax reader. Geometry is resolved separately from metadata.
+use crate::Result;
 use std::collections::BTreeMap;
 
 #[derive(Clone, Debug)]
@@ -12,7 +13,7 @@ pub(super) enum Value {
     Empty,
 }
 impl Value {
-    pub fn number(&self) -> Result<f64, String> {
+    pub fn number(&self) -> Result<f64> {
         match self {
             Self::Number(n) => Ok(*n),
             Self::Typed(name, args)
@@ -20,41 +21,43 @@ impl Value {
             {
                 args[0].number()
             }
-            Self::Text(s) => Err(format!("STEP: 文字列 {s:?} を数値として使えません")),
-            _ => Err("STEP: 数値が必要です".into()),
+            Self::Text(s) => Err(crate::Error::step(format!(
+                "STEP: 文字列 {s:?} を数値として使えません"
+            ))),
+            _ => Err(crate::Error::step("STEP: 数値が必要です".into())),
         }
     }
-    pub fn integer(&self) -> Result<usize, String> {
+    pub fn integer(&self) -> Result<usize> {
         let n = self.number()?;
         if (0.0..=1_000_000.0).contains(&n) && n.fract() == 0. {
             Ok(n as usize)
         } else {
-            Err("STEP: 整数の範囲が不正です".into())
+            Err(crate::Error::step("STEP: 整数の範囲が不正です".into()))
         }
     }
-    pub fn reference(&self) -> Result<usize, String> {
+    pub fn reference(&self) -> Result<usize> {
         match self {
             Self::Ref(id) => Ok(*id),
-            _ => Err("STEP: #番号による参照が必要です".into()),
+            _ => Err(crate::Error::step("STEP: #番号による参照が必要です".into())),
         }
     }
-    pub fn list(&self) -> Result<&[Value], String> {
+    pub fn list(&self) -> Result<&[Value]> {
         match self {
             Self::List(values) => Ok(values),
-            _ => Err("STEP: リストが必要です".into()),
+            _ => Err(crate::Error::step("STEP: リストが必要です".into())),
         }
     }
-    pub fn refs(&self) -> Result<Vec<usize>, String> {
+    pub fn refs(&self) -> Result<Vec<usize>> {
         self.list()?.iter().map(Self::reference).collect()
     }
-    pub fn numbers(&self) -> Result<Vec<f64>, String> {
+    pub fn numbers(&self) -> Result<Vec<f64>> {
         self.list()?.iter().map(Self::number).collect()
     }
-    pub fn boolean(&self) -> Result<bool, String> {
+    pub fn boolean(&self) -> Result<bool> {
         match self {
             Self::Enum(s) if s == "T" => Ok(true),
             Self::Enum(s) if s == "F" => Ok(false),
-            _ => Err("STEP: .T. または .F. が必要です".into()),
+            _ => Err(crate::Error::step("STEP: .T. または .F. が必要です".into())),
         }
     }
 }
@@ -86,24 +89,27 @@ impl Entity {
 pub(super) struct Table {
     pub entities: BTreeMap<usize, Entity>,
 }
-pub(super) fn field(args: &[Value], i: usize) -> Result<&Value, String> {
+pub(super) fn field(args: &[Value], i: usize) -> Result<&Value> {
     args.get(i)
-        .ok_or_else(|| format!("STEP: 属性{}がありません", i + 1))
+        .ok_or_else(|| crate::Error::step(format!("STEP: 属性{}がありません", i + 1)))
 }
 impl Table {
-    pub fn get(&self, id: usize) -> Result<&Entity, String> {
+    pub fn get(&self, id: usize) -> Result<&Entity> {
         self.entities
             .get(&id)
-            .ok_or_else(|| format!("STEP: 参照 #{id} がありません"))
+            .ok_or_else(|| crate::Error::step(format!("STEP: 参照 #{id} がありません")))
     }
-    pub fn args(&self, id: usize, kind: &str) -> Result<&[Value], String> {
+    pub fn args(&self, id: usize, kind: &str) -> Result<&[Value]> {
         let e = self.get(id)?;
-        e.part(kind)
-            .ok_or_else(|| format!("STEP #{id}: {kind}が必要です（{}）", e.kind()))
+        e.part(kind).ok_or_else(|| {
+            crate::Error::step(format!("STEP #{id}: {kind}が必要です（{}）", e.kind()))
+        })
     }
-    pub fn read(bytes: &[u8]) -> Result<Self, String> {
+    pub fn read(bytes: &[u8]) -> Result<Self> {
         if bytes.len() > 128 * 1024 * 1024 {
-            return Err("STEP: ファイルの読込上限128 MiBを超えています".into());
+            return Err(crate::Error::step(
+                "STEP: ファイルの読込上限128 MiBを超えています".into(),
+            ));
         }
         let mut parser = Parser {
             bytes,
@@ -112,7 +118,9 @@ impl Table {
         };
         let mut entities = BTreeMap::new();
         if !parser.find_data()? {
-            return Err("STEP: Part 21のDATA節がありません".into());
+            return Err(crate::Error::step(
+                "STEP: Part 21のDATA節がありません".into(),
+            ));
         }
         loop {
             parser.space()?;
@@ -156,22 +164,22 @@ impl Table {
             }
             parser.take(b';')?;
             if entities.insert(id, Entity { parts }).is_some() {
-                return Err(format!("STEP: #{id} が重複しています"));
+                return Err(crate::Error::step(format!("STEP: #{id} が重複しています")));
             }
             if entities.len() > 250_000 {
                 return parser.error("エンティティ数の上限250,000を超えています");
             }
         }
         if parser.find_data()? {
-            return Err("STEP: 複数DATA節は未対応です".into());
+            return Err(crate::Error::step("STEP: 複数DATA節は未対応です".into()));
         }
         Ok(Self { entities })
     }
 
-    pub fn length_scale_mm(&self) -> Result<f64, String> {
+    pub fn length_scale_mm(&self) -> Result<f64> {
         self.measure_scale("LENGTH_UNIT", "METRE", "LENGTH_MEASURE_WITH_UNIT", 1000.)
     }
-    pub fn angle_scale_rad(&self) -> Result<f64, String> {
+    pub fn angle_scale_rad(&self) -> Result<f64> {
         self.measure_scale(
             "PLANE_ANGLE_UNIT",
             "RADIAN",
@@ -179,13 +187,7 @@ impl Table {
             1.,
         )
     }
-    fn measure_scale(
-        &self,
-        kind: &str,
-        symbol: &str,
-        measure: &str,
-        base: f64,
-    ) -> Result<f64, String> {
+    fn measure_scale(&self, kind: &str, symbol: &str, measure: &str, base: f64) -> Result<f64> {
         let mut scales = Vec::new();
         for e in self.entities.values() {
             if let Some(a) = e.part("GLOBAL_UNIT_ASSIGNED_CONTEXT") {
@@ -197,15 +199,17 @@ impl Table {
             }
         }
         let Some(&scale) = scales.first() else {
-            return Err(format!("STEP: {kind}の単位が定義されていません"));
+            return Err(crate::Error::step(format!(
+                "STEP: {kind}の単位が定義されていません"
+            )));
         };
         if !scale.is_finite()
             || scale <= 0.
             || scales.iter().any(|s| (s - scale).abs() > scale * 1e-12)
         {
-            return Err(format!(
+            return Err(crate::Error::step(format!(
                 "STEP: {kind}の単位が不正、または異なる単位の複数表現です"
-            ));
+            )));
         }
         Ok(scale)
     }
@@ -216,9 +220,11 @@ impl Table {
         symbol: &str,
         measure_kind: &str,
         base: f64,
-    ) -> Result<f64, String> {
+    ) -> Result<f64> {
         if depth > 16 {
-            return Err("STEP: 単位の参照が循環しています".into());
+            return Err(crate::Error::step(
+                "STEP: 単位の参照が循環しています".into(),
+            ));
         }
         let e = self.get(id)?;
         if let Some(a) = e.part("SI_UNIT") {
@@ -241,12 +247,22 @@ impl Table {
                     "PICO" => 1e-12,
                     "FEMTO" => 1e-15,
                     "ATTO" => 1e-18,
-                    _ => return Err(format!("STEP #{id}: 未対応のSI接頭辞です")),
+                    _ => {
+                        return Err(crate::Error::step(format!(
+                            "STEP #{id}: 未対応のSI接頭辞です"
+                        )))
+                    }
                 },
-                _ => return Err(format!("STEP #{id}: SI接頭辞が不正です")),
+                _ => {
+                    return Err(crate::Error::step(format!(
+                        "STEP #{id}: SI接頭辞が不正です"
+                    )))
+                }
             };
             if !matches!(field(a,1)?, Value::Enum(s) if s == symbol) {
-                return Err(format!("STEP #{id}: SI単位に{symbol}が必要です"));
+                return Err(crate::Error::step(format!(
+                    "STEP #{id}: SI単位に{symbol}が必要です"
+                )));
             }
             return Ok(base * prefix);
         }
@@ -255,7 +271,9 @@ impl Table {
             let m = measure
                 .part(measure_kind)
                 .or_else(|| measure.part("MEASURE_WITH_UNIT"))
-                .ok_or_else(|| format!("STEP #{id}: {measure_kind}の換算係数がありません"))?;
+                .ok_or_else(|| {
+                    crate::Error::step(format!("STEP #{id}: {measure_kind}の換算係数がありません"))
+                })?;
             return Ok(field(m, 0)?.number()?
                 * self.unit_scale(
                     field(m, 1)?.reference()?,
@@ -265,7 +283,7 @@ impl Table {
                     base,
                 )?);
         }
-        Err(format!("STEP #{id}: 未対応の単位です"))
+        Err(crate::Error::step(format!("STEP #{id}: 未対応の単位です")))
     }
 }
 
@@ -275,10 +293,13 @@ struct Parser<'a> {
     values: usize,
 }
 impl Parser<'_> {
-    fn error<T>(&self, message: &str) -> Result<T, String> {
-        Err(format!("STEP byte {}: {message}", self.at))
+    fn error<T>(&self, message: &str) -> Result<T> {
+        Err(crate::Error::step(format!(
+            "STEP byte {}: {message}",
+            self.at
+        )))
     }
-    fn space(&mut self) -> Result<(), String> {
+    fn space(&mut self) -> Result<()> {
         loop {
             while self.bytes.get(self.at).is_some_and(u8::is_ascii_whitespace) {
                 self.at += 1;
@@ -296,7 +317,7 @@ impl Parser<'_> {
             self.at += 2;
         }
     }
-    fn take(&mut self, byte: u8) -> Result<(), String> {
+    fn take(&mut self, byte: u8) -> Result<()> {
         self.space()?;
         if self.bytes.get(self.at) != Some(&byte) {
             return self.error("区切り文字が不正です");
@@ -304,7 +325,7 @@ impl Parser<'_> {
         self.at += 1;
         Ok(())
     }
-    fn ident(&mut self) -> Result<String, String> {
+    fn ident(&mut self) -> Result<String> {
         self.space()?;
         let start = self.at;
         while self
@@ -319,7 +340,7 @@ impl Parser<'_> {
         }
         Ok(String::from_utf8_lossy(&self.bytes[start..self.at]).to_ascii_uppercase())
     }
-    fn id(&mut self) -> Result<usize, String> {
+    fn id(&mut self) -> Result<usize> {
         let start = self.at;
         while self.bytes.get(self.at).is_some_and(u8::is_ascii_digit) {
             self.at += 1;
@@ -328,9 +349,9 @@ impl Parser<'_> {
             .ok()
             .and_then(|s| s.parse::<usize>().ok())
             .filter(|&n| n > 0)
-            .ok_or_else(|| format!("STEP byte {start}: 参照番号が不正です"))
+            .ok_or_else(|| crate::Error::step(format!("STEP byte {start}: 参照番号が不正です")))
     }
-    fn string(&mut self) -> Result<String, String> {
+    fn string(&mut self) -> Result<String> {
         self.take(b'\'')?;
         let mut bytes = Vec::new();
         loop {
@@ -349,7 +370,7 @@ impl Parser<'_> {
         }
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
-    fn arguments(&mut self, depth: usize) -> Result<Vec<Value>, String> {
+    fn arguments(&mut self, depth: usize) -> Result<Vec<Value>> {
         if depth > 64 {
             return self.error("リストの深さが上限64を超えています");
         }
@@ -373,7 +394,7 @@ impl Parser<'_> {
             }
         }
     }
-    fn value(&mut self, depth: usize) -> Result<Value, String> {
+    fn value(&mut self, depth: usize) -> Result<Value> {
         self.space()?;
         self.values += 1;
         if self.values > 2_000_000 {
@@ -414,7 +435,9 @@ impl Parser<'_> {
                     .parse::<f64>()
                     .ok()
                     .filter(|n| n.is_finite())
-                    .ok_or_else(|| format!("STEP byte {start}: 有限の数値が必要です"))?;
+                    .ok_or_else(|| {
+                        crate::Error::step(format!("STEP byte {start}: 有限の数値が必要です"))
+                    })?;
                 Ok(Value::Number(number))
             }
             _ if c.is_ascii_alphabetic() => {
@@ -424,7 +447,7 @@ impl Parser<'_> {
             _ => self.error("未対応の属性表記です"),
         }
     }
-    fn find_data(&mut self) -> Result<bool, String> {
+    fn find_data(&mut self) -> Result<bool> {
         while self.at < self.bytes.len() {
             self.space()?;
             match self.bytes.get(self.at) {

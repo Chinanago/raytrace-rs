@@ -1,4 +1,5 @@
 use super::*;
+use crate::Result;
 
 #[derive(Clone, Debug)]
 pub(super) struct Glass {
@@ -11,19 +12,33 @@ pub(super) struct Glass {
     text: String,
 }
 impl Glass {
-    fn material(&self) -> Result<Material, String> {
+    fn material(&self) -> Result<Material> {
         if !self.errors.is_empty() {
-            return Err(format!("{}: {}", self.name, self.errors.join("; ")));
+            return Err(crate::Error::Agf(format!(
+                "{}: {}",
+                self.name,
+                self.errors.join("; ")
+            )));
         }
         let range = self
             .range
             .or_else(|| Some([self.transmission.first()?[0], self.transmission.last()?[0]]))
             .filter(|r| r[0] > 0.0 && r[1] > r[0])
-            .ok_or_else(|| format!("{}: AGFの有効波長範囲LDがありません", self.name))?;
-        let required = raytrace_core::dispersion::coefficient_count(self.formula)
-            .ok_or_else(|| format!("{}: AGF分散式{}は未対応です", self.name, self.formula))?;
+            .ok_or_else(|| {
+                crate::Error::Agf(format!("{}: AGFの有効波長範囲LDがありません", self.name))
+            })?;
+        let required =
+            raytrace_core::dispersion::coefficient_count(self.formula).ok_or_else(|| {
+                crate::Error::Agf(format!(
+                    "{}: AGF分散式{}は未対応です",
+                    self.name, self.formula
+                ))
+            })?;
         if self.coefficients.len() < required || self.coefficients.iter().any(|v| !v.is_finite()) {
-            return Err(format!("{}: AGF係数が不足しています", self.name));
+            return Err(crate::Error::Agf(format!(
+                "{}: AGF係数が不足しています",
+                self.name
+            )));
         }
         let c = &self.coefficients;
         let base = match self.formula {
@@ -55,10 +70,10 @@ impl Glass {
                     && (0.0..=1.0).contains(&v[1])
             }) || !self.transmission.windows(2).all(|w| w[0][0] < w[1][0])
             {
-                return Err(format!(
+                return Err(crate::Error::Agf(format!(
                     "{}: ITの波長順序・透過率・厚さが不正です",
                     self.name
-                ));
+                )));
             }
             let samples = self
                 .transmission
@@ -153,7 +168,7 @@ pub(super) fn catalogs(
                         {
                             Ok(values) => values,
                             Err(e) => {
-                                glass.errors.push(e);
+                                glass.errors.push(e.to_string());
                                 continue;
                             }
                         }
@@ -200,7 +215,7 @@ pub(super) fn material_id(
             match g.material() {
                 Ok(m) => m,
                 Err(e) => {
-                    project.issue("glass", e, true);
+                    project.issue("glass", e.to_string(), true);
                     Material::Constant {
                         n: 1.0,
                         absorption_per_mm: 0.0,

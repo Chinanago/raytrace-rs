@@ -1,4 +1,5 @@
 use super::*;
+use crate::Result;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TextEncoding {
@@ -46,11 +47,12 @@ pub fn decode(bytes: &[u8]) -> (String, TextEncoding) {
     )
 }
 /// Read an SPCD spectrum using the same text encoding detection as ZMX files.
-pub fn read_spcd(path: &Path) -> Result<raytrace_core::spectrum::Spectrum, String> {
-    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+pub fn read_spcd(path: &Path) -> Result<raytrace_core::spectrum::Spectrum> {
+    let bytes = fs::read(path).map_err(|e| crate::Error::io(path, e))?;
     raytrace_core::spectrum::Spectrum::parse_spcd(&decode(&bytes).0)
+        .map_err(|e| crate::Error::Spcd(e.to_string()))
 }
-pub(super) fn encode(text: &str, encoding: &TextEncoding) -> Result<Vec<u8>, String> {
+pub(super) fn encode(text: &str, encoding: &TextEncoding) -> Result<Vec<u8>> {
     Ok(match encoding {
         TextEncoding::Utf8 => text.as_bytes().to_vec(),
         TextEncoding::Utf8Bom => [vec![239, 187, 191], text.as_bytes().to_vec()].concat(),
@@ -67,9 +69,9 @@ pub(super) fn encode(text: &str, encoding: &TextEncoding) -> Result<Vec<u8>, Str
         TextEncoding::Windows1252 => {
             let (bytes, _, errors) = encoding_rs::WINDOWS_1252.encode(text);
             if errors {
-                return Err(
+                return Err(crate::Error::zmx(
                     "元の文字コードで表現できません。JSONプロジェクトに保存してください".into(),
-                );
+                ));
             }
             bytes.into_owned()
         }
@@ -79,10 +81,10 @@ pub(super) fn encode(text: &str, encoding: &TextEncoding) -> Result<Vec<u8>, Str
 pub(super) fn words(line: &str) -> Vec<&str> {
     line.split_whitespace().collect()
 }
-pub(super) fn number(s: &str) -> Result<f64, String> {
+pub(super) fn number(s: &str) -> Result<f64> {
     s.replace(['D', 'd'], "E")
         .parse()
-        .map_err(|_| format!("数値を読めません: {s}"))
+        .map_err(|_| crate::Error::zmx(format!("数値を読めません: {s}")))
 }
 pub(super) fn parameters(lines: &[String], key: &str) -> BTreeMap<usize, f64> {
     lines
@@ -96,25 +98,32 @@ pub(super) fn parameters(lines: &[String], key: &str) -> BTreeMap<usize, f64> {
         })
         .collect()
 }
-pub(super) fn checked_parameters(
-    lines: &[String],
-    key: &str,
-) -> Result<BTreeMap<usize, f64>, String> {
+pub(super) fn checked_parameters(lines: &[String], key: &str) -> Result<BTreeMap<usize, f64>> {
     let mut values = BTreeMap::new();
-    for line in lines {
+    for (line_index, line) in lines.iter().enumerate() {
         let w = words(line);
         if w.first().copied() != Some(key) {
             continue;
         }
         if w.len() < 3 {
-            return Err(format!("{key}の定義が不足しています"));
+            return Err(crate::Error::Zmx {
+                line: Some(line_index + 1),
+                detail: format!("{key}の定義が不足しています"),
+            });
         }
-        let index = w[1]
-            .parse::<usize>()
-            .map_err(|_| format!("{key}の番号が不正です"))?;
-        let value = number(w[2])?;
+        let index = w[1].parse::<usize>().map_err(|_| crate::Error::Zmx {
+            line: Some(line_index + 1),
+            detail: format!("{key}の番号が不正です"),
+        })?;
+        let value = number(w[2]).map_err(|error| crate::Error::Zmx {
+            line: Some(line_index + 1),
+            detail: error.to_string(),
+        })?;
         if !value.is_finite() || values.insert(index, value).is_some() {
-            return Err(format!("{key}の値が有限でないか、番号が重複しています"));
+            return Err(crate::Error::Zmx {
+                line: Some(line_index + 1),
+                detail: format!("{key}の値が有限でないか、番号が重複しています"),
+            });
         }
     }
     Ok(values)
@@ -127,17 +136,17 @@ pub(super) fn field<'a>(lines: &'a [String], key: &str) -> Option<&'a str> {
             .map(str::trim)
     })
 }
-pub(super) fn scalar(lines: &[String], key: &str, default: f64) -> Result<f64, String> {
+pub(super) fn scalar(lines: &[String], key: &str, default: f64) -> Result<f64> {
     field(lines, key)
         .and_then(|f| f.split_whitespace().next())
         .map(number)
         .unwrap_or(Ok(default))
 }
 
-pub(super) fn pose_from(line: &str) -> Result<(Pose, String), String> {
+pub(super) fn pose_from(line: &str) -> Result<(Pose, String)> {
     let w = words(line);
     if w.len() < 6 {
-        return Err("NSOPの配置情報が不足しています".into());
+        return Err(crate::Error::zmx("NSOPの配置情報が不足しています".into()));
     }
     Ok((
         Pose {

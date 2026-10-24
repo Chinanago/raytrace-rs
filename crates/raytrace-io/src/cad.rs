@@ -1,4 +1,5 @@
 //! Read-only STEP geometry and optical tessellation, implemented in Rust.
+use crate::Result;
 use raytrace_core::model::Shape;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -16,24 +17,28 @@ mod tessellate;
 
 const MAX_FILE_BYTES: u64 = 128 * 1024 * 1024;
 const CACHE_FORMAT: &str = "raytrace-step-native-v1";
-fn check_tolerance(value: f64) -> Result<(), String> {
+fn check_tolerance(value: f64) -> Result<()> {
     if !value.is_finite() || value <= 0. {
-        return Err("CAD分割精度は正の有限値で指定してください".into());
+        return Err(crate::Error::Project(
+            "CAD分割精度は正の有限値で指定してください".into(),
+        ));
     }
     Ok(())
 }
-fn read_step(path: &Path) -> Result<Vec<u8>, String> {
-    let file = fs::File::open(path).map_err(|e| format!("STEP {}: {e}", path.display()))?;
+fn read_step(path: &Path) -> Result<Vec<u8>> {
+    let file = fs::File::open(path).map_err(|e| crate::Error::io(path, e))?;
     let mut bytes = Vec::new();
     file.take(MAX_FILE_BYTES + 1)
         .read_to_end(&mut bytes)
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| crate::Error::io(path, e))?;
     if bytes.len() as u64 > MAX_FILE_BYTES {
-        return Err("STEP: ファイルの読込上限128 MiBを超えています".into());
+        return Err(crate::Error::Project(
+            "STEP: ファイルの読込上限128 MiBを超えています".into(),
+        ));
     }
     Ok(bytes)
 }
-fn mesh(bytes: &[u8], deflection_mm: f64) -> Result<Shape, String> {
+fn mesh(bytes: &[u8], deflection_mm: f64) -> Result<Shape> {
     let table = step::Table::read(bytes)?;
     let scale = table.length_scale_mm()?;
     let (solid, transform) = placement::solid_placement(&table)?;
@@ -50,19 +55,21 @@ fn mesh(bytes: &[u8], deflection_mm: f64) -> Result<Shape, String> {
     };
     let tolerance = deflection_mm / (scale * magnification);
     if !tolerance.is_finite() || tolerance <= 0. {
-        return Err("STEP: 単位・配置倍率と分割精度の組合せが範囲外です".into());
+        return Err(crate::Error::Project(
+            "STEP: 単位・配置倍率と分割精度の組合せが範囲外です".into(),
+        ));
     }
     tessellate::Mesher::new(&table, tolerance).solid(solid, transform, scale)
 }
 /// Convert afresh, bypassing the conversion cache (also useful for convergence checks).
-pub fn load_step_native_with_tolerance(path: &Path, deflection_mm: f64) -> Result<Shape, String> {
+pub fn load_step_native_with_tolerance(path: &Path, deflection_mm: f64) -> Result<Shape> {
     check_tolerance(deflection_mm)?;
     mesh(&read_step(path)?, deflection_mm)
 }
-pub fn load_step(path: &Path) -> Result<Shape, String> {
+pub fn load_step(path: &Path) -> Result<Shape> {
     load_step_with_tolerance(path, 0.02)
 }
-pub fn load_step_with_tolerance(path: &Path, deflection_mm: f64) -> Result<Shape, String> {
+pub fn load_step_with_tolerance(path: &Path, deflection_mm: f64) -> Result<Shape> {
     load_cached(
         path,
         deflection_mm,
@@ -107,7 +114,7 @@ fn usable(shape: &Shape) -> bool {
                 && t[2] != t[0]
         })
 }
-fn load_cached(path: &Path, deflection_mm: f64, cache_dir: &Path) -> Result<Shape, String> {
+fn load_cached(path: &Path, deflection_mm: f64, cache_dir: &Path) -> Result<Shape> {
     check_tolerance(deflection_mm)?;
     let bytes = read_step(path)?;
     let cache = cache_dir.join(cache_key(&bytes, deflection_mm));
@@ -125,23 +132,27 @@ fn load_cached(path: &Path, deflection_mm: f64, cache_dir: &Path) -> Result<Shap
     let _ = save_cache(&cache, &shape);
     Ok(shape)
 }
-fn save_cache(path: &Path, shape: &Shape) -> Result<(), String> {
+fn save_cache(path: &Path, shape: &Shape) -> Result<()> {
     #[derive(Serialize)]
     struct Borrowed<'a> {
         format: &'static str,
         shape: &'a Shape,
     }
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    fs::create_dir_all(path.parent().ok_or("STEP: キャッシュ保存先がありません")?)
-        .map_err(|e| e.to_string())?;
+    fs::create_dir_all(
+        path.parent()
+            .ok_or_else(|| crate::Error::step("STEP: キャッシュ保存先がありません".into()))?,
+    )
+    .map_err(|e| crate::Error::io(path, e))?;
     let temporary = path.with_extension(format!(
         "{}.{}.tmp",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     ));
     let result = (|| {
-        let mut file =
-            std::io::BufWriter::new(fs::File::create(&temporary).map_err(|e| e.to_string())?);
+        let mut file = std::io::BufWriter::new(
+            fs::File::create(&temporary).map_err(|e| crate::Error::io(path, e))?,
+        );
         serde_json::to_writer(
             &mut file,
             &Borrowed {
@@ -149,10 +160,10 @@ fn save_cache(path: &Path, shape: &Shape) -> Result<(), String> {
                 shape,
             },
         )
-        .map_err(|e| e.to_string())?;
-        file.flush().map_err(|e| e.to_string())?;
+        .map_err(|e| crate::Error::json(None, e))?;
+        file.flush().map_err(|e| crate::Error::io(path, e))?;
         drop(file);
-        fs::rename(&temporary, path).map_err(|e| e.to_string())
+        fs::rename(&temporary, path).map_err(|e| crate::Error::io(path, e))
     })();
     if result.is_err() {
         let _ = fs::remove_file(temporary);

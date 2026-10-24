@@ -8,7 +8,7 @@ impl App {
         let mut scene = match self.project.trace_scene() {
             Ok(s) => s,
             Err(e) => {
-                self.error = Some(e);
+                self.error = Some(e.to_string());
                 return;
             }
         };
@@ -38,14 +38,16 @@ impl App {
                     .num_threads(threads)
                     .build()
                     .map_err(|e| e.to_string())?;
-                let prepared = scene.clone().prepare()?;
+                let prepared = scene.clone().prepare().map_err(|e| e.to_string())?;
                 if control.cancel.load(Ordering::Relaxed) {
                     return Ok(None);
                 }
                 let started = Instant::now();
-                let Some(mut report) = pool.install(|| {
-                    trace_generated_controlled(&prepared, TraceOptions::default(), &control)
-                })?
+                let Some(mut report) = pool
+                    .install(|| {
+                        trace_generated_controlled(&prepared, TraceOptions::default(), &control)
+                    })
+                    .map_err(|e| e.to_string())?
                 else {
                     return Ok(None);
                 };
@@ -54,7 +56,7 @@ impl App {
                 if !power.is_finite() || power <= 0.0 {
                     return Err("発射基準光量は正の有限値で指定してください".into());
                 }
-                let generator = prepared.ray_generator()?;
+                let generator = prepared.ray_generator().map_err(|e| e.to_string())?;
                 let n = generator.len().min(64);
                 // Each source contributes a prefix; striding a Sobol sequence destroys its balance.
                 let mut preview = Vec::with_capacity(n);
@@ -68,7 +70,8 @@ impl App {
                                 ..generator
                                     .rays(offset + layer..offset + layer + 1)
                                     .next()
-                                    .unwrap()?
+                                    .unwrap()
+                                    .map_err(|e| e.to_string())?
                             });
                         }
                         offset += source.count;
@@ -159,9 +162,9 @@ impl App {
                         self.append_component(c);
                         self.preview_limit = Some(256);
                     }
-                    Err(e) => self.error = Some(e),
+                    Err(e) => self.error = Some(e.to_string()),
                 },
-                Job::Added(_, Err(e)) => self.error = Some(e),
+                Job::Added(_, Err(e)) => self.error = Some(e.to_string()),
                 Job::Loaded(Ok(mut p)) => {
                     p.allow_uncoated |= self.project.allow_uncoated;
                     if self.project.monochromatic_override_um.is_some() {
@@ -199,10 +202,10 @@ impl App {
                 | Job::Scanned(Err(e))
                 | Job::LoadedRun(Err(e))
                 | Job::Compared(Err(e)) => {
-                    self.error = Some(e);
+                    self.error = Some(e.to_string());
                     self.status = "設定を確認してください".into();
                 }
-                Job::Exported(Err(e)) => self.error = Some(e),
+                Job::Exported(Err(e)) => self.error = Some(e.to_string()),
             }
         }
     }
@@ -227,7 +230,12 @@ pub(super) fn record_viewer_paths(
             for s in &mut preview.sources {
                 s.count = s.count.min(64);
             }
-            let generated = preview.clone().prepare()?.generate_rays()?;
+            let generated = preview
+                .clone()
+                .prepare()
+                .map_err(|e| e.to_string())?
+                .generate_rays()
+                .map_err(|e| e.to_string())?;
             let total = generated.len().min(64);
             let mut rays = Vec::with_capacity(total);
             let mut layer = 0;
@@ -255,7 +263,7 @@ pub(super) fn record_viewer_paths(
         }
     }
     Ok(trace(
-        &geometry.prepare()?,
+        &geometry.prepare().map_err(|e| e.to_string())?,
         &rays,
         TraceOptions {
             keep_terminals: false,

@@ -1,6 +1,7 @@
 //! Editable project plus the original Zemax document and compatibility diagnostics.
 use crate::assembly::{empty_scene, Assembly, Component, ComponentKind};
 use crate::zemax::{self, ZmxDocument};
+use crate::Result;
 use raytrace_core::model::Scene;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -64,16 +65,18 @@ impl Project {
             cad_deflection_mm: None,
         }
     }
-    pub fn open(path: &Path, catalogs: &[PathBuf]) -> Result<Self, String> {
+    pub fn open(path: &Path, catalogs: &[PathBuf]) -> Result<Self> {
         Self::open_with_cad_tolerance(path, catalogs, 0.02)
     }
     pub fn open_with_cad_tolerance(
         path: &Path,
         catalogs: &[PathBuf],
         deflection_mm: f64,
-    ) -> Result<Self, String> {
+    ) -> Result<Self> {
         if !deflection_mm.is_finite() || deflection_mm <= 0.0 {
-            return Err("CAD分割精度は正の有限値で指定してください".into());
+            return Err(crate::Error::Project(
+                "CAD分割精度は正の有限値で指定してください".into(),
+            ));
         }
         if path
             .extension()
@@ -81,13 +84,15 @@ impl Project {
         {
             return zemax::read_zmx_with_cad_tolerance(path, catalogs, deflection_mm);
         }
-        let bytes = fs::read(path).map_err(|e| e.to_string())?;
-        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+        let bytes = fs::read(path).map_err(|e| crate::Error::io(path, e))?;
+        let value: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|e| crate::Error::json(Some(path.to_path_buf()), e))?;
         if value.get("format").is_some() {
             if value["format"] == crate::record::RUN_FORMAT {
-                return Err("計算記録は raytrace-rs --replay で再計算できます。配置の編集にはプロジェクトJSONを開いてください".into());
+                return Err(crate::Error::Project("計算記録は raytrace-rs --replay で再計算できます。配置の編集にはプロジェクトJSONを開いてください".into()));
             }
-            let mut project: Self = serde_json::from_value(value).map_err(|e| e.to_string())?;
+            let mut project: Self = serde_json::from_value(value)
+                .map_err(|e| crate::Error::json(Some(path.to_path_buf()), e))?;
             if ![
                 "raytrace-project-v1",
                 "raytrace-project-v2",
@@ -96,26 +101,27 @@ impl Project {
             .contains(&project.format.as_str())
                 || project.format == "raytrace-project-v2" && project.assembly.is_none()
             {
-                return Err("未対応のプロジェクト形式です".into());
+                return Err(crate::Error::Project("未対応のプロジェクト形式です".into()));
             }
             project.refresh_assembly()?;
             Ok(project)
         } else {
-            Ok(Self::new(
-                serde_json::from_value(value).map_err(|e| e.to_string())?,
-            ))
+            Ok(Self::new(serde_json::from_value(value).map_err(|e| {
+                crate::Error::json(Some(path.to_path_buf()), e)
+            })?))
         }
     }
-    pub fn save(&self, path: &Path) -> Result<(), String> {
+    pub fn save(&self, path: &Path) -> Result<()> {
         let mut snapshot = self.clone();
         snapshot.refresh_assembly()?;
         fs::write(
             path,
-            serde_json::to_vec_pretty(&snapshot).map_err(|e| e.to_string())?,
+            serde_json::to_vec_pretty(&snapshot)
+                .map_err(|e| crate::Error::json(Some(path.to_path_buf()), e))?,
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| crate::Error::io(path, e))
     }
-    pub fn trace_scene(&self) -> Result<Scene, String> {
+    pub fn trace_scene(&self) -> Result<Scene> {
         let (mut scene, issues) = if let Some(a) = &self.assembly {
             let (scene, _, issues) = a.compose(&self.scene)?;
             (scene, issues)
@@ -128,7 +134,7 @@ impl Project {
             .map(|i| i.message.as_str())
             .collect();
         if !blocked.is_empty() {
-            return Err(blocked.join("\n"));
+            return Err(crate::Error::Project(blocked.join("\n")));
         }
         if self.allow_uncoated {
             for surface in &mut scene.surfaces {
@@ -162,7 +168,7 @@ impl Project {
         p.assembly = Some(Assembly::default());
         p
     }
-    pub fn refresh_assembly(&mut self) -> Result<(), String> {
+    pub fn refresh_assembly(&mut self) -> Result<()> {
         if let Some(a) = &self.assembly {
             let (scene, names, issues) = a.compose(&self.scene)?;
             self.scene = scene;
@@ -187,7 +193,7 @@ impl Project {
                     .any(|c| c.project.requires_extended_illumination())
             })
     }
-    pub fn add_component(&mut self, component: Component) -> Result<(), String> {
+    pub fn add_component(&mut self, component: Component) -> Result<()> {
         let mut candidate = self.clone();
         if candidate.assembly.is_none() {
             let current = Component::imported(candidate.clone(), ComponentKind::System)?;

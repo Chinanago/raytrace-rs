@@ -310,6 +310,14 @@ fn failed_aiming_reports_the_source_ray_and_wavelength_instead_of_substitution()
         .unwrap()
         .generate_rays()
         .unwrap_err();
+    assert!(matches!(
+        error,
+        raytrace_core::Error::RayAiming {
+            source_index: 2,
+            ..
+        }
+    ));
+    let error = error.to_string();
     assert!(
         error.contains("光源 2")
             && error.contains("光線")

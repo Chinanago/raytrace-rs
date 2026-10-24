@@ -2,6 +2,7 @@ use super::{
     nurbs,
     step::{field, Table, Value},
 };
+use crate::Result;
 use raytrace_core::math::V3;
 use std::f64::consts::{FRAC_PI_2, TAU};
 
@@ -35,12 +36,12 @@ impl Transform {
             axes: child.axes.map(|a| self.vector(a)),
         }
     }
-    pub fn inverse(&self) -> Result<Self, String> {
+    pub fn inverse(&self) -> Result<Self> {
         let [a, b, c] = self.axes;
         let det = a.dot(b.cross(c));
         let scale = a.norm() * b.norm() * c.norm();
         if !det.is_finite() || !scale.is_finite() || scale == 0. || det.abs() < scale * 1e-12 {
-            return Err("STEP: 配置変換が特異です".into());
+            return Err(crate::Error::step("STEP: 配置変換が特異です".into()));
         }
         let rows = [b.cross(c) / det, c.cross(a) / det, a.cross(b) / det];
         let inverse = Self {
@@ -52,36 +53,44 @@ impl Transform {
             ..inverse
         })
     }
-    pub fn normal(&self, n: V3) -> Result<V3, String> {
+    pub fn normal(&self, n: V3) -> Result<V3> {
         let inverse = self.inverse()?;
         unit(V3(inverse.axes.map(|a| a.dot(n))))
     }
 }
-fn unit(v: V3) -> Result<V3, String> {
+fn unit(v: V3) -> Result<V3> {
     let n = v.norm();
     if !v.finite() || !n.is_finite() || n < 1e-15 {
-        return Err("STEP: ゼロ長または不正な方向・法線です".into());
+        return Err(crate::Error::step(
+            "STEP: ゼロ長または不正な方向・法線です".into(),
+        ));
     }
     Ok(v / n)
 }
-pub(super) fn point(table: &Table, id: usize) -> Result<V3, String> {
+pub(super) fn point(table: &Table, id: usize) -> Result<V3> {
     let coords = field(table.args(id, "CARTESIAN_POINT")?, 1)?.numbers()?;
     match *coords.as_slice() {
         [x, y, z] => Ok(V3([x, y, z])),
         [x, y] => Ok(V3([x, y, 0.])),
-        _ => Err(format!("STEP #{id}: 点の座標数が不正です")),
+        _ => Err(crate::Error::step(format!(
+            "STEP #{id}: 点の座標数が不正です"
+        ))),
     }
 }
-fn direction(table: &Table, id: usize) -> Result<V3, String> {
+fn direction(table: &Table, id: usize) -> Result<V3> {
     let coords = field(table.args(id, "DIRECTION")?, 1)?.numbers()?;
     let v = match *coords.as_slice() {
         [x, y, z] => V3([x, y, z]),
         [x, y] => V3([x, y, 0.]),
-        _ => return Err(format!("STEP #{id}: 方向の座標数が不正です")),
+        _ => {
+            return Err(crate::Error::step(format!(
+                "STEP #{id}: 方向の座標数が不正です"
+            )))
+        }
     };
     unit(v)
 }
-pub(super) fn frame(table: &Table, id: usize) -> Result<Transform, String> {
+pub(super) fn frame(table: &Table, id: usize) -> Result<Transform> {
     let e = table.get(id)?;
     if let Some(a) = e.part("AXIS2_PLACEMENT_3D") {
         let origin = point(table, field(a, 1)?.reference()?)?;
@@ -116,7 +125,10 @@ pub(super) fn frame(table: &Table, id: usize) -> Result<Transform, String> {
             axes: [x, V3([-x.0[1], x.0[0], 0.]), V3([0., 0., 1.])],
         });
     }
-    Err(format!("STEP #{id}: 未対応の軸配置 {}", e.kind()))
+    Err(crate::Error::step(format!(
+        "STEP #{id}: 未対応の軸配置 {}",
+        e.kind()
+    )))
 }
 
 #[derive(Clone, Debug)]
@@ -314,7 +326,7 @@ impl Surface {
     pub fn point(&self, uv: [f64; 2]) -> V3 {
         self.sample(uv).0
     }
-    pub fn normal(&self, uv: [f64; 2]) -> Result<V3, String> {
+    pub fn normal(&self, uv: [f64; 2]) -> Result<V3> {
         match self {
             Self::Sphere { frame, radius: _ } | Self::SpherePatch { frame, radius: _ } => {
                 unit(self.point(uv) - frame.origin)
@@ -355,7 +367,9 @@ impl Surface {
                         }
                     }
                 }
-                Err("STEP: 曲面の法線が退化しています".into())
+                Err(crate::Error::step(
+                    "STEP: 曲面の法線が退化しています".into(),
+                ))
             }
         }
     }
@@ -394,18 +408,22 @@ impl Surface {
             base + period
         }
     }
-    pub fn prepare_chart(&mut self, boundary: &[V3]) -> Result<(), String> {
+    pub fn prepare_chart(&mut self, boundary: &[V3]) -> Result<()> {
         if let Self::Sphere { frame, radius } = self {
             let mut z = V3::default();
             for &p in boundary {
                 z = z + unit(p - frame.origin)?;
             }
-            let z = unit(z).map_err(|_| "STEP: 球面を一つの半球へ展開できません".to_string())?;
+            let z = unit(z).map_err(|_| {
+                crate::Error::step("STEP: 球面を一つの半球へ展開できません".to_string())
+            })?;
             if boundary
                 .iter()
                 .any(|p| (*p - frame.origin).dot(z) < -radius.abs() * 1e-8)
             {
-                return Err("STEP: 半球を超える球面の境界は未対応です".into());
+                return Err(crate::Error::step(
+                    "STEP: 半球を超える球面の境界は未対応です".into(),
+                ));
             }
             let a = if z.0[0].abs() < 0.9 {
                 V3([1., 0., 0.])
@@ -423,12 +441,7 @@ impl Surface {
         }
         Ok(())
     }
-    pub fn project(
-        &self,
-        p: V3,
-        seed: Option<[f64; 2]>,
-        tolerance: f64,
-    ) -> Result<[f64; 2], String> {
+    pub fn project(&self, p: V3, seed: Option<[f64; 2]>, tolerance: f64) -> Result<[f64; 2]> {
         let mut uv = match self {
             Self::Plane(f) => {
                 let p = f.local_point(p);
@@ -494,11 +507,11 @@ impl Surface {
             }
         }
         if !uv.iter().all(|x| x.is_finite()) || (self.point(uv) - p).norm() > tolerance {
-            return Err(format!(
+            return Err(crate::Error::step(format!(
                 "STEP: 境界を曲面へ投影できません（誤差 {:.6e}、許容 {:.6e}）",
                 (self.point(uv) - p).norm(),
                 tolerance
-            ));
+            )));
         }
         Ok(uv)
     }
@@ -550,37 +563,43 @@ impl Surface {
     }
 }
 
-fn positive(value: f64) -> Result<f64, String> {
+fn positive(value: f64) -> Result<f64> {
     if value > 0. && value.is_finite() {
         Ok(value)
     } else {
-        Err("STEP: 半径・寸法は正の有限値が必要です".into())
+        Err(crate::Error::step(
+            "STEP: 半径・寸法は正の有限値が必要です".into(),
+        ))
     }
 }
-fn weights(values: Option<&Value>, count: usize) -> Result<Vec<f64>, String> {
+fn weights(values: Option<&Value>, count: usize) -> Result<Vec<f64>> {
     let mut w = if let Some(v) = values {
         v.numbers()?
     } else {
         vec![1.; count]
     };
     if w.len() != count || w.iter().any(|v| !v.is_finite() || *v <= 0.) {
-        return Err("STEP: NURBSの重みが不正です".into());
+        return Err(crate::Error::step("STEP: NURBSの重みが不正です".into()));
     }
     let max = w.iter().copied().fold(0., f64::max);
     for v in &mut w {
         *v /= max;
         if *v < 1e-100 {
-            return Err("STEP: NURBSの重みの比が大きすぎます".into());
+            return Err(crate::Error::step(
+                "STEP: NURBSの重みの比が大きすぎます".into(),
+            ));
         }
     }
     Ok(w)
 }
-pub(super) fn read_curve(table: &Table, id: usize) -> Result<Curve, String> {
+pub(super) fn read_curve(table: &Table, id: usize) -> Result<Curve> {
     read_curve_inner(table, id, 0)
 }
-fn read_curve_inner(table: &Table, id: usize, depth: usize) -> Result<Curve, String> {
+fn read_curve_inner(table: &Table, id: usize, depth: usize) -> Result<Curve> {
     if depth > 16 {
-        return Err("STEP: 曲線の参照が循環しています".into());
+        return Err(crate::Error::step(
+            "STEP: 曲線の参照が循環しています".into(),
+        ));
     }
     let e = table.get(id)?;
     for kind in ["SURFACE_CURVE", "SEAM_CURVE"] {
@@ -618,7 +637,9 @@ fn read_curve_inner(table: &Table, id: usize, depth: usize) -> Result<Curve, Str
             .map(|id| point(table, id))
             .collect::<Result<Vec<_>, _>>()?;
         if points.len() < 2 {
-            return Err("STEP: POLYLINEの点が不足しています".into());
+            return Err(crate::Error::step(
+                "STEP: POLYLINEの点が不足しています".into(),
+            ));
         }
         let n = points.len();
         let knots = (0..n).map(|i| i as f64).collect::<Vec<_>>();
@@ -636,7 +657,10 @@ fn read_curve_inner(table: &Table, id: usize, depth: usize) -> Result<Curve, Str
     } else if let Some(a) = e.part("B_SPLINE_CURVE_WITH_KNOTS") {
         (a, 1, 6)
     } else {
-        return Err(format!("STEP #{id}: 未対応の境界曲線 {}", e.kind()));
+        return Err(crate::Error::step(format!(
+            "STEP #{id}: 未対応の境界曲線 {}",
+            e.kind()
+        )));
     };
     let degree = field(base, offset)?.integer()?;
     let points = field(base, offset + 1)?
@@ -644,9 +668,9 @@ fn read_curve_inner(table: &Table, id: usize, depth: usize) -> Result<Curve, Str
         .into_iter()
         .map(|id| point(table, id))
         .collect::<Result<Vec<_>, _>>()?;
-    let k = e
-        .part("B_SPLINE_CURVE_WITH_KNOTS")
-        .ok_or_else(|| format!("STEP #{id}: ノット付きB-spline曲線が必要です"))?;
+    let k = e.part("B_SPLINE_CURVE_WITH_KNOTS").ok_or_else(|| {
+        crate::Error::step(format!("STEP #{id}: ノット付きB-spline曲線が必要です"))
+    })?;
     let basis = nurbs::Basis::new(
         degree,
         points.len(),
@@ -665,7 +689,7 @@ fn read_curve_inner(table: &Table, id: usize, depth: usize) -> Result<Curve, Str
     Ok(Curve::Spline(c))
 }
 
-pub(super) fn read_surface(table: &Table, id: usize) -> Result<Surface, String> {
+pub(super) fn read_surface(table: &Table, id: usize) -> Result<Surface> {
     let e = table.get(id)?;
     for kind in [
         "PLANE",
@@ -692,7 +716,9 @@ pub(super) fn read_surface(table: &Table, id: usize) -> Result<Surface, String> 
                 "TOROIDAL_SURFACE" => {
                     let minor = positive(field(a, 3)?.number()?)?;
                     if minor >= r {
-                        return Err("STEP: 自己交差するトーラスは未対応です".into());
+                        return Err(crate::Error::step(
+                            "STEP: 自己交差するトーラスは未対応です".into(),
+                        ));
                     }
                     Surface::Torus {
                         frame: f,
@@ -703,7 +729,7 @@ pub(super) fn read_surface(table: &Table, id: usize) -> Result<Surface, String> 
                 _ => {
                     let angle = field(a, 3)?.number()? * table.angle_scale_rad()?;
                     if angle.abs() >= FRAC_PI_2 || angle.abs() < 1e-12 {
-                        return Err("STEP: 円錐の半角が不正です".into());
+                        return Err(crate::Error::step("STEP: 円錐の半角が不正です".into()));
                     }
                     Surface::Cone {
                         frame: f,
@@ -719,7 +745,10 @@ pub(super) fn read_surface(table: &Table, id: usize) -> Result<Surface, String> 
     } else if let Some(a) = e.part("B_SPLINE_SURFACE_WITH_KNOTS") {
         (a, 1, 8)
     } else {
-        return Err(format!("STEP #{id}: 未対応の面 {}", e.kind()));
+        return Err(crate::Error::step(format!(
+            "STEP #{id}: 未対応の面 {}",
+            e.kind()
+        )));
     };
     let (ud, vd) = (
         field(base, offset)?.integer()?,
@@ -737,11 +766,13 @@ pub(super) fn read_surface(table: &Table, id: usize) -> Result<Surface, String> 
         .collect::<Result<Vec<_>, _>>()?;
     let nv = points.first().map_or(0, Vec::len);
     if nv == 0 || points.iter().any(|r| r.len() != nv) {
-        return Err("STEP: 曲面の制御点が矩形配列ではありません".into());
+        return Err(crate::Error::step(
+            "STEP: 曲面の制御点が矩形配列ではありません".into(),
+        ));
     }
-    let k = e
-        .part("B_SPLINE_SURFACE_WITH_KNOTS")
-        .ok_or_else(|| format!("STEP #{id}: ノット付きB-spline曲面が必要です"))?;
+    let k = e.part("B_SPLINE_SURFACE_WITH_KNOTS").ok_or_else(|| {
+        crate::Error::step(format!("STEP #{id}: ノット付きB-spline曲面が必要です"))
+    })?;
     let u = nurbs::Basis::new(
         ud,
         points.len(),
@@ -761,7 +792,7 @@ pub(super) fn read_surface(table: &Table, id: usize) -> Result<Surface, String> 
             || w.iter()
                 .any(|r| r.list().map_or(true, |row| row.len() != nv))
         {
-            return Err("STEP: 曲面の重み配列が不正です".into());
+            return Err(crate::Error::step("STEP: 曲面の重み配列が不正です".into()));
         }
         let flat = Value::List(
             w.iter()

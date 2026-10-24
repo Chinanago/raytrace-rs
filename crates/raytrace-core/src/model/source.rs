@@ -1,6 +1,7 @@
 use super::{Aperture, PreparedScene, Sampling};
 use crate::math::{Frame, Pose, V3};
 use crate::sampling::{gaussian_quantile, uniform, Sobol, SuperGaussian};
+use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
@@ -93,7 +94,7 @@ fn unit_pair() -> [f64; 2] {
 }
 impl Diode {
     #[doc(hidden)]
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<()> {
         if !self.rotation_deg.finite()
             || !self.astigmatism_mm.is_finite()
             || self.astigmatism_mm < 0.
@@ -118,7 +119,7 @@ impl Diode {
                         .any(|v| !v.is_finite() || *v < 0.01))
             || self.spacing_mm.iter().any(|v| !v.is_finite())
         {
-            return Err("Source Diode: 非点収差は0以上、角度の超Gaussian係数は0.01〜50、発光面の係数は0.01以上、配列数は1〜10,000で指定してください".into());
+            return Err(crate::Error::InvalidScene("Source Diode: 非点収差は0以上、角度の超Gaussian係数は0.01〜50、発光面の係数は0.01以上、配列数は1〜10,000で指定してください".into()));
         }
         Ok(())
     }
@@ -137,7 +138,7 @@ pub struct Ray {
 }
 
 impl Ray {
-    fn validate_geometry(&mut self, scene: &PreparedScene) -> Result<(), String> {
+    fn validate_geometry(&mut self, scene: &PreparedScene) -> Result<()> {
         if !self.position_mm.finite()
             || !self.direction.finite()
             || self.direction.norm() < 1e-15
@@ -149,18 +150,25 @@ impl Ray {
             || !self.optical_path_mm.is_finite()
             || self.optical_path_mm < 0.0
         {
-            return Err(format!("Invalid launch ray {}", self.id));
+            return Err(crate::Error::InvalidRay {
+                id: self.id,
+                detail: format!("発射光線 {} の設定が不正です", self.id),
+            });
         }
         self.direction = self.direction.unit();
         Ok(())
     }
-    pub fn validate(&mut self, scene: &PreparedScene) -> Result<(), String> {
+    pub fn validate(&mut self, scene: &PreparedScene) -> Result<()> {
         self.validate_geometry(scene)?;
         for (i, material) in scene.spec.materials.iter().enumerate() {
             if material.index(self.wavelength_um).is_none()
                 || material.absorption_at(self.wavelength_um).is_none()
             {
-                return Err(format!("Material {i} is undefined at {} um for launch {}; check the valid wavelength range", self.wavelength_um, self.id));
+                return Err(crate::Error::Wavelength {
+                    material: i,
+                    wavelength_um: self.wavelength_um,
+                    launch: self.id,
+                });
             }
         }
         for surface in &scene.surfaces {
@@ -170,10 +178,10 @@ impl Ray {
                 .as_ref()
                 .is_some_and(|c| !c.covers(self.wavelength_um))
             {
-                return Err(format!(
+                return Err(crate::Error::InvalidScene(format!(
                     "{}: コーティングの有効波長範囲に {} um が含まれません",
                     surface.spec.name, self.wavelength_um
-                ));
+                )));
             }
         }
         Ok(())
@@ -183,7 +191,7 @@ impl Ray {
 /// Prepared source data shared by independently generated launch ranges.
 pub struct RayGenerator<'a> {
     scene: &'a PreparedScene,
-    sources: Vec<Result<PreparedSource<'a>, String>>,
+    sources: Vec<Result<PreparedSource<'a>>>,
     offsets: Vec<usize>,
 }
 
@@ -200,7 +208,7 @@ struct PreparedSource<'a> {
 }
 
 impl PreparedScene {
-    pub fn ray_generator(&self) -> Result<RayGenerator<'_>, String> {
+    pub fn ray_generator(&self) -> Result<RayGenerator<'_>> {
         let mut sources = Vec::new();
         let mut offsets = vec![0usize];
         for source in &self.spec.sources {
@@ -211,7 +219,9 @@ impl PreparedScene {
                     .last()
                     .unwrap()
                     .checked_add(source.count)
-                    .ok_or("Source ray count exceeds usize")?,
+                    .ok_or_else(|| {
+                        crate::Error::Limit("光源の光線数がusizeの上限を超えています".into())
+                    })?,
             );
         }
         Ok(RayGenerator {
@@ -221,7 +231,7 @@ impl PreparedScene {
         })
     }
 
-    pub fn generate_rays(&self) -> Result<Vec<Ray>, String> {
+    pub fn generate_rays(&self) -> Result<Vec<Ray>> {
         let generator = self.ray_generator()?;
         generator.rays(0..generator.len()).collect()
     }
@@ -237,7 +247,7 @@ impl RayGenerator<'_> {
     }
 
     /// Source preparation errors are yielded in launch order along with ray errors.
-    pub fn rays(&self, range: Range<usize>) -> impl Iterator<Item = Result<Ray, String>> + '_ {
+    pub fn rays(&self, range: Range<usize>) -> impl Iterator<Item = Result<Ray>> + '_ {
         assert!(range.start <= range.end && range.end <= self.len());
         let first = self.offsets[1..].partition_point(|&end| end <= range.start);
         let last = self.offsets[..self.sources.len()].partition_point(|&start| start < range.end);
@@ -264,9 +274,11 @@ impl RayGenerator<'_> {
 }
 
 impl<'a> PreparedSource<'a> {
-    fn new(scene: &PreparedScene, source: &'a Source) -> Result<Self, String> {
+    fn new(scene: &PreparedScene, source: &'a Source) -> Result<Self> {
         if source.count as u128 > (1u128 << 52) {
-            return Err("Sobol supports at most 2^52 rays per source".into());
+            return Err(crate::Error::Limit(
+                "Sobolの光線数は光源ごとに2^52本までです".into(),
+            ));
         }
         let spectral_power = source
             .spectrum
@@ -331,7 +343,7 @@ impl<'a> PreparedSource<'a> {
         j: usize,
         id: usize,
         sobol: &mut Option<Sobol>,
-    ) -> Result<Ray, String> {
+    ) -> Result<Ray> {
         let Self {
             source,
             spectral_power,
@@ -490,13 +502,11 @@ impl<'a> PreparedSource<'a> {
         if let Some(pupil) = &optical_pupil {
             let (position, direction) = pupil
                 .launch(source, ray.wavelength_um, [sample[0], sample[1]])
-                .map_err(|e| {
-                    format!(
-                        "光源 {} / 光線 {} / 波長 {} um: {e}",
-                        source_index + 1,
-                        ray.id,
-                        ray.wavelength_um
-                    )
+                .map_err(|e| crate::Error::RayAiming {
+                    source_index: source_index + 1,
+                    ray: ray.id,
+                    wavelength_um: ray.wavelength_um,
+                    detail: e.to_string(),
                 })?;
             ray.position_mm = position;
             ray.direction = direction;

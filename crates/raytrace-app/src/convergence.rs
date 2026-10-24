@@ -1,4 +1,5 @@
 //! Controlled ray-count, seed, pixel-grid and CAD-tessellation comparisons.
+use crate::Result;
 use raytrace_core::{
     model::{Interaction, Shape},
     screen::ScreenAnalysis,
@@ -35,7 +36,7 @@ impl Default for ConvergencePlan {
     }
 }
 impl ConvergencePlan {
-    fn validate(&self) -> Result<(), String> {
+    fn validate(&self) -> Result<()> {
         if !(1..=64).contains(&self.threads)
             || self.ray_counts.iter().any(|&n| n == 0 || n > 2_000_000)
             || self
@@ -51,7 +52,9 @@ impl ConvergencePlan {
                 .wavelength_um
                 .is_some_and(|w| !w.is_finite() || w <= 0.0)
         {
-            return Err("収束確認の光線数・画素数・CAD精度・波長・スレッド数が不正です".into());
+            return Err(crate::Error::Plan(
+                "収束確認の光線数・画素数・CAD精度・波長・スレッド数が不正です".into(),
+            ));
         }
         let n = self
             .ray_counts
@@ -61,7 +64,7 @@ impl ConvergencePlan {
             .and_then(|n| n.checked_mul(self.pixels.len().max(1)))
             .and_then(|n| n.checked_mul(self.cad_deflections_mm.len()));
         if n.is_none_or(|n| n > 256) {
-            return Err("収束確認は256ケースまでです".into());
+            return Err(crate::Error::Plan("収束確認は256ケースまでです".into()));
         }
         fn duplicates<T: PartialEq>(v: &[T]) -> bool {
             v.iter().enumerate().any(|(i, x)| v[..i].contains(x))
@@ -71,7 +74,9 @@ impl ConvergencePlan {
             || duplicates(&self.pixels)
             || duplicates(&self.cad_deflections_mm)
         {
-            return Err("収束確認の軸に重複した値があります".into());
+            return Err(crate::Error::Plan(
+                "収束確認の軸に重複した値があります".into(),
+            ));
         }
         Ok(())
     }
@@ -138,10 +143,12 @@ pub struct ConvergenceReport {
 
 /// Area-overlap rebinning conserves integrated pixel power. Values are uniform
 /// within each original pixel for this comparison; no extra detail is inferred.
-pub fn rebin(map: &DetectorMap, pixels: [usize; 2]) -> Result<DetectorMap, String> {
+pub fn rebin(map: &DetectorMap, pixels: [usize; 2]) -> Result<DetectorMap> {
     ScreenAnalysis::from_detector(map)?;
     if pixels.contains(&0) || pixels[0] > map.pixels[0] || pixels[1] > map.pixels[1] {
-        return Err("比較画素は元の画素数以下で指定してください".into());
+        return Err(crate::Error::Plan(
+            "比較画素は元の画素数以下で指定してください".into(),
+        ));
     }
     let [nx, ny] = map.pixels;
     let mut weights = vec![0.0; pixels[0] * pixels[1]];
@@ -177,23 +184,20 @@ fn axis_options<T: Copy>(values: &[T]) -> Vec<Option<T>> {
     }
 }
 
-pub fn run(
-    model: &Path,
-    plan: &ConvergencePlan,
-    output: &Path,
-) -> Result<ConvergenceReport, String> {
+pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<ConvergenceReport> {
     plan.validate()?;
     let native = model
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("zmx"));
     if !native && plan.cad_deflections_mm.len() > 1 {
-        return Err("CAD分割精度の比較には、STEPを参照する元のZMXを指定してください。JSON内のメッシュは保存済みの分割を使います".into());
+        return Err(crate::Error::Plan("CAD分割精度の比較には、STEPを参照する元のZMXを指定してください。JSON内のメッシュは保存済みの分割を使います".into()));
     }
-    fs::create_dir_all(output).map_err(|e| e.to_string())?;
+    fs::create_dir_all(output)
+        .map_err(|e| crate::Error::from(raytrace_io::Error::io(output, e)))?;
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(plan.threads)
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| crate::Error::Plan(format!("スレッドプールを作成できません: {e}")))?;
     let mut summary = ConvergenceReport {
         format: "raytrace-convergence-v1".into(), software_version: env!("CARGO_PKG_VERSION").into(),
         model: model.display().to_string(), plan: plan.clone(), cases: Vec::new(), comparisons: Vec::new(),
@@ -203,7 +207,7 @@ pub fn run(
     let mut maps: Vec<Vec<DetectorMap>> = Vec::new();
     let pixel_options = axis_options(&plan.pixels);
     for &cad in &plan.cad_deflections_mm {
-        let loaded = Project::open_with_cad_tolerance(model, &[], cad);
+        let loaded = Project::open_with_cad_tolerance(model, &[], cad).map_err(|e| e.to_string());
         for count in axis_options(&plan.ray_counts) {
             for seed in axis_options(&plan.seeds) {
                 for &pixels in &pixel_options {
@@ -230,8 +234,11 @@ pub fn run(
                         detectors: Vec::new(),
                         run_file: None,
                     };
-                    let result = (|| -> Result<Vec<DetectorMap>, String> {
-                        let mut project = loaded.as_ref().map_err(Clone::clone)?.clone();
+                    let result = (|| -> Result<Vec<DetectorMap>> {
+                        let mut project = loaded
+                            .as_ref()
+                            .map_err(|e| crate::Error::Plan(e.clone()))?
+                            .clone();
                         project.allow_uncoated |= plan.allow_uncoated;
                         if plan.wavelength_um.is_some() {
                             project.monochromatic_override_um = plan.wavelength_um;
@@ -259,9 +266,9 @@ pub fn run(
                         row.cad_applied = native && project.cad_deflection_mm.is_some();
                         let total: u128 = scene.sources.iter().map(|s| s.count as u128).sum();
                         if total == 0 || total > 2_000_000 {
-                            return Err(
-                                "各ケースの光線数合計は1〜2,000,000本で指定してください".into()
-                            );
+                            return Err(crate::Error::Plan(
+                                "各ケースの光線数合計は1〜2,000,000本で指定してください".into(),
+                            ));
                         }
                         let prepared = scene.clone().prepare()?;
                         let started = Instant::now();
@@ -270,8 +277,8 @@ pub fn run(
                         row.trace_seconds = started.elapsed().as_secs_f64();
                         row.rays = total as usize;
                         row.reference_weight = report.budget.launched;
-                        let budget =
-                            serde_json::to_value(&report.budget).map_err(|e| e.to_string())?;
+                        let budget = serde_json::to_value(&report.budget)
+                            .map_err(|e| raytrace_io::Error::json(None, e))?;
                         row.budget_percent_of_reference = budget
                             .as_object()
                             .unwrap()
@@ -344,16 +351,23 @@ pub fn run(
                     match result {
                         Ok(m) => maps.push(m),
                         Err(e) => {
-                            row.error = Some(e);
+                            row.error = Some(e.to_string());
                             maps.push(Vec::new());
                         }
                     }
                     summary.cases.push(row);
                     fs::write(
                         output.join("convergence.json"),
-                        serde_json::to_vec_pretty(&summary).map_err(|e| e.to_string())?,
+                        serde_json::to_vec_pretty(&summary).map_err(|e| {
+                            raytrace_io::Error::json(Some(output.join("convergence.json")), e)
+                        })?,
                     )
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| {
+                        crate::Error::from(raytrace_io::Error::io(
+                            output.join("convergence.json"),
+                            e,
+                        ))
+                    })?;
                 }
             }
         }
@@ -433,8 +447,9 @@ pub fn run(
     }
     fs::write(
         output.join("convergence.json"),
-        serde_json::to_vec_pretty(&summary).map_err(|e| e.to_string())?,
+        serde_json::to_vec_pretty(&summary)
+            .map_err(|e| raytrace_io::Error::json(Some(output.join("convergence.json")), e))?,
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| crate::Error::from(raytrace_io::Error::io(output.join("convergence.json"), e)))?;
     Ok(summary)
 }

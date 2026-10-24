@@ -1,4 +1,5 @@
 //! Runtime data belongs to the user's writable data directory, independent of the build tree.
+use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -44,17 +45,18 @@ impl Preferences {
         self.recent_files.insert(0, path);
         self.recent_files.truncate(10);
     }
-    pub fn save(&self, dir: &Path) -> Result<(), String> {
-        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    pub fn save(&self, dir: &Path) -> Result<()> {
+        fs::create_dir_all(dir).map_err(|e| crate::Error::io(dir, e))?;
         fs::write(
             dir.join("preferences.json.tmp"),
-            serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?,
+            serde_json::to_vec_pretty(self)
+                .map_err(|e| crate::Error::json(Some(dir.join("preferences.json.tmp")), e))?,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| crate::Error::io(dir.join("preferences.json.tmp"), e))?;
         fs::rename(
             dir.join("preferences.json.tmp"),
             dir.join("preferences.json"),
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| crate::Error::io(dir.join("preferences.json"), e))
     }
 }

@@ -7,3 +7,6 @@ pub mod project;
 pub mod record;
 pub mod storage;
 pub mod zemax;
+
+pub mod error;
+pub use error::{Error, Result};

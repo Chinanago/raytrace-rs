@@ -1,4 +1,5 @@
 //! Parameter studies with immutable inputs, affine links and resumable cases.
+use crate::Result;
 use raytrace_core::{
     model::Interaction,
     screen::ScreenAnalysis,
@@ -29,8 +30,8 @@ impl Parameter {
             _ => "mm",
         }
     }
-    fn slot<'a>(&self, p: &'a mut Project) -> Result<&'a mut f64, String> {
-        let bad = || "走査対象の部品・面・軸が見つかりません".to_string();
+    fn slot<'a>(&self, p: &'a mut Project) -> Result<&'a mut f64> {
+        let bad = || crate::Error::Plan("走査対象の部品・面・軸が見つかりません".into());
         match *self {
             Self::ComponentPosition { component, axis }
             | Self::ComponentRotation { component, axis } => {
@@ -62,7 +63,9 @@ impl Parameter {
             }
             Self::SurfacePosition { surface, axis } | Self::SurfaceRotation { surface, axis } => {
                 if p.assembly.is_some() {
-                    return Err("組立光学系は部品の位置・角度を指定してください".into());
+                    return Err(crate::Error::Plan(
+                        "組立光学系は部品の位置・角度を指定してください".into(),
+                    ));
                 }
                 let s = p.scene.surfaces.get_mut(surface).ok_or_else(bad)?;
                 let v = if matches!(self, Self::SurfacePosition { .. }) {
@@ -76,25 +79,27 @@ impl Parameter {
                 let wave = p
                     .monochromatic_override_um
                     .or_else(|| p.scene.sources.first().map(|s| s.wavelength_um))
-                    .ok_or("光源がありません")?;
+                    .ok_or_else(|| crate::Error::Plan("光源がありません".into()))?;
                 Ok(p.monochromatic_override_um.get_or_insert(wave))
             }
         }
     }
-    pub fn value(&self, p: &Project) -> Result<f64, String> {
+    pub fn value(&self, p: &Project) -> Result<f64> {
         self.slot(&mut p.clone()).copied()
     }
-    pub fn apply(&self, p: &mut Project, value: f64) -> Result<(), String> {
+    pub fn apply(&self, p: &mut Project, value: f64) -> Result<()> {
         self.validate_value(value)?;
         *self.slot(p)? = value;
-        p.refresh_assembly()
+        p.refresh_assembly().map_err(crate::Error::from)
     }
-    fn validate_value(&self, value: f64) -> Result<(), String> {
+    fn validate_value(&self, value: f64) -> Result<()> {
         if !value.is_finite()
             || value.abs() > 1e12
             || (matches!(self, Self::RodSize { .. } | Self::Wavelength) && value <= 0.0)
         {
-            return Err("走査値の単位・範囲を確認してください".into());
+            return Err(crate::Error::Plan(
+                "走査値の単位・範囲を確認してください".into(),
+            ));
         }
         Ok(())
     }
@@ -139,13 +144,15 @@ impl Parameter {
     }
 }
 
-pub fn linear_values(start: f64, end: f64, count: usize) -> Result<Vec<f64>, String> {
+pub fn linear_values(start: f64, end: f64, count: usize) -> Result<Vec<f64>> {
     if !start.is_finite()
         || !end.is_finite()
         || !(1..=256).contains(&count)
         || (count == 1 && start != end)
     {
-        return Err("範囲は有限値、点数は2〜256で指定してください".into());
+        return Err(crate::Error::Plan(
+            "範囲は有限値、点数は2〜256で指定してください".into(),
+        ));
     }
     if count == 1 {
         return Ok(vec![start]);
@@ -198,16 +205,18 @@ pub struct ParameterLink {
     pub offset: f64,
 }
 impl ScanPlan {
-    fn link_order(&self, base: &Project) -> Result<Vec<usize>, String> {
+    fn link_order(&self, base: &Project) -> Result<Vec<usize>> {
         if self.links.len() > 64 {
-            return Err("連動条件は64個までです".into());
+            return Err(crate::Error::Plan("連動条件は64個までです".into()));
         }
         if self
             .secondary
             .as_ref()
             .is_some_and(|s| s.parameter == self.parameter)
         {
-            return Err("2軸には異なる対象を指定してください".into());
+            return Err(crate::Error::Plan(
+                "2軸には異なる対象を指定してください".into(),
+            ));
         }
         for (i, l) in self.links.iter().enumerate() {
             l.source.value(base)?;
@@ -222,7 +231,9 @@ impl ScanPlan {
                     .is_some_and(|s| s.parameter == l.target)
                 || self.links[..i].iter().any(|p| p.target == l.target)
             {
-                return Err("連動先の重複・走査軸との競合・単位・係数を確認してください".into());
+                return Err(crate::Error::Plan(
+                    "連動先の重複・走査軸との競合・単位・係数を確認してください".into(),
+                ));
             }
         }
         let mut order = Vec::new();
@@ -235,7 +246,7 @@ impl ScanPlan {
                         .enumerate()
                         .all(|(j, l)| l.target != self.links[*i].source || order.contains(&j))
             });
-            order.push(next.ok_or("連動条件に循環があります")?);
+            order.push(next.ok_or_else(|| crate::Error::Plan("連動条件に循環があります".into()))?);
         }
         Ok(order)
     }
@@ -244,14 +255,14 @@ impl ScanPlan {
         base: &Project,
         value: f64,
         secondary: Option<f64>,
-    ) -> Result<Project, String> {
+    ) -> Result<Project> {
         let order = self.link_order(base)?;
         let mut p = base.clone();
         self.parameter.apply(&mut p, value)?;
         match (&self.secondary, secondary) {
             (Some(axis), Some(v)) => axis.parameter.apply(&mut p, v)?,
             (None, None) => (),
-            _ => return Err("第2軸の値が一致しません".into()),
+            _ => return Err(crate::Error::Plan("第2軸の値が一致しません".into())),
         }
         for i in order {
             let l = &self.links[i];
@@ -288,7 +299,7 @@ pub struct ScanManifest {
     pub cases: Vec<ScanCase>,
 }
 impl ScanManifest {
-    pub fn new(base: &Project, plan: ScanPlan) -> Result<Self, String> {
+    pub fn new(base: &Project, plan: ScanPlan) -> Result<Self> {
         if plan.values.is_empty()
             || plan.values.len() > 256
             || !(1..=64).contains(&plan.threads)
@@ -296,7 +307,9 @@ impl ScanManifest {
                 .rays_per_source
                 .is_some_and(|n| n == 0 || n > 2_000_000)
         {
-            return Err("走査の点数・光線数・スレッド数が不正です".into());
+            return Err(crate::Error::Plan(
+                "走査の点数・光線数・スレッド数が不正です".into(),
+            ));
         }
         plan.link_order(base)?;
         for (parameter, values) in std::iter::once((&plan.parameter, &plan.values))
@@ -304,17 +317,19 @@ impl ScanManifest {
         {
             parameter.value(base)?;
             if values.is_empty() || values.len() > 256 {
-                return Err("各軸の走査点数は1〜256です".into());
+                return Err(crate::Error::Plan("各軸の走査点数は1〜256です".into()));
             }
             for (i, &v) in values.iter().enumerate() {
                 parameter.validate_value(v)?;
                 if values[..i].contains(&v) {
-                    return Err("走査値に重複があります".into());
+                    return Err(crate::Error::Plan("走査値に重複があります".into()));
                 }
             }
         }
         if plan.values.len() * plan.secondary.as_ref().map_or(1, |s| s.values.len()) > 256 {
-            return Err("2軸の組合せは合計256ケースまでです".into());
+            return Err(crate::Error::Plan(
+                "2軸の組合せは合計256ケースまでです".into(),
+            ));
         }
         let cases = plan
             .values
@@ -344,14 +359,18 @@ impl ScanManifest {
             cases,
         })
     }
-    pub fn open(dir: &Path) -> Result<Self, String> {
-        let manifest: Self =
-            serde_json::from_slice(&fs::read(dir.join("scan.json")).map_err(|e| e.to_string())?)
-                .map_err(|e| e.to_string())?;
+    pub fn open(dir: &Path) -> Result<Self> {
+        let manifest: Self = serde_json::from_slice(
+            &fs::read(dir.join("scan.json"))
+                .map_err(|e| raytrace_io::Error::io(dir.join("scan.json"), e))?,
+        )
+        .map_err(|e| raytrace_io::Error::json(Some(dir.join("scan.json")), e))?;
         if manifest.format != "raytrace-scan-v1"
             || manifest.software_version != env!("CARGO_PKG_VERSION")
         {
-            return Err("走査記録は同じソフトの版で再開してください".into());
+            return Err(crate::Error::Plan(
+                "走査記録は同じソフトの版で再開してください".into(),
+            ));
         }
         let expected = Self::new(&manifest.base, manifest.plan.clone())?;
         if manifest.cases.len() != expected.cases.len()
@@ -361,7 +380,7 @@ impl ScanManifest {
                     || !["pending", "running", "completed", "failed"].contains(&c.state.as_str())
             })
         {
-            return Err("走査記録のケースが一致しません".into());
+            return Err(crate::Error::Plan("走査記録のケースが一致しません".into()));
         }
         for (i, c) in manifest
             .cases
@@ -371,7 +390,7 @@ impl ScanManifest {
         {
             let expected = format!("case_{i:04}.raytrace-run.json");
             if c.run_file.as_deref() != Some(&expected) {
-                return Err("走査結果のファイル名が不正です".into());
+                return Err(crate::Error::Plan("走査結果のファイル名が不正です".into()));
             }
             let record = RunRecord::open(&dir.join(expected))?;
             let intended =
@@ -384,34 +403,38 @@ impl ScanManifest {
             if record.calculation.software_version != manifest.software_version
                 || parameters
                     .map(|p| Ok(p.value(&record.calculation.project)? != p.value(&intended)?))
-                    .collect::<Result<Vec<_>, String>>()?
+                    .collect::<Result<Vec<_>>>()?
                     .into_iter()
                     .any(|v| v)
             {
-                return Err("走査記録とケースの計算条件が一致しません".into());
+                return Err(crate::Error::Plan(
+                    "走査記録とケースの計算条件が一致しません".into(),
+                ));
             }
         }
         Ok(manifest)
     }
-    pub fn save(&self, dir: &Path) -> Result<(), String> {
-        fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    pub fn save(&self, dir: &Path) -> Result<()> {
+        fs::create_dir_all(dir).map_err(|e| crate::Error::from(raytrace_io::Error::io(dir, e)))?;
         fs::write(
             dir.join("scan.json.tmp"),
-            serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?,
+            serde_json::to_vec_pretty(self)
+                .map_err(|e| raytrace_io::Error::json(Some(dir.join("scan.json.tmp")), e))?,
         )
-        .map_err(|e| e.to_string())?;
-        fs::rename(dir.join("scan.json.tmp"), dir.join("scan.json")).map_err(|e| e.to_string())
+        .map_err(|e| crate::Error::from(raytrace_io::Error::io(dir.join("scan.json.tmp"), e)))?;
+        fs::rename(dir.join("scan.json.tmp"), dir.join("scan.json"))
+            .map_err(|e| crate::Error::from(raytrace_io::Error::io(dir.join("scan.json"), e)))
     }
     pub fn execute(
         &mut self,
         dir: &Path,
         control: &TraceControl,
         mut progress: impl FnMut(&Self),
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.plan.threads)
             .build()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| crate::Error::Plan(format!("スレッドプールを作成できません: {e}")))?;
         self.save(dir)?;
         for i in 0..self.cases.len() {
             if self.cases[i].state == "completed" || self.cases[i].state == "failed" {
@@ -426,7 +449,7 @@ impl ScanManifest {
             control.total.store(0, Ordering::Relaxed);
             self.save(dir)?;
             progress(self);
-            let outcome = (|| -> Result<Option<ScanCase>, String> {
+            let outcome = (|| -> Result<Option<ScanCase>> {
                 let project = self.plan.case_project(
                     &self.base,
                     self.cases[i].value,
@@ -440,9 +463,11 @@ impl ScanManifest {
                 }
                 let total: u128 = scene.sources.iter().map(|s| s.count as u128).sum();
                 if total == 0 || total > 2_000_000 {
-                    return Err("各ケースの光線数合計は1〜2,000,000本で指定してください".into());
+                    return Err(crate::Error::Plan(
+                        "各ケースの光線数合計は1〜2,000,000本で指定してください".into(),
+                    ));
                 }
-                if scene.surfaces.iter().any(|s| matches!(s.interaction,Interaction::Detector{pixels} if pixels[0].saturating_mul(pixels[1])>1_000_000)) {return Err("スクリーンは100万画素までです".into());}
+                if scene.surfaces.iter().any(|s| matches!(s.interaction,Interaction::Detector{pixels} if pixels[0].saturating_mul(pixels[1])>1_000_000)) {return Err(crate::Error::Plan("スクリーンは100万画素までです".into()));}
                 let prepared = scene.clone().prepare()?;
                 let start = Instant::now();
                 let Some(report) = pool.install(|| {
@@ -454,7 +479,9 @@ impl ScanManifest {
                 let seconds = start.elapsed().as_secs_f64();
                 let power = report.budget.launched;
                 if !power.is_finite() || power <= 0.0 {
-                    return Err("発射基準光量は正の有限値で指定してください".into());
+                    return Err(crate::Error::Plan(
+                        "発射基準光量は正の有限値で指定してください".into(),
+                    ));
                 }
                 let mut detectors = Vec::new();
                 for d in &report.detectors {
@@ -499,7 +526,7 @@ impl ScanManifest {
                 }
                 Err(error) => {
                     self.cases[i].state = "failed".into();
-                    self.cases[i].error = Some(error);
+                    self.cases[i].error = Some(error.to_string());
                 }
             }
             self.save(dir)?;

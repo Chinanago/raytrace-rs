@@ -1,4 +1,5 @@
 //! Sequential entrance pupils and real-ray targeting through refractive optics.
+use crate::Result;
 use crate::{
     geometry,
     math::{Frame, Pose, V3},
@@ -39,7 +40,7 @@ impl Vignetting {
     pub fn is_zero(&self) -> bool {
         self.decenter == [0.; 2] && self.compression == [0.; 2] && self.tangential_angle_deg == 0.
     }
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<()> {
         if self
             .decenter
             .iter()
@@ -48,7 +49,9 @@ impl Vignetting {
             || !self.tangential_angle_deg.is_finite()
             || self.compression.iter().any(|v| *v > 1.)
         {
-            return Err("視野の瞳補正は有限値、VCX/VCYは1以下で指定してください".into());
+            return Err(crate::Error::InvalidScene(
+                "視野の瞳補正は有限値、VCX/VCYは1以下で指定してください".into(),
+            ));
         }
         Ok(())
     }
@@ -85,15 +88,12 @@ pub(crate) struct PreparedPupil {
 
 /// Returns the pupil obtained from the current layout, including its primary
 /// wavelength. This is also used by the GUI's saved calculation conditions.
-pub fn pupil_geometry(
-    scene: &PreparedScene,
-    source_index: usize,
-) -> Result<Option<PupilGeometry>, String> {
+pub fn pupil_geometry(scene: &PreparedScene, source_index: usize) -> Result<Option<PupilGeometry>> {
     let source = scene
         .spec
         .sources
         .get(source_index)
-        .ok_or("光源番号が不正です")?;
+        .ok_or_else(|| crate::Error::InvalidScene("光源番号が不正です".into()))?;
     Ok(PreparedPupil::new(scene, source)?.map(|p| p.geometry))
 }
 
@@ -102,11 +102,11 @@ pub fn pupil_geometry(
 pub fn pupil_geometry_from_scene(
     scene: &crate::model::Scene,
     source_index: usize,
-) -> Result<Option<PupilGeometry>, String> {
+) -> Result<Option<PupilGeometry>> {
     let mut source = scene
         .sources
         .get(source_index)
-        .ok_or("光源番号が不正です")?
+        .ok_or_else(|| crate::Error::InvalidScene("光源番号が不正です".into()))?
         .clone();
     let Some(p) = &mut source.pupil else {
         return Ok(None);
@@ -115,9 +115,13 @@ pub fn pupil_geometry_from_scene(
         return Ok(None);
     };
     let first = o.first_surface;
-    let stop = p.surface.ok_or("STOP面がありません")?;
+    let stop = p
+        .surface
+        .ok_or_else(|| crate::Error::InvalidScene("STOP面がありません".into()))?;
     if first > stop || stop >= scene.surfaces.len() {
-        return Err("入射瞳の参照面が不正です".into());
+        return Err(crate::Error::InvalidScene(
+            "入射瞳の参照面が不正です".into(),
+        ));
     }
     o.first_surface = 0;
     p.surface = Some(stop - first);
@@ -134,7 +138,7 @@ pub fn pupil_geometry_from_scene(
 }
 
 impl PreparedPupil {
-    pub(crate) fn new(scene: &PreparedScene, source: &Source) -> Result<Option<Self>, String> {
+    pub(crate) fn new(scene: &PreparedScene, source: &Source) -> Result<Option<Self>> {
         let Some(p) = &source.pupil else {
             return Ok(None);
         };
@@ -142,19 +146,25 @@ impl PreparedPupil {
         let Some(o) = &p.optical else {
             return Ok(None);
         };
-        let stop = p.surface.ok_or("光学的な瞳にはSTOP面の参照が必要です")?;
+        let stop = p.surface.ok_or_else(|| {
+            crate::Error::InvalidScene("光学的な瞳にはSTOP面の参照が必要です".into())
+        })?;
         if o.first_surface > stop
             || stop >= scene.surfaces.len()
             || !o.primary_wavelength_um.is_finite()
             || o.primary_wavelength_um <= 0.
         {
-            return Err("入射瞳の面番号・主波長が不正です".into());
+            return Err(crate::Error::InvalidScene(
+                "入射瞳の面番号・主波長が不正です".into(),
+            ));
         }
         let Aperture::Circle {
             radius_mm: entrance_radius,
         } = p.aperture
         else {
-            return Err("光学的な入射瞳は円形のENPDに対応しています".into());
+            return Err(crate::Error::InvalidScene(
+                "光学的な入射瞳は円形のENPDに対応しています".into(),
+            ));
         };
         let frame = scene.surfaces[o.first_surface].frame.clone();
         let mut z = 0.;
@@ -165,7 +175,9 @@ impl PreparedPupil {
                 .materials
                 .get(id)
                 .and_then(|m| m.index(o.primary_wavelength_um))
-                .ok_or("入射瞳の主波長が材料の有効範囲外です")
+                .ok_or_else(|| {
+                    crate::Error::InvalidScene("入射瞳の主波長が材料の有効範囲外です".into())
+                })
         };
         let n0 = index(medium)?;
         let (mut a, mut b, mut c, mut d) = (1., 0., 0., 1.);
@@ -177,9 +189,9 @@ impl PreparedPupil {
                 || (axis - V3([0., 0., 1.])).norm() > 1e-10
                 || pos.0[2] < z - 1e-9
             {
-                return Err(
+                return Err(crate::Error::InvalidScene(
                     "入射瞳の計算は、STOPまでが同軸で正の面間隔を持つ屈折系に対応しています".into(),
-                );
+                ));
             }
             if !matches!(
                 surface.spec.shape,
@@ -188,7 +200,9 @@ impl PreparedPupil {
                     | Shape::EvenAsphere { .. }
                     | Shape::FlatEvenAsphere { .. }
             ) {
-                return Err("入射瞳の計算は平面・球面・偶数次非球面に対応しています".into());
+                return Err(crate::Error::InvalidScene(
+                    "入射瞳の計算は平面・球面・偶数次非球面に対応しています".into(),
+                ));
             }
             let distance = pos.0[2] - z;
             let n = index(medium)?;
@@ -204,10 +218,14 @@ impl PreparedPupil {
                 ..
             } = surface.spec.interaction
             else {
-                return Err("STOPより前の反射・吸収・検出面を含む入射瞳は未対応です".into());
+                return Err(crate::Error::InvalidScene(
+                    "STOPより前の反射・吸収・検出面を含む入射瞳は未対応です".into(),
+                ));
             };
             if medium != minus_medium {
-                return Err("入射瞳の媒質の連続性が不正です".into());
+                return Err(crate::Error::InvalidScene(
+                    "入射瞳の媒質の連続性が不正です".into(),
+                ));
             }
             let curvature = match surface.spec.shape {
                 Shape::Sphere { radius_mm } | Shape::EvenAsphere { radius_mm, .. } => {
@@ -221,25 +239,31 @@ impl PreparedPupil {
             medium = plus_medium;
         }
         if !a.is_finite() || !b.is_finite() || a.abs() < 1e-12 {
-            return Err(
+            return Err(crate::Error::InvalidScene(
                 "入射瞳が無限遠またはSTOPが焦線上にある系は、現在の瞳計算では扱えません".into(),
-            );
+            ));
         }
         let entrance_z = n0 * b / a;
         let mut origin = frame.local_point(source.origin_mm);
         if let Some(angles) = o.finite_field_angle_deg {
             if !p.finite_object || angles.iter().any(|v| !v.is_finite() || v.abs() >= 90.) {
-                return Err("有限物体のAngle視野が不正です".into());
+                return Err(crate::Error::InvalidScene(
+                    "有限物体のAngle視野が不正です".into(),
+                ));
             }
             origin.0[0] = -angles[0].to_radians().tan() * (entrance_z - origin.0[2]);
             origin.0[1] = -angles[1].to_radians().tan() * (entrance_z - origin.0[2]);
         }
         if p.finite_object && (entrance_z - origin.0[2]).abs() < 1e-10 {
-            return Err("物体と入射瞳が共役で光線の方向を決められません".into());
+            return Err(crate::Error::InvalidScene(
+                "物体と入射瞳が共役で光線の方向を決められません".into(),
+            ));
         }
         let direction = frame.local_vector(source.direction.unit());
         if !p.finite_object && direction.0[2] <= 1e-10 {
-            return Err("入射瞳へ向かう光束は前方方向で指定してください".into());
+            return Err(crate::Error::InvalidScene(
+                "入射瞳へ向かう光束は前方方向で指定してください".into(),
+            ));
         }
         let mut surfaces = scene.surfaces[o.first_surface..=stop].to_vec();
         // Aiming follows the mathematical optical surfaces. Physical apertures
@@ -266,8 +290,10 @@ impl PreparedPupil {
             s.spec.aperture = Aperture::Circle {
                 radius_mm: requested.min(domain * (1. - 1e-7)).max(r),
             };
-            let (bounds, slope) = geometry::bounds(&s.spec.shape, &s.spec.aperture)
-                .ok_or("Ray Aimingの面の探索範囲を準備できません")?;
+            let (bounds, slope) =
+                geometry::bounds(&s.spec.shape, &s.spec.aperture).ok_or_else(|| {
+                    crate::Error::InvalidScene("Ray Aimingの面の探索範囲を準備できません".into())
+                })?;
             s.local_bounds = bounds;
             s.max_sag_slope = slope;
         }
@@ -305,7 +331,9 @@ impl PreparedPupil {
         if !result.geometry.target_stop_radius_mm.is_finite()
             || result.geometry.target_stop_radius_mm <= 0.
         {
-            return Err("STOPへの基準光線から有効な半径を求められません".into());
+            return Err(crate::Error::InvalidScene(
+                "STOPへの基準光線から有効な半径を求められません".into(),
+            ));
         }
         Ok(Some(result))
     }
@@ -341,7 +369,7 @@ impl PreparedPupil {
         wavelength: f64,
         origin: V3,
         direction: V3,
-    ) -> Result<[f64; 2], String> {
+    ) -> Result<[f64; 2]> {
         let (mut pos, mut dir) = self.ray(q, origin, direction);
         let mut medium = self.initial_medium;
         for (i, s) in self.surfaces.iter().enumerate() {
@@ -349,11 +377,15 @@ impl PreparedPupil {
                 let p = s.frame.local_point(pos);
                 let d = s.frame.local_vector(dir);
                 if d.0[2].abs() < 1e-12 {
-                    return Err("Ray Aimingの光線が光学面と平行です".into());
+                    return Err(crate::Error::InvalidScene(
+                        "Ray Aimingの光線が光学面と平行です".into(),
+                    ));
                 }
                 let t = -p.0[2] / d.0[2];
                 if t < -1e-8 {
-                    return Err("Ray Aimingの光学面が光線の後方にあります".into());
+                    return Err(crate::Error::InvalidScene(
+                        "Ray Aimingの光学面が光線の後方にあります".into(),
+                    ));
                 }
                 let local = p + d * t;
                 (
@@ -362,8 +394,9 @@ impl PreparedPupil {
                     s.frame.world_vector(V3([0., 0., 1.])),
                 )
             } else {
-                let h = geometry::intersect_ordered(s, pos, dir)
-                    .map_err(|e| format!("Ray Aimingの面交差に失敗しました: {e:?}"))?;
+                let h = geometry::intersect_ordered(s, pos, dir).map_err(|e| {
+                    crate::Error::InvalidScene(format!("Ray Aimingの面交差に失敗しました: {e:?}"))
+                })?;
                 (h.point, h.local_point, h.normal)
             };
             if i + 1 == self.surfaces.len() {
@@ -375,31 +408,34 @@ impl PreparedPupil {
                 ..
             } = s.spec.interaction
             else {
-                return Err("Ray Aimingの光学面が屈折面ではありません".into());
+                return Err(crate::Error::InvalidScene(
+                    "Ray Aimingの光学面が屈折面ではありません".into(),
+                ));
             };
             if medium != minus_medium {
-                return Err("Ray Aimingの媒質が一致しません".into());
+                return Err(crate::Error::InvalidScene(
+                    "Ray Aimingの媒質が一致しません".into(),
+                ));
             }
-            let n1 = self.materials[medium]
-                .index(wavelength)
-                .ok_or("Ray Aimingの波長が材料の有効範囲外です")?;
+            let n1 = self.materials[medium].index(wavelength).ok_or_else(|| {
+                crate::Error::InvalidScene("Ray Aimingの波長が材料の有効範囲外です".into())
+            })?;
             let n2 = self.materials[plus_medium]
                 .index(wavelength)
-                .ok_or("Ray Aimingの波長が材料の有効範囲外です")?;
+                .ok_or_else(|| {
+                    crate::Error::InvalidScene("Ray Aimingの波長が材料の有効範囲外です".into())
+                })?;
             dir = geometry::dielectric(dir, normal, n1, n2)
                 .transmitted
-                .ok_or("STOPまでのRay Aimingの光路で全反射します")?;
+                .ok_or_else(|| {
+                    crate::Error::InvalidScene("STOPまでのRay Aimingの光路で全反射します".into())
+                })?;
             pos = point;
             medium = plus_medium;
         }
-        Err("STOPがありません".into())
+        Err(crate::Error::InvalidScene("STOPがありません".into()))
     }
-    pub(crate) fn launch(
-        &self,
-        source: &Source,
-        wavelength: f64,
-        u: [f64; 2],
-    ) -> Result<(V3, V3), String> {
+    pub(crate) fn launch(&self, source: &Source, wavelength: f64, u: [f64; 2]) -> Result<(V3, V3)> {
         let p = source.pupil.as_ref().unwrap();
         let phi = std::f64::consts::TAU * u[1];
         let r = u[0].sqrt();
@@ -447,13 +483,19 @@ impl PreparedPupil {
                             jac[j][axis] = (hit[j] - b[j]) / step;
                         }
                     }
-                    _ => return Err("Ray Aimingの局所的な光路を求められません".into()),
+                    _ => {
+                        return Err(crate::Error::InvalidScene(
+                            "Ray Aimingの局所的な光路を求められません".into(),
+                        ))
+                    }
                 }
             }
             let det = jac[0][0] * jac[1][1] - jac[0][1] * jac[1][0];
             let scale = jac.iter().flatten().map(|v| v.abs()).fold(0., f64::max);
             if !det.is_finite() || det.abs() <= 1e-12 * scale * scale {
-                return Err("STOPが焦線に近く、Ray Aimingの解が一意に定まりません".into());
+                return Err(crate::Error::InvalidScene(
+                    "STOPが焦線に近く、Ray Aimingの解が一意に定まりません".into(),
+                ));
             }
             let delta = [
                 (jac[1][1] * error[0] - jac[0][1] * error[1]) / det,
@@ -472,9 +514,11 @@ impl PreparedPupil {
                 }
             }
             if !accepted {
-                return Err(format!("Ray Aimingが収束しません（絞り上の誤差 {norm:.3e} mm）。瞳径・視野・STOP位置を確認してください"));
+                return Err(crate::Error::InvalidScene(format!("Ray Aimingが収束しません（絞り上の誤差 {norm:.3e} mm）。瞳径・視野・STOP位置を確認してください")));
             }
         }
-        Err("Ray Aimingが24回で収束しませんでした".into())
+        Err(crate::Error::InvalidScene(
+            "Ray Aimingが24回で収束しませんでした".into(),
+        ))
     }
 }

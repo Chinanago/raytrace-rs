@@ -1,5 +1,6 @@
 //! Explicit subset of native Sequential object / field / pupil illumination.
 use super::*;
+use crate::Result;
 use raytrace_core::illumination::{OpticalPupil, RayAiming, Vignetting};
 use raytrace_core::model::PupilIllumination;
 
@@ -9,15 +10,15 @@ pub(super) fn sources(
     scene: &Scene,
     bindings: &[usize],
     base: Source,
-) -> Result<Vec<Source>, String> {
+) -> Result<Vec<Source>> {
     let ft = field(all, "FTYP").map(words).unwrap_or_default();
     let kind = ft.first().map(|s| number(s)).transpose()?.unwrap_or(0.);
     let count = ft.get(2).map(|s| number(s)).transpose()?.unwrap_or(1.);
     if count.fract() != 0. || !(1. ..=64.).contains(&count) {
-        return Err("視野数は1〜64点に対応しています".into());
+        return Err(crate::Error::zmx("視野数は1〜64点に対応しています".into()));
     }
     let count = count as usize;
-    let values = |key, default| -> Result<Vec<f64>, String> {
+    let values = |key, default| -> Result<Vec<f64>> {
         match field(all, key) {
             None => Ok(vec![default; count]),
             Some(s) => {
@@ -26,7 +27,7 @@ pub(super) fn sources(
                     .map(|v| number(v))
                     .collect::<Result<Vec<_>, _>>()?;
                 if a.len() < count || a.iter().any(|v| !v.is_finite()) {
-                    return Err(format!("{key}の視野データが不正です"));
+                    return Err(crate::Error::zmx(format!("{key}の視野データが不正です")));
                 }
                 Ok(a[..count].to_vec())
             }
@@ -37,12 +38,18 @@ pub(super) fn sources(
     let weights = values("FWGN", 1.)?;
     let total = weights.iter().sum::<f64>();
     if !total.is_finite() || total <= 0. || weights.iter().any(|w| *w < 0.) {
-        return Err("FWGNには非負の重みと正の合計が必要です".into());
+        return Err(crate::Error::zmx(
+            "FWGNには非負の重みと正の合計が必要です".into(),
+        ));
     }
     if kind != 0. && kind != 1. {
-        return Err("視野型はAngleとObject Heightに対応しています".into());
+        return Err(crate::Error::zmx(
+            "視野型はAngleとObject Heightに対応しています".into(),
+        ));
     }
-    let object = blocks.first().ok_or("物体面がありません")?;
+    let object = blocks
+        .first()
+        .ok_or_else(|| crate::Error::zmx("物体面がありません".into()))?;
     if object.0 != 0
         || field(&object.1, "TYPE")
             .unwrap_or("STANDARD")
@@ -50,21 +57,31 @@ pub(super) fn sources(
             .next()
             != Some("STANDARD")
     {
-        return Err("物体面はSTANDARDのSURF 0に対応しています".into());
+        return Err(crate::Error::zmx(
+            "物体面はSTANDARDのSURF 0に対応しています".into(),
+        ));
     }
     let distance = scalar(&object.1, "DISZ", f64::INFINITY)?;
     if field(&object.1, "GLAS").is_some_and(|s| !s.trim().is_empty()) {
-        return Err("物体側に材料を指定した照射は未対応です".into());
+        return Err(crate::Error::zmx(
+            "物体側に材料を指定した照射は未対応です".into(),
+        ));
     }
     let finite = distance.is_finite();
     if finite && distance <= 0. || !finite && distance != f64::INFINITY {
-        return Err("物体距離には正の距離またはINFINITYを指定してください".into());
+        return Err(crate::Error::zmx(
+            "物体距離には正の距離またはINFINITYを指定してください".into(),
+        ));
     }
     if kind == 1. && !finite {
-        return Err("Object Heightは有限距離の物体に対応しています".into());
+        return Err(crate::Error::zmx(
+            "Object Heightは有限距離の物体に対応しています".into(),
+        ));
     }
     if kind == 0. && xs.iter().chain(&ys).any(|v| v.abs() >= 90.) {
-        return Err("Angle視野は各軸±90度未満に対応しています".into());
+        return Err(crate::Error::zmx(
+            "Angle視野は各軸±90度未満に対応しています".into(),
+        ));
     }
     let vdx = values("VDXN", 0.)?;
     let vdy = values("VDYN", 0.)?;
@@ -75,7 +92,11 @@ pub(super) fn sources(
         0. => RayAiming::Off,
         1. => RayAiming::Paraxial,
         2. => RayAiming::Real,
-        _ => return Err("RAIMは0（Off）・1（Paraxial）・2（Real）に対応しています".into()),
+        _ => {
+            return Err(crate::Error::zmx(
+                "RAIMは0（Off）・1（Paraxial）・2（Real）に対応しています".into(),
+            ))
+        }
     };
     let stop = blocks
         .iter()
@@ -97,19 +118,21 @@ pub(super) fn sources(
     if needs_pupil {
         let diameter = scalar(all, "ENPD", 2. * base.disk_radius_mm)?;
         if !diameter.is_finite() || diameter <= 0. {
-            return Err("視野照射にはENPDによる正の入射瞳径が必要です".into());
+            return Err(crate::Error::zmx(
+                "視野照射にはENPDによる正の入射瞳径が必要です".into(),
+            ));
         }
-        let stop = stop.ok_or("視野照射にはSTOP面が必要です")?;
+        let stop = stop.ok_or_else(|| crate::Error::zmx("視野照射にはSTOP面が必要です".into()))?;
         let i = bindings
             .iter()
             .position(|b| *b == stop)
-            .ok_or("STOP面の座標を解決できません")?;
+            .ok_or_else(|| crate::Error::zmx("STOP面の座標を解決できません".into()))?;
         let pose = &scene.surfaces[i].pose;
         let first = &scene.surfaces[0].pose;
         if first.rotation_deg.norm() > 1e-10
             || first.translation_mm.0[0].hypot(first.translation_mm.0[1]) > 1e-9
         {
-            return Err("入射瞳を計算する元ZMXは、軸上・無回転の最初の光学面に対応しています。部品としての一括移動・回転は可能です".into());
+            return Err(crate::Error::zmx("入射瞳を計算する元ZMXは、軸上・無回転の最初の光学面に対応しています。部品としての一括移動・回転は可能です".into()));
         }
         pupil = Some(PupilIllumination {
             pose: pose.clone(),

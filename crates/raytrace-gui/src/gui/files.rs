@@ -157,7 +157,7 @@ impl App {
                         self.remember_path();
                         self.status = "プロジェクトを保存しました".into();
                     }
-                    Err(e) => self.error = Some(e),
+                    Err(e) => self.error = Some(e.to_string()),
                 }
             }
         }
@@ -178,7 +178,7 @@ impl App {
                 report.paths.clear();
                 match r.calculation.save(&report, r.seconds, &path) {
                     Ok(()) => self.status = "計算時の条件と結果を保存しました".into(),
-                    Err(e) => self.error = Some(e),
+                    Err(e) => self.error = Some(e.to_string()),
                 }
             }
         }
@@ -219,7 +219,7 @@ impl App {
             {
                 match zemax::export(&self.project, &path) {
                     Ok(()) => self.status = "ZMXを書き出しました".into(),
-                    Err(e) => self.error = Some(e),
+                    Err(e) => self.error = Some(e.to_string()),
                 }
             }
         }
@@ -310,7 +310,9 @@ impl App {
         self.status = "部品を読込中…".into();
         self.job = Some(rx);
         std::thread::spawn(move || {
-            let result = Project::open(&path, &catalogs).map(Box::new);
+            let result = Project::open(&path, &catalogs)
+                .map(Box::new)
+                .map_err(|e| e.to_string());
             let _ = tx.send(Job::Added(kind, result));
             context.request_repaint();
         });
@@ -323,18 +325,22 @@ impl App {
         self.loading_path = Some(path.clone());
         self.job = Some(rx);
         std::thread::spawn(move || {
-            let result = Project::open(&path, &catalogs).map(Box::new);
+            let result = Project::open(&path, &catalogs)
+                .map(Box::new)
+                .map_err(|e| e.to_string());
             let message = if result
                 .as_ref()
                 .err()
                 .is_some_and(|e| e.starts_with("計算記録は"))
             {
-                Job::LoadedRun(raytrace_io::record::RunRecord::open(&path).and_then(
-                    |mut record| {
-                        record.report.paths = record_viewer_paths(&record)?;
-                        Ok(Box::new(record))
-                    },
-                ))
+                Job::LoadedRun(
+                    raytrace_io::record::RunRecord::open(&path)
+                        .map_err(|e| e.to_string())
+                        .and_then(|mut record| {
+                            record.report.paths = record_viewer_paths(&record)?;
+                            Ok(Box::new(record))
+                        }),
+                )
             } else {
                 Job::Loaded(result)
             };

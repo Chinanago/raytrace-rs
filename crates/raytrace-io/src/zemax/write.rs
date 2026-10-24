@@ -1,22 +1,24 @@
 use super::*;
+use crate::Result;
 
 /// Preserve the complete source text on an unchanged document. Geometry edits
 /// are patched only for supported coaxial sequential surfaces.
-pub fn export(project: &Project, path: &Path) -> Result<(), String> {
+pub fn export(project: &Project, path: &Path) -> Result<()> {
     if project.assembly.is_some() {
-        return Err(
+        return Err(crate::Error::zmx(
             "組立光学系はJSONプロジェクトで保存できます。部品を含むZMX書出しは追加予定です".into(),
-        );
+        ));
     }
     let mut sidecars = exchange::recover(project, path)?;
     if let Some(original) = &project.zemax {
-        if serde_json::to_value(&project.scene).map_err(|e| e.to_string())?
-            == serde_json::to_value(&original.baseline_scene).map_err(|e| e.to_string())?
+        if serde_json::to_value(&project.scene).map_err(|e| crate::Error::json(None, e))?
+            == serde_json::to_value(&original.baseline_scene)
+                .map_err(|e| crate::Error::json(None, e))?
         {
             copy_dependencies(original, path)?;
             exchange::write(&sidecars)?;
             return fs::write(path, encode(&original.text, &original.encoding)?)
-                .map_err(|e| e.to_string());
+                .map_err(|e| crate::Error::io(path, e));
         }
     }
     let scene = &project.scene;
@@ -26,17 +28,17 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
         .iter()
         .any(|i| i.blocking && !matches!(i.code.as_str(), "coating" | "spectrum"))
     {
-        return Err("未対応の光学定義を含むZMXの編集はJSONへ保存してください。元ZMXの無変更保存に対応しています".into());
+        return Err(crate::Error::zmx("未対応の光学定義を含むZMXの編集はJSONへ保存してください。元ZMXの無変更保存に対応しています".into()));
     }
     if project
         .zemax
         .as_ref()
         .is_some_and(|z| z.text.lines().any(|l| l.contains("COORDBRK")))
     {
-        return Err(
+        return Err(crate::Error::zmx(
             "座標連鎖を含むモデルの編集はJSONへ保存してください。元ZMXの無変更保存に対応しています"
                 .into(),
-        );
+        ));
     }
     let baseline = project.zemax.as_ref().map(|z| &z.baseline_scene.surfaces);
     let coatings_changed = scene.surfaces.iter().enumerate().any(|(i, s)| {
@@ -49,10 +51,10 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
             .ok()
     });
     if coatings_changed && scene.mode == Mode::NonSequential {
-        return Err(
+        return Err(crate::Error::zmx(
             "コーティングを変更したモデルのZMX書出しは追加予定です。JSONには全条件を保存できます"
                 .into(),
-        );
+        ));
     }
     if scene.mode == Mode::NonSequential {
         if let Some(original) = &project.zemax {
@@ -60,19 +62,19 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
             let bytes = encode(&text, &original.encoding)?;
             copy_dependencies(original, path)?;
             exchange::write(&sidecars)?;
-            return fs::write(path, bytes).map_err(|e| e.to_string());
+            return fs::write(path, bytes).map_err(|e| crate::Error::io(path, e));
         }
     }
     if scene.mode != Mode::Sequential {
-        return Err("非シーケンシャルZMXは元定義の無変更保存に対応しています。編集したモデルはJSONプロジェクトで保存してください".into());
+        return Err(crate::Error::zmx("非シーケンシャルZMXは元定義の無変更保存に対応しています。編集したモデルはJSONプロジェクトで保存してください".into()));
     }
     if scene.surfaces.iter().any(|s| {
         s.pose.translation_mm.0[..2].iter().any(|v| v.abs() > 1e-12)
             || s.pose.rotation_deg.norm() > 1e-12
     }) {
-        return Err(
+        return Err(crate::Error::zmx(
             "傾き・偏心を含むZMX書出しは追加予定です。JSONプロジェクトには保存できます".into(),
-        );
+        ));
     }
     let original = project.zemax.as_ref();
     if let Some(z) = original.filter(|z| {
@@ -87,7 +89,9 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
                 .collect::<Vec<_>>()
         };
         if normalized(&scene.sources) != normalized(&z.baseline_scene.sources) {
-            return Err("視野別の光量重みの編集はJSONへ保存してください".into());
+            return Err(crate::Error::zmx(
+                "視野別の光量重みの編集はJSONへ保存してください".into(),
+            ));
         }
         let spectrum = |s: &Source| {
             let mut samples = s
@@ -105,10 +109,10 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
             .windows(2)
             .any(|w| spectrum(&w[0]) != spectrum(&w[1]))
         {
-            return Err(
+            return Err(crate::Error::zmx(
                 "視野別に異なるスペクトルは単一のWAVM表で表現できません。JSONへ保存してください"
                     .into(),
-            );
+            ));
         }
     }
     let same_illumination = original.is_some_and(|z| {
@@ -136,10 +140,10 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
             .windows(2)
             .any(|s| s[0].disk_radius_mm != s[1].disk_radius_mm || s[0].origin_mm != s[1].origin_mm)
     {
-        return Err(
+        return Err(crate::Error::zmx(
             "異なる照射面・瞳径の光源を1つの逐次照射へ変換できません。JSONへ保存してください"
                 .into(),
-        );
+        ));
     }
     if !same_illumination
         && scene.sources.iter().any(|s| {
@@ -151,10 +155,12 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
                 || (s.direction.unit() - V3([0.0, 0.0, 1.0])).norm() > 1e-12
         })
     {
-        return Err("逐次ZMXへの新規書出しは軸上平行光に対応しています。光源条件を含むモデルはJSONで保存できます".into());
+        return Err(crate::Error::zmx("逐次ZMXへの新規書出しは軸上平行光に対応しています。光源条件を含むモデルはJSONで保存できます".into()));
     }
     if original.is_some_and(|z| z.surface_numbers.len() != scene.surfaces.len()) {
-        return Err("元ZMXの面数が変わっています。JSONプロジェクトに保存してください".into());
+        return Err(crate::Error::zmx(
+            "元ZMXの面数が変わっています。JSONプロジェクトに保存してください".into(),
+        ));
     }
     if original.is_some_and(|z| {
         scene
@@ -163,9 +169,9 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
             .zip(z.baseline_scene.surfaces.first())
             .is_some_and(|(a, b)| (a.pose.translation_mm - b.pose.translation_mm).norm() > 1e-12)
     }) {
-        return Err(
+        return Err(crate::Error::zmx(
             "最初の基準面の移動はこのZMXで表現できません。配置を含むJSONで保存してください".into(),
-        );
+        ));
     }
     let catalog = path
         .file_stem()
@@ -208,15 +214,17 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
             .iter()
             .any(|i| i.blocking && i.code == "coating")
         {
-            return Err(
+            return Err(crate::Error::zmx(
                 "未対応コーティングを含むファイルのコーティング編集はJSONへ保存してください".into(),
-            );
+            ));
         }
         let mut definitions = BTreeMap::new();
         for c in scene.surfaces.iter().filter_map(|s| s.coating.as_ref()) {
             let definition = c.to_zemax()?;
             if definitions.get(&c.name).is_some_and(|v| *v != definition) {
-                return Err("同じコーティング名に異なる定義があります".into());
+                return Err(crate::Error::zmx(
+                    "同じコーティング名に異なる定義があります".into(),
+                ));
             }
             definitions.insert(c.name.clone(), definition);
         }
@@ -248,7 +256,11 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
                 conic,
                 coefficients,
             } => ("EVENASPH", 1.0 / radius_mm, *conic, coefficients.clone()),
-            _ => return Err("この面形状の逐次ZMX書出しは未対応です".into()),
+            _ => {
+                return Err(crate::Error::zmx(
+                    "この面形状の逐次ZMX書出しは未対応です".into(),
+                ))
+            }
         };
         let (hx, hy) = s.aperture.bounds();
         let semi = if matches!(s.aperture, Aperture::Circle { .. }) {
@@ -287,7 +299,11 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
             Interaction::Mirror { reflectance } if reflectance == 1. || s.coating.is_some() => {
                 lines.push("  GLAS MIRROR 0 0".into())
             }
-            _ => return Err("固定反射率・ミラー・中間検出器のZMX書出しは未対応です".into()),
+            _ => {
+                return Err(crate::Error::zmx(
+                    "固定反射率・ミラー・中間検出器のZMX書出しは未対応です".into(),
+                ))
+            }
         }
         if let Aperture::Rectangle { .. } = s.aperture {
             lines.push(format!("  SQAP {hx:.17e} {hy:.17e} 0"));
@@ -362,7 +378,7 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
         let first_z = scene
             .surfaces
             .first()
-            .ok_or("光学面がありません")?
+            .ok_or_else(|| crate::Error::zmx("光学面がありません".into()))?
             .pose
             .translation_mm
             .0[2];
@@ -436,10 +452,10 @@ pub fn export(project: &Project, path: &Path) -> Result<(), String> {
         )?;
     }
     exchange::write(&sidecars)?;
-    fs::write(path, bytes).map_err(|e| e.to_string())
+    fs::write(path, bytes).map_err(|e| crate::Error::io(path, e))
 }
 
-fn copy_dependencies(original: &ZmxDocument, output: &Path) -> Result<(), String> {
+fn copy_dependencies(original: &ZmxDocument, output: &Path) -> Result<()> {
     use std::collections::BTreeSet;
     let from = original.source_path.parent().unwrap_or(Path::new("."));
     let to = output.parent().unwrap_or(Path::new("."));
@@ -491,13 +507,13 @@ fn copy_dependencies(original: &ZmxDocument, output: &Path) -> Result<(), String
             continue;
         }
         let destination = to.join(relative);
-        let bytes = fs::read(source).map_err(|e| e.to_string())?;
+        let bytes = fs::read(&source).map_err(|e| crate::Error::io(source, e))?;
         if destination.is_file() {
-            if fs::read(&destination).map_err(|e| e.to_string())? != bytes {
-                return Err(format!(
+            if fs::read(&destination).map_err(|e| crate::Error::io(&destination, e))? != bytes {
+                return Err(crate::Error::zmx(format!(
                     "依存ファイル{}が保存先に既にあります。別フォルダーへ保存してください",
                     destination.display()
-                ));
+                )));
             }
         } else {
             pending.push((destination, bytes));
@@ -505,9 +521,9 @@ fn copy_dependencies(original: &ZmxDocument, output: &Path) -> Result<(), String
     }
     for (path, bytes) in pending {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            fs::create_dir_all(parent).map_err(|e| crate::Error::io(parent, e))?;
         }
-        fs::write(path, bytes).map_err(|e| e.to_string())?;
+        fs::write(&path, bytes).map_err(|e| crate::Error::io(path, e))?;
     }
     Ok(())
 }
@@ -517,7 +533,7 @@ fn patch_nsc(
     original: &ZmxDocument,
     output: &Path,
     sidecars: &mut exchange::Sidecars,
-) -> Result<String, String> {
+) -> Result<String> {
     let a = &project.scene;
     let b = &original.baseline_scene;
     if a.sources
@@ -525,13 +541,17 @@ fn patch_nsc(
         .zip(&b.sources)
         .any(|(s, t)| s.medium != t.medium)
     {
-        return Err("Inside Ofによる初期媒質を変えたモデルはJSONで保存してください".into());
+        return Err(crate::Error::zmx(
+            "Inside Ofによる初期媒質を変えたモデルはJSONで保存してください".into(),
+        ));
     }
     if a.sources.len() != b.sources.len()
         || a.surfaces.len() != b.surfaces.len()
         || serde_json::to_value(&a.materials).ok() != serde_json::to_value(&b.materials).ok()
     {
-        return Err("NSCの光源数・面数・材料の変更はJSONプロジェクトに保存してください".into());
+        return Err(crate::Error::zmx(
+            "NSCの光源数・面数・材料の変更はJSONプロジェクトに保存してください".into(),
+        ));
     }
     for (s, t) in a.surfaces.iter().zip(&b.surfaces) {
         if s.name != t.name
@@ -540,7 +560,9 @@ fn patch_nsc(
                 != serde_json::to_value(&t.interaction).ok()
             || serde_json::to_value(&s.aperture).ok() != serde_json::to_value(&t.aperture).ok()
         {
-            return Err("NSCの形状・材質の変更はJSONプロジェクトに保存してください".into());
+            return Err(crate::Error::zmx(
+                "NSCの形状・材質の変更はJSONプロジェクトに保存してください".into(),
+            ));
         }
     }
     let spectral = exchange::nsc_spectra(a, original, output, sidecars)?;
@@ -549,35 +571,34 @@ fn patch_nsc(
     let mut current_source = None;
     let mut object_index = 0usize;
     let mut lines = Vec::new();
-    let mut values: Vec<BTreeMap<usize, f64>> = a
-        .sources
-        .iter()
-        .map(|s| {
-            let d = s
-                .diode
-                .as_ref()
-                .ok_or("Source Diodeの定義が変わっています")?;
-            Ok(BTreeMap::from([
-                (2, s.count as f64),
-                (3, s.total_weight),
-                (6, d.astigmatism_mm),
-                (7, d.divergence_deg[0]),
-                (8, d.angular_supergaussian[0]),
-                (9, d.divergence_deg[1]),
-                (10, d.angular_supergaussian[1]),
-                (11, d.array[0] as f64),
-                (12, d.array[1] as f64),
-                (13, d.spacing_mm[0]),
-                (14, d.spacing_mm[1]),
-                (15, d.half_width_mm[0]),
-                (16, d.gaussian_width_mm[0]),
-                (17, d.spatial_supergaussian[0]),
-                (18, d.half_width_mm[1]),
-                (19, d.gaussian_width_mm[1]),
-                (20, d.spatial_supergaussian[1]),
-            ]))
-        })
-        .collect::<Result<_, String>>()?;
+    let mut values: Vec<BTreeMap<usize, f64>> =
+        a.sources
+            .iter()
+            .map(|s| {
+                let d = s.diode.as_ref().ok_or_else(|| {
+                    crate::Error::zmx("Source Diodeの定義が変わっています".into())
+                })?;
+                Ok(BTreeMap::from([
+                    (2, s.count as f64),
+                    (3, s.total_weight),
+                    (6, d.astigmatism_mm),
+                    (7, d.divergence_deg[0]),
+                    (8, d.angular_supergaussian[0]),
+                    (9, d.divergence_deg[1]),
+                    (10, d.angular_supergaussian[1]),
+                    (11, d.array[0] as f64),
+                    (12, d.array[1] as f64),
+                    (13, d.spacing_mm[0]),
+                    (14, d.spacing_mm[1]),
+                    (15, d.half_width_mm[0]),
+                    (16, d.gaussian_width_mm[0]),
+                    (17, d.spatial_supergaussian[0]),
+                    (18, d.half_width_mm[1]),
+                    (19, d.gaussian_width_mm[1]),
+                    (20, d.spatial_supergaussian[1]),
+                ]))
+            })
+            .collect::<Result<_>>()?;
     for (source, index) in &spectral.wave_indices {
         values[*source].insert(4, *index as f64);
     }

@@ -1,12 +1,13 @@
 use super::nsc::read_source_spectrum;
 use super::*;
+use crate::Result;
 
 fn read_coating(
     path: &Path,
     extra: &[PathBuf],
     selected: Option<&str>,
     name: &str,
-) -> Result<raytrace_core::coating::Coating, String> {
+) -> Result<raytrace_core::coating::Coating> {
     let mut dirs = vec![path.parent().unwrap_or(Path::new(".")).to_path_buf()];
     dirs.extend_from_slice(extra);
     if let Some(user) = std::env::var_os("USERPROFILE") {
@@ -32,13 +33,13 @@ fn read_coating(
             if fs::metadata(&file).map_or(true, |m| m.len() > 32 * 1024 * 1024) {
                 continue;
             }
-            let bytes = fs::read(&file).map_err(|e| e.to_string())?;
+            let bytes = fs::read(&file).map_err(|e| crate::Error::io(&file, e))?;
             if let Some(c) = raytrace_core::coating::parse_zemax(&decode(&bytes).0, name)? {
                 return Ok(c);
             }
         }
     }
-    Err("IDEAL/TABLE定義が見つかりません。コーティングDATをZMXと同じフォルダー、または追加カタログへ配置してください".into())
+    Err(crate::Error::zmx("IDEAL/TABLE定義が見つかりません。コーティングDATをZMXと同じフォルダー、または追加カタログへ配置してください".into()))
 }
 
 pub(super) fn read_sequential(
@@ -49,13 +50,15 @@ pub(super) fn read_sequential(
     glasses: &BTreeMap<String, Glass>,
     records: &mut BTreeMap<String, String>,
     bindings: &mut Vec<usize>,
-) -> Result<(), String> {
+) -> Result<()> {
     let (path, extra) = location;
     let mut blocks: Vec<(usize, Vec<String>)> = Vec::new();
     for line in all {
         if let Some(tail) = line.trim().strip_prefix("SURF ") {
             blocks.push((
-                tail.trim().parse().map_err(|_| "SURF番号が不正です")?,
+                tail.trim()
+                    .parse()
+                    .map_err(|_| crate::Error::zmx("SURF番号が不正です".into()))?,
                 Vec::new(),
             ));
         } else if let Some((_, lines)) = blocks.last_mut() {
@@ -63,7 +66,7 @@ pub(super) fn read_sequential(
         }
     }
     if blocks.len() < 2 {
-        return Err("ZMXに面データがありません".into());
+        return Err(crate::Error::zmx("ZMXに面データがありません".into()));
     }
     let pupil = scalar(all, "ENPD", 10.0)?.abs() / 2.0;
     let mut frame_pose = Pose::default();
@@ -77,7 +80,7 @@ pub(super) fn read_sequential(
                 && field(lines, "TYPE").and_then(|s| s.split_whitespace().next())
                     != Some("COORDBRK")
         })
-        .ok_or("ZMXに光学面がありません")?
+        .ok_or_else(|| crate::Error::zmx("ZMXに光学面がありません".into()))?
         .0;
     for (id, lines) in blocks.iter().skip(1) {
         let typ = field(lines, "TYPE")
@@ -134,7 +137,9 @@ pub(super) fn read_sequential(
             frame_pose = raytrace_core::math::Frame::new(&frame_pose).transform_pose(&local);
             let distance = scalar(lines, "DISZ", 0.)?;
             if !distance.is_finite() {
-                return Err("Coordinate Breakの厚さは有限値が必要です".into());
+                return Err(crate::Error::zmx(
+                    "Coordinate Breakの厚さは有限値が必要です".into(),
+                ));
             }
             frame_pose.translation_mm =
                 raytrace_core::math::Frame::new(&frame_pose).world_point(V3([0., 0., distance]));
@@ -195,7 +200,7 @@ pub(super) fn read_sequential(
         let aperture = if let Some(rect) = field(lines, "SQAP") {
             let w = words(rect);
             if w.len() < 2 {
-                return Err("SQAPの寸法が不足しています".into());
+                return Err(crate::Error::zmx("SQAPの寸法が不足しています".into()));
             }
             Aperture::Rectangle {
                 half_width_mm: number(w[0])?,
@@ -204,7 +209,7 @@ pub(super) fn read_sequential(
         } else if let Some(circle) = field(lines, "CLAP") {
             let w = words(circle);
             if w.len() < 2 {
-                return Err("CLAPの寸法が不足しています".into());
+                return Err(crate::Error::zmx("CLAPの寸法が不足しています".into()));
             }
             if number(w[0])? != 0.0 {
                 project.issue(
@@ -324,7 +329,7 @@ pub(super) fn read_sequential(
         .scene
         .surfaces
         .first()
-        .ok_or("ZMXに追跡可能な光学面がありません")?
+        .ok_or_else(|| crate::Error::zmx("ZMXに追跡可能な光学面がありません".into()))?
         .pose
         .translation_mm
         .0[2];
@@ -332,7 +337,7 @@ pub(super) fn read_sequential(
         Ok(Some(s)) if s.samples.len() > 1 => Some(s),
         Ok(_) => None,
         Err(e) => {
-            project.issue("spectrum", e, true);
+            project.issue("spectrum", e.to_string(), true);
             None
         }
     };
@@ -355,7 +360,7 @@ pub(super) fn read_sequential(
         Ok(sources) => project.scene.sources = sources,
         Err(e) => {
             project.scene.sources.push(base);
-            project.issue("illumination_definition", e, true);
+            project.issue("illumination_definition", e.to_string(), true);
         }
     }
     project.issue("illumination","逐次ZMXの波長表・視野の相対重みを使用。光量の基準は瞳補正後の発射光線の重み合計を100%とします。入射瞳、Ray Aiming時はSTOPのXY座標を面積一様に選び、視野の瞳補正を適用します。実開口の外れは光量収支へ記録します",false);

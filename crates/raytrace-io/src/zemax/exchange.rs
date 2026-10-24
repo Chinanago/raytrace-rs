@@ -1,9 +1,10 @@
 //! Files written alongside a ZMX, with conflict checks for existing user data.
 use super::nsc::nsc_reference;
 use super::*;
+use crate::Result;
 
 pub(super) type Sidecars = BTreeMap<PathBuf, Vec<u8>>;
-pub(super) fn sequential_waves(scene: &Scene) -> Result<Vec<[f64; 2]>, String> {
+pub(super) fn sequential_waves(scene: &Scene) -> Result<Vec<[f64; 2]>> {
     let mut waves = Vec::new();
     for source in &scene.sources {
         if let Some(spectrum) = &source.spectrum {
@@ -33,9 +34,9 @@ pub(super) fn sequential_waves(scene: &Scene) -> Result<Vec<[f64; 2]>, String> {
         }
     }
     if merged.len() > 24 {
-        return Err(
+        return Err(crate::Error::zmx(
             "逐次ZMXの波長表は24波長までです。より多い波長の計算条件はJSONで保存できます".into(),
-        );
+        ));
     }
     Ok(merged)
 }
@@ -45,21 +46,21 @@ pub(super) fn generated_header(output: &Path, prefix: &str) -> String {
         output.file_name().unwrap_or_default().to_string_lossy()
     )
 }
-pub(super) fn put(files: &mut Sidecars, path: PathBuf, bytes: Vec<u8>) -> Result<(), String> {
+pub(super) fn put(files: &mut Sidecars, path: PathBuf, bytes: Vec<u8>) -> Result<()> {
     if files.get(&path).is_some_and(|old| *old != bytes) {
-        return Err(format!(
+        return Err(crate::Error::zmx(format!(
             "複数の参照定義が同じファイル名を使っています: {}",
             path.display()
-        ));
+        )));
     }
     files.insert(path, bytes);
     Ok(())
 }
-pub(super) fn write(files: &Sidecars) -> Result<(), String> {
+pub(super) fn write(files: &Sidecars) -> Result<()> {
     // Check every destination before writing the first sidecar.
     for (path, bytes) in files {
         if path.is_file() {
-            let existing = fs::read(path).map_err(|e| e.to_string())?;
+            let existing = fs::read(path).map_err(|e| crate::Error::io(path, e))?;
             let generated = |v: &[u8]| {
                 String::from_utf8_lossy(v)
                     .lines()
@@ -73,35 +74,37 @@ pub(super) fn write(files: &Sidecars) -> Result<(), String> {
                     && existing.split(|b| *b == b'\n').next()
                         == bytes.split(|b| *b == b'\n').next())
             {
-                return Err(format!(
+                return Err(crate::Error::zmx(format!(
                     "依存ファイル{}が保存先に既にあります。別の名前・フォルダーへ保存してください",
                     path.display()
-                ));
+                )));
             }
         }
     }
     for (path, bytes) in files {
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            fs::create_dir_all(parent).map_err(|e| crate::Error::io(parent, e))?;
         }
-        fs::write(path, bytes).map_err(|e| e.to_string())?;
+        fs::write(path, bytes).map_err(|e| crate::Error::io(path, e))?;
     }
     Ok(())
 }
-pub(super) fn safe_relative(name: &str) -> Result<&Path, String> {
+pub(super) fn safe_relative(name: &str) -> Result<&Path> {
     let p = Path::new(name);
     if name.is_empty()
         || p.components()
             .any(|c| !matches!(c, std::path::Component::Normal(_)))
     {
-        return Err("参照ファイルの復元には保存先内の相対パスが必要です".into());
+        return Err(crate::Error::zmx(
+            "参照ファイルの復元には保存先内の相対パスが必要です".into(),
+        ));
     }
     Ok(p)
 }
 pub(super) fn spectrum_text(
     spectrum: &raytrace_core::spectrum::Spectrum,
     output: &Path,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>> {
     spectrum.validate()?;
     let mut samples = spectrum.samples.clone();
     if samples.len() < 3 {
@@ -112,7 +115,7 @@ pub(super) fn spectrum_text(
             samples.push([last * 1.1, 0.]);
         }
         if samples.iter().any(|s| !s[0].is_finite() || s[0] <= 0.) {
-            return Err("この波長はSPCDで表現できません".into());
+            return Err(crate::Error::zmx("この波長はSPCDで表現できません".into()));
         }
     }
     let mut text = generated_header(output, "#");
@@ -122,7 +125,7 @@ pub(super) fn spectrum_text(
     Ok(text.into_bytes())
 }
 
-fn material_data(m: &Material) -> Result<(usize, Vec<f64>, [f64; 2]), String> {
+fn material_data(m: &Material) -> Result<(usize, Vec<f64>, [f64; 2])> {
     Ok(match m {
         Material::WithAbsorption { dispersion, .. } => return material_data(dispersion),
         Material::Constant { n, .. } => (1, vec![n * n, 0., 0., 0., 0., 0.], [0.001, 1000.]),
@@ -148,16 +151,16 @@ fn material_data(m: &Material) -> Result<(usize, Vec<f64>, [f64; 2]), String> {
             ..
         } => (*formula, coefficients.clone(), *valid_range_um),
         _ => {
-            return Err(
+            return Err(crate::Error::zmx(
                 "表形式の屈折率をAGF分散式へ厳密に変換できません。JSONで保存してください".into(),
-            )
+            ))
         }
     })
 }
-pub(super) fn material_record(name: &str, m: &Material) -> Result<String, String> {
+pub(super) fn material_record(name: &str, m: &Material) -> Result<String> {
     let (formula, coefficients, range) = material_data(m)?;
     if name.split_whitespace().count() != 1 || name.contains(['\n', '\r']) {
-        return Err("AGFの材料名に空白は使えません".into());
+        return Err(crate::Error::zmx("AGFの材料名に空白は使えません".into()));
     }
     let mut text = format!(
         "NM {name} {formula} 0 1.5 50 0 0\nCD {}\nLD {:.17e} {:.17e}\n",
@@ -176,7 +179,7 @@ pub(super) fn material_record(name: &str, m: &Material) -> Result<String, String
     };
     for [w, a] in samples {
         if !a.is_finite() || a < 0. {
-            return Err("吸収係数が不正です".into());
+            return Err(crate::Error::zmx("吸収係数が不正です".into()));
         }
         let thickness = if a > 100. { 100. / a } else { 1. };
         text.push_str(&format!(
@@ -188,7 +191,7 @@ pub(super) fn material_record(name: &str, m: &Material) -> Result<String, String
 }
 
 /// Recover supported text dependencies from an embedded original after source files moved.
-pub(super) fn recover(project: &Project, output: &Path) -> Result<Sidecars, String> {
+pub(super) fn recover(project: &Project, output: &Path) -> Result<Sidecars> {
     let mut files = Sidecars::new();
     let Some(doc) = &project.zemax else {
         return Ok(files);
@@ -208,15 +211,18 @@ pub(super) fn recover(project: &Project, output: &Path) -> Result<Sidecars, Stri
                 && serde_json::to_value(&project.scene.materials).ok()
                     == serde_json::to_value(&doc.baseline_scene.materials).ok()
             {
-                let existing = decode(&fs::read(to.join(relative)).map_err(|e| e.to_string())?)
-                    .0
-                    .replace("\r\n", "\n");
+                let existing = decode(
+                    &fs::read(to.join(relative))
+                        .map_err(|e| crate::Error::io(to.join(relative), e))?,
+                )
+                .0
+                .replace("\r\n", "\n");
                 if doc
                     .glass_records
                     .values()
                     .any(|r| !existing.contains(r.trim()))
                 {
-                    return Err(format!("保存先の{name}には元の材料定義が揃っていません。別フォルダーへ保存してください"));
+                    return Err(crate::Error::zmx(format!("保存先の{name}には元の材料定義が揃っていません。別フォルダーへ保存してください")));
                 }
             }
         }
@@ -233,7 +239,9 @@ pub(super) fn recover(project: &Project, output: &Path) -> Result<Sidecars, Stri
             .get(&c.name.to_ascii_uppercase())
             .is_some_and(|v| *v != definition)
         {
-            return Err("同じコーティング名に異なる定義があります".into());
+            return Err(crate::Error::zmx(
+                "同じコーティング名に異なる定義があります".into(),
+            ));
         }
         definitions.insert(c.name.to_ascii_uppercase(), definition);
     }
@@ -255,11 +263,13 @@ pub(super) fn recover(project: &Project, output: &Path) -> Result<Sidecars, Stri
                     .into_bytes(),
             )?;
         } else if !from.join(relative).is_file() && to.join(relative).is_file() {
-            let existing = decode(&fs::read(to.join(relative)).map_err(|e| e.to_string())?)
-                .0
-                .replace("\r\n", "\n");
+            let existing = decode(
+                &fs::read(to.join(relative)).map_err(|e| crate::Error::io(to.join(relative), e))?,
+            )
+            .0
+            .replace("\r\n", "\n");
             if definitions.values().any(|r| !existing.contains(r.trim())) {
-                return Err(format!("保存先の{name}は元のコーティング定義と異なります。別フォルダーへ保存してください"));
+                return Err(crate::Error::zmx(format!("保存先の{name}は元のコーティング定義と異なります。別フォルダーへ保存してください")));
             }
         }
     }
@@ -284,7 +294,7 @@ pub(super) fn recover(project: &Project, output: &Path) -> Result<Sidecars, Stri
                 let name = line
                     .split('"')
                     .nth(1)
-                    .ok_or("SPCDの参照ファイル名がありません")?;
+                    .ok_or_else(|| crate::Error::zmx("SPCDの参照ファイル名がありません".into()))?;
                 let relative = safe_relative(name)?;
                 if !from.join(relative).is_file() && !to.join(relative).is_file() {
                     put(
@@ -295,7 +305,7 @@ pub(super) fn recover(project: &Project, output: &Path) -> Result<Sidecars, Stri
                 } else if !from.join(relative).is_file() && to.join(relative).is_file() {
                     let existing = read_spcd(&to.join(relative))?;
                     if existing.samples != spectrum.samples {
-                        return Err(format!("保存先の{name}は元のスペクトルと異なります。別フォルダーへ保存してください"));
+                        return Err(crate::Error::zmx(format!("保存先の{name}は元のスペクトルと異なります。別フォルダーへ保存してください")));
                     }
                 }
             }
@@ -314,7 +324,7 @@ pub(super) fn nsc_spectra(
     original: &ZmxDocument,
     output: &Path,
     files: &mut Sidecars,
-) -> Result<NscSpectra, String> {
+) -> Result<NscSpectra> {
     let all: Vec<_> = original.text.lines().map(str::to_owned).collect();
     let mut waves = parameters(&all, "WAVM");
     let mut plan = NscSpectra {
@@ -378,7 +388,7 @@ pub(super) fn nsc_spectra(
     Ok(plan)
 }
 
-pub(super) fn nsc_local_poses(scene: &Scene, original: &ZmxDocument) -> Result<Vec<Pose>, String> {
+pub(super) fn nsc_local_poses(scene: &Scene, original: &ZmxDocument) -> Result<Vec<Pose>> {
     let all: Vec<_> = original.text.lines().map(str::to_owned).collect();
     let mut objects: Vec<Vec<String>> = Vec::new();
     for line in all {
@@ -393,7 +403,8 @@ pub(super) fn nsc_local_poses(scene: &Scene, original: &ZmxDocument) -> Result<V
     let mut locals = Vec::new();
     let mut source_index = 0;
     for (i, rows) in objects.iter().enumerate() {
-        let h = words(field(rows, "NSOH").ok_or("NSOHがありません")?);
+        let h =
+            words(field(rows, "NSOH").ok_or_else(|| crate::Error::zmx("NSOHがありません".into()))?);
         let parent = nsc_reference(h.get(1).copied().unwrap_or("0"), i + 1)?;
         let (raw, _) = pose_from(field(rows, "NSOP").unwrap_or("0 0 0 0 0 0"))?;
         let parent_frame = raytrace_core::math::Frame::new(&globals[parent]);
@@ -404,14 +415,14 @@ pub(super) fn nsc_local_poses(scene: &Scene, original: &ZmxDocument) -> Result<V
                 let s = scene
                     .sources
                     .get(source_index)
-                    .ok_or("光源数が変わっています")?;
+                    .ok_or_else(|| crate::Error::zmx("光源数が変わっています".into()))?;
                 source_index += 1;
                 Pose {
                     translation_mm: s.origin_mm,
                     rotation_deg: s
                         .diode
                         .as_ref()
-                        .ok_or("Source Diodeの定義がありません")?
+                        .ok_or_else(|| crate::Error::zmx("Source Diodeの定義がありません".into()))?
                         .rotation_deg,
                 }
             }

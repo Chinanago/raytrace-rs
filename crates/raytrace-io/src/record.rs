@@ -1,4 +1,5 @@
 //! Self-contained calculation conditions and replay, separate from the editable project.
+use crate::Result;
 use crate::{compatibility::CompatibilityReport, project::Project};
 use raytrace_core::{
     model::{PreparedScene, Ray, Scene},
@@ -132,7 +133,7 @@ impl RunContext {
                             Err(error) => SavedPupil {
                                 source_index: i,
                                 geometry: None,
-                                error: Some(error),
+                                error: Some(error.to_string()),
                             },
                         },
                     )
@@ -140,9 +141,11 @@ impl RunContext {
                 .collect(),
         }
     }
-    pub fn validate_generated(&self, prepared: &PreparedScene) -> Result<(), String> {
+    pub fn validate_generated(&self, prepared: &PreparedScene) -> Result<()> {
         if self.worker_threads == 0 {
-            return Err("計算記録のスレッド数が不正です".into());
+            return Err(crate::Error::Record(
+                "計算記録のスレッド数が不正です".into(),
+            ));
         }
         if let LaunchInput::Generated {
             sampling_revision,
@@ -164,21 +167,25 @@ impl RunContext {
                         .iter()
                         .all(|s| s.spectrum.is_none() && s.pupil.is_none()))
             {
-                return Err("この計算記録のサンプリング版は再生に対応していません".into());
+                return Err(crate::Error::Record(
+                    "この計算記録のサンプリング版は再生に対応していません".into(),
+                ));
             }
             if prepared.ray_generator()?.len() != count {
-                return Err("計算記録の光線数が一致しません".into());
+                return Err(crate::Error::Record(
+                    "計算記録の光線数が一致しません".into(),
+                ));
             }
         }
         Ok(())
     }
 
-    pub fn trace(&self) -> Result<Report, String> {
+    pub fn trace(&self) -> Result<Report> {
         let prepared = self.scene.clone().prepare()?;
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.worker_threads)
             .build()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| crate::Error::Record(format!("スレッドプールを作成できません: {e}")))?;
         match self.input {
             LaunchInput::Generated { .. } => {
                 self.validate_generated(&prepared)?;
@@ -187,7 +194,7 @@ impl RunContext {
                     || !report.budget.launched.is_finite()
                     || report.budget.launched <= 0.
                 {
-                    return Err("計算記録の発射光量が不正です".into());
+                    return Err(crate::Error::Record("計算記録の発射光量が不正です".into()));
                 }
                 Ok(report)
             }
@@ -198,9 +205,11 @@ impl RunContext {
         }
     }
 
-    pub fn rays(&self) -> Result<Vec<Ray>, String> {
+    pub fn rays(&self) -> Result<Vec<Ray>> {
         if self.worker_threads == 0 {
-            return Err("計算記録のスレッド数が不正です".into());
+            return Err(crate::Error::Record(
+                "計算記録のスレッド数が不正です".into(),
+            ));
         }
         let prepared = self.scene.clone().prepare()?;
         let rays = match &self.input {
@@ -213,23 +222,27 @@ impl RunContext {
         let mut ids = std::collections::HashSet::new();
         for ray in &rays {
             if !ids.insert(ray.id) {
-                return Err("計算記録の光線IDが重複しています".into());
+                return Err(crate::Error::Record(
+                    "計算記録の光線IDが重複しています".into(),
+                ));
             }
             let mut checked = *ray;
             checked.validate(&prepared)?;
             if (ray.direction.norm() - 1.0).abs() > 1e-12 {
-                return Err("計算記録の光線方向が正規化されていません".into());
+                return Err(crate::Error::Record(
+                    "計算記録の光線方向が正規化されていません".into(),
+                ));
             }
         }
         if rays.is_empty()
             || !rays.iter().map(|r| r.weight).sum::<f64>().is_finite()
             || rays.iter().all(|r| r.weight == 0.0)
         {
-            return Err("計算記録の発射光量が不正です".into());
+            return Err(crate::Error::Record("計算記録の発射光量が不正です".into()));
         }
         Ok(rays)
     }
-    pub fn save(&self, report: &Report, trace_seconds: f64, path: &Path) -> Result<(), String> {
+    pub fn save(&self, report: &Report, trace_seconds: f64, path: &Path) -> Result<()> {
         #[derive(Serialize)]
         struct BorrowedRun<'a> {
             format: &'static str,
@@ -238,7 +251,7 @@ impl RunContext {
             report: &'a Report,
         }
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            fs::create_dir_all(parent).map_err(|e| crate::Error::io(parent, e))?;
         }
         let bytes = serde_json::to_vec_pretty(&BorrowedRun {
             format: RUN_FORMAT,
@@ -246,8 +259,8 @@ impl RunContext {
             trace_seconds,
             report,
         })
-        .map_err(|e| e.to_string())?;
-        fs::write(path, bytes).map_err(|e| e.to_string())
+        .map_err(|e| crate::Error::json(Some(path.to_path_buf()), e))?;
+        fs::write(path, bytes).map_err(|e| crate::Error::io(path, e))
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -259,15 +272,16 @@ pub struct RunRecord {
     pub report: Report,
 }
 impl RunRecord {
-    pub fn replay(&self) -> Result<Report, String> {
+    pub fn replay(&self) -> Result<Report> {
         self.calculation.trace()
     }
 
-    pub fn open(path: &Path) -> Result<Self, String> {
-        let bytes = fs::read(path).map_err(|e| e.to_string())?;
-        let record: Self = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    pub fn open(path: &Path) -> Result<Self> {
+        let bytes = fs::read(path).map_err(|e| crate::Error::io(path, e))?;
+        let record: Self = serde_json::from_slice(&bytes)
+            .map_err(|e| crate::Error::json(Some(path.to_path_buf()), e))?;
         if record.format != RUN_FORMAT {
-            return Err("未対応の計算記録形式です".into());
+            return Err(crate::Error::Record("未対応の計算記録形式です".into()));
         }
         // Geometry/material/source validation is mandatory even for explicit rays.
         record.calculation.scene.clone().prepare()?;

@@ -1,4 +1,5 @@
 //! Scalar power coatings. TABLE interpolation follows the documented Zemax convention.
+use crate::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -47,7 +48,7 @@ fn power(v: [f64; 2]) -> bool {
 }
 
 impl CoatingModel {
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<()> {
         let valid = match self {
             Self::Ideal {
                 reflectance,
@@ -75,9 +76,9 @@ impl CoatingModel {
                     && fraction(*tir_reflectance)
             }
         };
-        valid
-            .then_some(())
-            .ok_or_else(|| "コーティングの波長・角度・R/T収支が不正です".into())
+        valid.then_some(()).ok_or_else(|| {
+            crate::Error::Coating("コーティングの波長・角度・R/T収支が不正です".into())
+        })
     }
     pub fn covers(&self, wavelength: f64) -> bool {
         match self {
@@ -164,13 +165,15 @@ impl CoatingModel {
     }
 }
 impl Coating {
-    pub fn to_zemax(&self) -> Result<String, String> {
+    pub fn to_zemax(&self) -> Result<String> {
         self.validate()?;
         let same = |a: &CoatingModel, b: &CoatingModel| {
             serde_json::to_value(a).ok() == serde_json::to_value(b).ok()
         };
         if self.back.as_ref().is_some_and(|b| !same(b, &self.front)) {
-            return Err("表裏で異なるコーティングは単一のZemax IDEAL/TABLEで表現できません".into());
+            return Err(crate::Error::Coating(
+                "表裏で異なるコーティングは単一のZemax IDEAL/TABLEで表現できません".into(),
+            ));
         }
         if let Some(original) = &self.zemax_definition {
             if parse_zemax(original, &self.name)?.is_some_and(|c| same(&c.front, &self.front)) {
@@ -184,7 +187,9 @@ impl Coating {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '_')
         {
-            return Err("Zemaxのコーティング名は32文字以内の英数字・下線で指定してください".into());
+            return Err(crate::Error::Coating(
+                "Zemaxのコーティング名は32文字以内の英数字・下線で指定してください".into(),
+            ));
         }
         let mut text = String::new();
         match &self.front {
@@ -215,15 +220,15 @@ impl Coating {
                 }
             }
             _ => {
-                return Err(
+                return Err(crate::Error::Coating(
                     "この角度基準・全反射係数の表はZemax TABLEで表現できません。JSONへ保存できます"
                         .into(),
-                )
+                ))
             }
         }
         Ok(text)
     }
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<()> {
         self.front.validate()?;
         if let Some(back) = &self.back {
             back.validate()?;
@@ -242,19 +247,21 @@ impl Coating {
     }
 }
 
-fn number(s: &str) -> Result<f64, String> {
+fn number(s: &str) -> Result<f64> {
     let v: f64 = s
         .replace(['d', 'D'], "E")
         .parse()
-        .map_err(|_| format!("コーティング数値が不正です: {s}"))?;
+        .map_err(|_| crate::Error::Coating(format!("コーティング数値が不正です: {s}")))?;
     if !v.is_finite() {
-        return Err("コーティングに非有限値があります".into());
+        return Err(crate::Error::Coating(
+            "コーティングに非有限値があります".into(),
+        ));
     }
     Ok(v)
 }
 
 /// Read a named IDEAL or TABLE coating; all other prescriptions remain unsupported.
-pub fn parse_zemax(text: &str, name: &str) -> Result<Option<Coating>, String> {
+pub fn parse_zemax(text: &str, name: &str) -> Result<Option<Coating>> {
     let rows: Vec<Vec<&str>> = text
         .lines()
         .map(|l| {
@@ -275,17 +282,23 @@ pub fn parse_zemax(text: &str, name: &str) -> Result<Option<Coating>, String> {
     let front = match header[0] {
         "IDEAL" => {
             if !(4..=5).contains(&header.len()) {
-                return Err("IDEALにはT・R・任意のTIR係数が必要です".into());
+                return Err(crate::Error::Coating(
+                    "IDEALにはT・R・任意のTIR係数が必要です".into(),
+                ));
             }
             let mut t = number(header[2])?;
             let mut r = number(header[3])?;
             if t < 0.0 || r < 0.0 {
-                return Err("IDEALのT/Rは非負で指定してください".into());
+                return Err(crate::Error::Coating(
+                    "IDEALのT/Rは非負で指定してください".into(),
+                ));
             }
             if t + r > 1.0 {
                 let sum = t + r;
                 if !sum.is_finite() {
-                    return Err("IDEAL係数の合計が大きすぎます".into());
+                    return Err(crate::Error::Coating(
+                        "IDEAL係数の合計が大きすぎます".into(),
+                    ));
                 }
                 t /= sum;
                 r /= sum;
@@ -326,22 +339,29 @@ pub fn parse_zemax(text: &str, name: &str) -> Result<Option<Coating>, String> {
                             .map(|s| number(s))
                             .collect::<Result<_, _>>()?;
                         if !power([v[1], v[3]]) || !power([v[2], v[4]]) {
-                            return Err("TABLEのS/PごとのR+Tが1を超えています".into());
+                            return Err(crate::Error::Coating(
+                                "TABLEのS/PごとのR+Tが1を超えています".into(),
+                            ));
                         }
                         grid.last_mut().unwrap().push(v[0]);
                         data.push([(v[1] + v[2]) / 2.0, (v[3] + v[4]) / 2.0]);
                     }
                     _ => {
-                        return Err(format!(
+                        return Err(crate::Error::Coating(format!(
                             "TABLEのレコードが不正または未対応です: {}",
                             w.join(" ")
-                        ))
+                        )))
                     }
                 }
             }
-            let wavelengths_um = grid.first().ok_or("TABLEにANGLがありません")?.clone();
+            let wavelengths_um = grid
+                .first()
+                .ok_or_else(|| crate::Error::Coating("TABLEにANGLがありません".into()))?
+                .clone();
             if grid.iter().any(|g| *g != wavelengths_um) {
-                return Err("TABLEの波長表は全角度で揃えてください".into());
+                return Err(crate::Error::Coating(
+                    "TABLEの波長表は全角度で揃えてください".into(),
+                ));
             }
             CoatingModel::Table {
                 wavelengths_um,
@@ -351,10 +371,10 @@ pub fn parse_zemax(text: &str, name: &str) -> Result<Option<Coating>, String> {
                 tir_reflectance: 1.0,
             }
         }
-        _ => return Err(
+        _ => return Err(crate::Error::Coating(
             "このコーティングは多層膜・複素振幅の計算が必要です。現在はIDEAL/TABLEに対応しています"
                 .into(),
-        ),
+        )),
     };
     let source_lines: Vec<_> = text.lines().collect();
     let end = rows

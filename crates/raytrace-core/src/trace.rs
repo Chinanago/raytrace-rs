@@ -1,6 +1,7 @@
 use crate::geometry::{dielectric, intersect, intersect_ordered, search_start, Hit, Miss};
 use crate::math::V3;
 use crate::model::{Interaction, Mode, PreparedScene, Ray};
+use crate::Result;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -332,7 +333,7 @@ pub fn trace_controlled(
 }
 
 /// Trace source rays without retaining the launch array.
-pub fn trace_generated(scene: &PreparedScene, options: TraceOptions) -> Result<Report, String> {
+pub fn trace_generated(scene: &PreparedScene, options: TraceOptions) -> Result<Report> {
     generated_impl(scene, options, None)
         .map(|r| r.expect("uncontrolled tracing cannot be cancelled"))
 }
@@ -341,7 +342,7 @@ pub fn trace_generated_controlled(
     scene: &PreparedScene,
     options: TraceOptions,
     control: &TraceControl,
-) -> Result<Option<Report>, String> {
+) -> Result<Option<Report>> {
     generated_impl(scene, options, Some(control))
 }
 
@@ -349,7 +350,7 @@ fn generated_impl(
     scene: &PreparedScene,
     options: TraceOptions,
     control: Option<&TraceControl>,
-) -> Result<Option<Report>, String> {
+) -> Result<Option<Report>> {
     let generator = scene.ray_generator()?;
     if let Some(c) = control {
         c.completed.store(0, Ordering::Relaxed);
@@ -367,19 +368,19 @@ fn generated_impl(
     )
 }
 
-fn trace_impl<I: Iterator<Item = Result<Ray, String>>>(
+fn trace_impl<I: Iterator<Item = Result<Ray>>>(
     scene: &PreparedScene,
     len: usize,
     rays: impl Fn(std::ops::Range<usize>) -> I + Sync,
     options: TraceOptions,
     control: Option<&TraceControl>,
-) -> Result<Option<Report>, String> {
+) -> Result<Option<Report>> {
     // Fixed indexed chunks give a fixed reduction order independent of worker count.
     // At most 32 dense detector-map copies exist, including the final reduction.
     let chunk_size = len.div_ceil(31).max(1);
     let reports: Vec<_> = (0..len.div_ceil(chunk_size))
         .into_par_iter()
-        .map(|chunk_index| -> Result<Option<Report>, String> {
+        .map(|chunk_index| -> Result<Option<Report>> {
             let start = chunk_index * chunk_size;
             let chunk = rays(start..start.saturating_add(chunk_size).min(len));
             let mut report = Report::new(scene);
