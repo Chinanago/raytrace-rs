@@ -549,6 +549,7 @@ pub fn dielectric(direction: V3, normal: V3, n_before: f64, n_after: f64) -> Int
 
 /// A supplied power coefficient still preserves Snell refraction and TIR. Coated
 /// interfaces compute their power separately and can skip the unused bare Fresnel work.
+#[inline]
 pub(crate) fn dielectric_with_reflectance(
     direction: V3,
     normal: V3,

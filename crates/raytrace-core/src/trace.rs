@@ -376,9 +376,25 @@ fn trace_impl<I: Iterator<Item = Result<Ray>>>(
     options: TraceOptions,
     control: Option<&TraceControl>,
 ) -> Result<Option<Report>> {
-    let surface_index = (scene.spec.mode == Mode::NonSequential)
-        .then(|| SurfaceIndex::new(&scene.surfaces))
-        .flatten();
+    if scene.spec.mode == Mode::Sequential {
+        trace_mode::<I, true>(scene, len, rays, options, control)
+    } else {
+        trace_mode::<I, false>(scene, len, rays, options, control)
+    }
+}
+
+fn trace_mode<I: Iterator<Item = Result<Ray>>, const SEQUENTIAL: bool>(
+    scene: &PreparedScene,
+    len: usize,
+    rays: impl Fn(std::ops::Range<usize>) -> I + Sync,
+    options: TraceOptions,
+    control: Option<&TraceControl>,
+) -> Result<Option<Report>> {
+    let surface_index = if SEQUENTIAL {
+        None
+    } else {
+        SurfaceIndex::new(&scene.surfaces)
+    };
     // Fixed indexed chunks give a fixed reduction order independent of worker count.
     // At most 32 dense detector-map copies exist, including the final reduction.
     let chunk_size = len.div_ceil(31).max(1);
@@ -390,7 +406,11 @@ fn trace_impl<I: Iterator<Item = Result<Ray>>>(
             let mut report = Report::new(scene);
             let mut cache = OpticalCache::new(scene);
             let mut traversal = Traversal {
-                stack: WorkQueue::new(scene.spec.mode),
+                stack: WorkQueue::new(if SEQUENTIAL {
+                    Mode::Sequential
+                } else {
+                    Mode::NonSequential
+                }),
                 surface_index: surface_index.as_ref(),
             };
             let mut completed = 0;
@@ -402,7 +422,7 @@ fn trace_impl<I: Iterator<Item = Result<Ray>>>(
                 }
                 let ray = ray?;
                 let optics = cache.get(scene, ray.wavelength_um);
-                trace_one(
+                trace_one::<SEQUENTIAL>(
                     scene,
                     ray,
                     &mut report,
@@ -569,7 +589,7 @@ fn evaluate_optics(
         )
     })
 }
-fn trace_one(
+fn trace_one<const SEQUENTIAL: bool>(
     scene: &PreparedScene,
     launch: Ray,
     report: &mut Report,
@@ -578,7 +598,14 @@ fn trace_one(
     optics: &[(f64, f64)],
     traversal: &mut Traversal<'_>,
 ) {
-    let stack = &mut traversal.stack;
+    // The sequential path has at most one successor. Keep its state local so
+    // LLVM can scalarize it; only NSC rays need a reusable priority queue.
+    let mut sequential = WorkQueue::Sequential(None);
+    let stack = if SEQUENTIAL {
+        &mut sequential
+    } else {
+        &mut traversal.stack
+    };
     report.budget.launched += launch.weight;
     // Resolve the strongest pending NSC branches first. A launch-wide event
     // allowance must not strand a strong reflection behind many weak descendants.
@@ -626,7 +653,7 @@ fn trace_one(
             );
             continue;
         }
-        let selection = if scene.spec.mode == Mode::Sequential {
+        let selection = if SEQUENTIAL {
             match scene.surfaces.get(next_surface) {
                 Some(s) => intersect_ordered(s, ray.position_mm, ray.direction)
                     .map(|h| Some((next_surface, h)))
@@ -857,7 +884,7 @@ fn trace_one(
                 if result.transmitted.is_none() {
                     report.total_internal_reflections += 1;
                 }
-                if scene.spec.mode == Mode::Sequential && result.transmitted.is_none() {
+                if SEQUENTIAL && result.transmitted.is_none() {
                     ray.weight = reflected_weight;
                     report.budget.sequential_tir += ray.weight;
                     report.diagnose(ray, "sequential_tir", Some(index), depth + 1, None, None);
@@ -868,7 +895,7 @@ fn trace_one(
                         depth + 1,
                         options.keep_terminals,
                     );
-                } else if scene.spec.mode == Mode::NonSequential {
+                } else if !SEQUENTIAL {
                     if reflected_weight > 0.0 {
                         stack.push(Work {
                             ray: Ray {

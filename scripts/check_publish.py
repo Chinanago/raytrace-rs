@@ -11,6 +11,7 @@ FILES = {
     "Raytraceを起動.cmd", "examples/exchange_check.rs", "examples/assembly_demo.rs",
     "examples/validation_suite.rs",
     "examples/performance_check.rs",
+    "examples/throughput_check.rs",
     "examples/trace_limits.rs",
     "examples/step_check.rs",
     ".github/workflows/windows.yml",
@@ -18,6 +19,7 @@ FILES = {
     "scripts/package_windows.py",
     "scripts/third_party_notices.toml",
     "scripts/check_publish.py", "scripts/zemax_exchange_probe.py",
+    "scripts/benchmark_compare.py",
     "skills/raytrace-rs/SKILL.md", "skills/raytrace-rs/LICENSE",
     "skills/raytrace-rs/agents/openai.yaml", "skills/raytrace-rs/references/workflows.md",
 }
