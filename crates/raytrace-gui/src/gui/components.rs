@@ -276,9 +276,6 @@ impl App {
                 self.selected = self.selected.min(self.project.scene.surfaces.len() - 1);
                 let s = &mut self.project.scene.surfaces[self.selected];
                 ui.label(
-                    egui::RichText::new(&s.name).family(egui::FontFamily::Name("bold".into())),
-                );
-                ui.label(
                     egui::RichText::new(shape_name(&s.shape))
                         .size(SIZE_CAPTION)
                         .color(TEXT_MUTED),
@@ -456,6 +453,37 @@ fn detector_controls(ui: &mut egui::Ui, surface: &mut Surface) -> bool {
 mod tests {
     use super::*;
     use crate::gui::test_support::*;
+    #[test]
+    fn standalone_surface_properties_start_with_shape_without_repeating_the_name() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut app = App::demo();
+        app.project.assembly = None;
+        app.project.scene.sources.clear();
+        app.project.scene.surfaces.truncate(1);
+        let surface = &mut app.project.scene.surfaces[0];
+        surface.name = "S1 EVENASPH".into();
+        surface.shape = Shape::EvenAsphere {
+            radius_mm: 100.0,
+            conic: 0.0,
+            coefficients: vec![],
+        };
+        let before = serde_json::to_value(&app.project).unwrap();
+        for _ in 0..3 {
+            frame(&mut app, &ctx, vec![]);
+        }
+        let out = frame(&mut app, &ctx, vec![]);
+        let text = visible_text(&out);
+        assert_eq!(text.iter().filter(|s| **s == "S1 EVENASPH").count(), 1);
+        let name = text_rect(&out, "S1 EVENASPH").unwrap();
+        let shape = text_rect(&out, "非球面").unwrap();
+        let position = text_rect(&out, "位置").unwrap();
+        assert!(shape.top() > name.bottom());
+        assert!(position.top() > shape.bottom());
+        assert_eq!(before, serde_json::to_value(&app.project).unwrap());
+        assert!(!app.dirty);
+    }
+
     #[test]
     fn selected_component_name_has_no_repeated_section_heading() {
         let ctx = egui::Context::default();

@@ -151,6 +151,7 @@ struct App {
     status: String,
     error: Option<String>,
     dirty: bool,
+    last_window_title: Option<String>,
     stale: bool,
     catalogs: Vec<PathBuf>,
     smoke: Option<PathBuf>,
@@ -278,6 +279,7 @@ impl App {
             status: "準備完了".into(),
             error: None,
             dirty: false,
+            last_window_title: None,
             stale: false,
             catalogs: Vec::new(),
             smoke: None,
@@ -490,6 +492,7 @@ impl eframe::App for App {
         if !ctx.input(|i| i.pointer.any_down()) && !ctx.wants_keyboard_input() {
             self.commit_edit();
         }
+        self.update_window_title(ctx);
         self.smoke(ctx);
         let dropped = ctx.input(|i| i.raw.dropped_files.first().and_then(|f| f.path.clone()));
         if let Some(path) = dropped {

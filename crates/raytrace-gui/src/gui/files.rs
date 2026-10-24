@@ -3,37 +3,14 @@ use super::*;
 
 impl App {
     pub(super) fn toolbar(&mut self, ctx: &egui::Context) {
+        self.update_window_title(ctx);
         egui::TopBottomPanel::top("toolbar")
-            .exact_height(72.0)
-            .frame(egui::Frame::new().fill(BG_PANEL).inner_margin(16.0))
+            .exact_height(TOOLBAR_HEIGHT)
+            .frame(theme::toolbar_frame())
             .show(ctx, |ui| {
-                ui.horizontal_centered(|ui| {
-                    ui.label(egui::RichText::new("●").color(PRIMARY).size(SIZE_HEADING_M));
-                    ui.label(
-                        egui::RichText::new("Raytrace")
-                            .color(TEXT)
-                            .size(SIZE_TITLE)
-                            .family(egui::FontFamily::Name("bold".into())),
-                    );
-                    ui.add_space(12.0);
-                    let title = format!(
-                        "{}{}",
-                        self.project.scene.name,
-                        if self.dirty { " •" } else { "" }
-                    );
-                    ui.add_sized(
-                        [(ui.available_width() - 420.0).clamp(60.0, 360.0), 24.0],
-                        egui::Label::new(
-                            egui::RichText::new(title)
-                                .size(SIZE_CAPTION)
-                                .color(TEXT_MUTED),
-                        )
-                        .truncate(),
-                    )
-                    .on_hover_text(self.path.as_ref().map_or_else(
-                        || "保存先：未設定".into(),
-                        |p| format!("保存先：{}", p.display()),
-                    ));
+                ui.horizontal(|ui| {
+                    theme::tab(ui, &mut self.view, View::Layout, "光学系");
+                    theme::tab(ui, &mut self.view, View::Screen, "スクリーン");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if theme::primary_scope(ui, |ui| {
                             ui.add_enabled(
@@ -49,7 +26,7 @@ impl App {
                                     .color(TEXT_ON_PRIMARY)
                                     .font(theme::bold_font(SIZE_BODY)),
                                 )
-                                .min_size(Vec2::new(118.0, 32.0)),
+                                .min_size(Vec2::new(PRIMARY_BUTTON_WIDTH, CONTROL_HEIGHT)),
                             )
                         })
                         .clicked()
@@ -68,37 +45,20 @@ impl App {
                             self.details = Some(Details::Calculation);
                         }
                         ui.add_enabled_ui(self.job.is_none(), |ui| {
-                            if ui
-                                .add_enabled(self.history.can_redo(), egui::Button::new("↷"))
-                                .on_hover_text("やり直す · Ctrl+Shift+Z / Ctrl+Y")
+                            if theme::history_button(ui, self.history.can_redo(), "↷")
+                                .on_hover_text("やり直す (Ctrl+Y)")
                                 .clicked()
                             {
                                 self.redo();
                             }
-                            if ui
-                                .add_enabled(self.history.can_undo(), egui::Button::new("↶"))
-                                .on_hover_text("元に戻す · Ctrl+Z")
+                            if theme::history_button(ui, self.history.can_undo(), "↶")
+                                .on_hover_text("元に戻す (Ctrl+Z)")
                                 .clicked()
                             {
                                 self.undo();
                             }
                             ui.menu_button("ファイル", |ui| self.file_menu(ui, ctx));
                         });
-                    });
-                });
-            });
-        egui::TopBottomPanel::top("workspace_tabs")
-            .exact_height(50.0)
-            .frame(
-                egui::Frame::new()
-                    .fill(BG_PANEL)
-                    .inner_margin(egui::Margin::symmetric(18, 7)),
-            )
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    theme::tab(ui, &mut self.view, View::Layout, "光学系");
-                    theme::tab(ui, &mut self.view, View::Screen, "スクリーン");
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.study.manifest.is_some() && ui.small_button("走査結果").clicked()
                         {
                             self.study.open = true;
@@ -106,6 +66,19 @@ impl App {
                     });
                 });
             });
+    }
+
+    pub(super) fn update_window_title(&mut self, ctx: &egui::Context) {
+        let name = if self.project.scene.name.trim().is_empty() {
+            "新規の光学系"
+        } else {
+            &self.project.scene.name
+        };
+        let title = format!("{}{name} — Raytrace", if self.dirty { "*" } else { "" });
+        if self.last_window_title.as_ref() != Some(&title) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.last_window_title = Some(title);
+        }
     }
 
     fn file_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -347,4 +320,89 @@ impl App {
 
 fn optics_dialog() -> rfd::FileDialog {
     rfd::FileDialog::new().add_filter("Optics", &["zmx", "ZMX", "json"])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gui::test_support::*;
+
+    fn titles(output: &egui::FullOutput) -> Vec<&str> {
+        output.viewport_output[&egui::ViewportId::ROOT]
+            .commands
+            .iter()
+            .filter_map(|cmd| match cmd {
+                egui::ViewportCommand::Title(title) => Some(title.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn toolbar_has_one_row_without_app_or_project_labels() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut app = App::demo();
+        frame(&mut app, &ctx, vec![]);
+        let out = frame(&mut app, &ctx, vec![]);
+        let text = visible_text(&out);
+        assert!(!text.contains(&"Raytrace"));
+        assert!(!text.contains(&"●"));
+        assert!(!text.contains(&app.project.scene.name.as_str()));
+        let calculate = text_rect(&out, "▶  計算する").unwrap();
+        let mut previous = None;
+        for label in [
+            "光学系",
+            "スクリーン",
+            "ファイル",
+            "↶",
+            "↷",
+            "計算設定",
+            "▶  計算する",
+        ] {
+            let rect = text_rect(&out, label).unwrap();
+            assert!(rect.y_range().intersects(calculate.y_range()), "{label}");
+            assert!(rect.bottom() <= TOOLBAR_HEIGHT);
+            if let Some(x) = previous {
+                assert!(rect.left() > x, "{label}");
+            }
+            previous = Some(rect.right());
+        }
+        let height = ctx
+            .read_response(egui::Id::new("toolbar"))
+            .unwrap()
+            .rect
+            .height();
+        assert_eq!(height, TOOLBAR_HEIGHT);
+    }
+
+    #[test]
+    fn window_title_tracks_existing_dirty_history_and_only_sends_changes() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut app = App::demo();
+        let name = app.project.scene.name.clone();
+        let out = frame(&mut app, &ctx, vec![]);
+        assert_eq!(titles(&out), [format!("{name} — Raytrace")]);
+        assert!(titles(&frame(&mut app, &ctx, vec![])).is_empty());
+        app.changed();
+        let out = frame(&mut app, &ctx, vec![]);
+        assert_eq!(titles(&out), [format!("*{name} — Raytrace")]);
+        app.undo();
+        let out = frame(&mut app, &ctx, vec![]);
+        assert_eq!(titles(&out), [format!("{name} — Raytrace")]);
+        app.redo();
+        let out = frame(&mut app, &ctx, vec![]);
+        assert_eq!(titles(&out), [format!("*{name} — Raytrace")]);
+        app.mark_saved();
+        let out = frame(&mut app, &ctx, vec![]);
+        assert_eq!(titles(&out), [format!("{name} — Raytrace")]);
+        app.project.scene.name = "別の光学系".into();
+        let out = frame(&mut app, &ctx, vec![]);
+        assert_eq!(titles(&out), ["別の光学系 — Raytrace"]);
+        app.project.scene.name.clear();
+        let out = frame(&mut app, &ctx, vec![]);
+        assert_eq!(titles(&out), ["新規の光学系 — Raytrace"]);
+        assert!(titles(&frame(&mut app, &ctx, vec![])).is_empty());
+    }
 }

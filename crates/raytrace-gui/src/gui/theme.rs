@@ -75,13 +75,39 @@ pub const SIZE_BODY: f32 = 14.0;
 pub const SIZE_BODY_LARGE: f32 = 16.0;
 pub const SIZE_HEADING_S: f32 = 16.0;
 pub const SIZE_HEADING_M: f32 = 18.0;
-pub const SIZE_TITLE: f32 = 20.0;
 pub const SPACE_1: f32 = 4.0;
 pub const SPACE_2: f32 = 8.0;
 pub const SPACE_3: f32 = 12.0;
 pub const SPACE_4: f32 = 16.0;
 pub const SPACE_6: f32 = 24.0;
 pub const SPACE_8: f32 = 32.0;
+pub const CONTROL_HEIGHT: f32 = SPACE_8;
+pub const TOOLBAR_HEIGHT: f32 = CONTROL_HEIGHT + SPACE_2 * 2.0;
+pub const PRIMARY_BUTTON_WIDTH: f32 = 118.0;
+
+pub fn toolbar_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(BG_PANEL)
+        .inner_margin(egui::Margin::symmetric(SPACE_4 as i8, SPACE_2 as i8))
+}
+
+pub fn history_button(ui: &mut egui::Ui, enabled: bool, glyph: &str) -> egui::Response {
+    ui.add_enabled_ui(enabled, |ui| {
+        let response = ui.add(egui::Button::new("").min_size(Vec2::splat(CONTROL_HEIGHT)));
+        // Hack's arrow ink occupies only a small fraction of its line box. Paint it
+        // independently so the visible arrow is body-sized without raising the row.
+        ui.painter().text(
+            response.rect.center(),
+            egui::Align2::CENTER_CENTER,
+            glyph,
+            FontId::proportional(SPACE_8),
+            ui.style().interact(&response).text_color(),
+        );
+        response
+    })
+    .inner
+}
+
 pub const RADIUS_CONTROL: u8 = 6;
 pub const RADIUS_PANEL: u8 = 8;
 
