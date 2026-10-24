@@ -1,4 +1,6 @@
 use super::components::short_name;
+
+const FWHM_HELP: &str = "赤破線：各断面の最大値の50%とその交点。画素中心の値を線形補間。複数の山がある場合は主ピーク周囲の幅です。";
 use super::*;
 use raytrace_core::screen::Profile;
 
@@ -66,10 +68,13 @@ impl App {
             self.detector = self.detector.min(r.report.detectors.len() - 1);
             egui::ComboBox::from_id_salt("detector")
                 .width(230.0)
-                .selected_text(short_name(&r.report.detectors[self.detector].name, 26))
+                .selected_text(short_name(
+                    &detector_label(&r.scene, &r.report.detectors[self.detector]),
+                    26,
+                ))
                 .show_ui(ui, |ui| {
                     for (i, d) in r.report.detectors.iter().enumerate() {
-                        ui.selectable_value(&mut self.detector, i, &d.name);
+                        ui.selectable_value(&mut self.detector, i, detector_label(&r.scene, d));
                     }
                 });
             if old != self.detector {
@@ -92,11 +97,6 @@ impl App {
             .show(ui, |ui| {
                 draw_detector(ui, ctx, r, self.detector, height, &mut self.screen_display);
                 ui.add_space(8.0);
-                ui.label(
-                    egui::RichText::new(format!("基準面：{} = 100%", r.scene.reference_plane))
-                        .size(SIZE_CAPTION)
-                        .color(TEXT_MUTED),
-                );
                 if self.stale {
                     ui.label(egui::RichText::new("前回の計算結果を表示中").color(TEXT_MUTED));
                 }
@@ -134,8 +134,16 @@ fn draw_detector(
                 ScreenNormalization::Reference => "基準光量比 [%]",
             })
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut display.normalization, ScreenNormalization::Peak, "ピーク = 1");
-                ui.selectable_value(&mut display.normalization, ScreenNormalization::Reference, "基準光量比 [%]");
+                ui.selectable_value(
+                    &mut display.normalization,
+                    ScreenNormalization::Peak,
+                    "ピーク = 1",
+                );
+                ui.selectable_value(
+                    &mut display.normalization,
+                    ScreenNormalization::Reference,
+                    "基準光量比 [%]",
+                );
             });
         egui::ComboBox::from_id_salt("screen_scale")
             .width(65.0)
@@ -148,23 +156,74 @@ fn draw_detector(
                 ui.selectable_value(&mut display.scale, ScreenScale::SquareRoot, "平方根");
             });
         ui.checkbox(&mut display.half_maximum, "半値幅")
-            .on_hover_text("最大画素を通るX・Y断面の半値交点を表示します。複数の山がある場合は主ピーク周囲の幅です。");
+            .on_hover_text(FWHM_HELP);
         ui.checkbox(&mut display.profiles, "断面");
-        ui.menu_button("表示範囲",|ui| {
-            let mut fixed=display.maximum_percent.is_some();
-            if ui.checkbox(&mut fixed,"基準光量比の上端を固定").changed() {display.maximum_percent=fixed.then_some(1.0);display.normalization=ScreenNormalization::Reference;}
-            if let Some(v)=&mut display.maximum_percent {ui.add(egui::DragValue::new(v).range(1e-10..=100.0).speed(0.01).suffix(" %"));}
+        ui.menu_button("表示範囲", |ui| {
+            let mut fixed = display.maximum_percent.is_some();
+            if ui.checkbox(&mut fixed, "基準光量比の上端を固定").changed() {
+                display.maximum_percent = fixed.then_some(1.0);
+                display.normalization = ScreenNormalization::Reference;
+            }
+            if let Some(v) = &mut display.maximum_percent {
+                ui.add(
+                    egui::DragValue::new(v)
+                        .range(1e-10..=100.0)
+                        .speed(0.01)
+                        .suffix(" %"),
+                );
+            }
         });
-        ui.menu_button("断面位置・ROI",|ui| {
-            let map=&result.report.detectors[index];
-            let [hx,hy]=map.half_extent_mm;
-            let mut cursor=display.cursor_mm.is_some();
-            if ui.checkbox(&mut cursor,"断面位置を指定").changed() {display.cursor_mm=cursor.then_some([0.,0.]);display.profiles=true;}
-            if let Some(c)=&mut display.cursor_mm {ui.horizontal(|ui|{ui.label("X");ui.add(egui::DragValue::new(&mut c[0]).range(-hx..=hx).speed(hx/100.).suffix(" mm"));ui.label("Y");ui.add(egui::DragValue::new(&mut c[1]).range(-hy..=hy).speed(hy/100.).suffix(" mm"));});ui.label("最も近い画素列を表示します。");}
-            let mut roi=display.roi.is_some();
-            if ui.checkbox(&mut roi,"ROIの光量を表示").changed() {display.roi=roi.then_some(raytrace_core::screen::ScreenRoi{minimum_mm:[-hx/2.,-hy/2.],maximum_mm:[hx/2.,hy/2.]});}
-            if let Some(r)=&mut display.roi {
-                for a in 0..2 {ui.horizontal(|ui|{ui.label(["X","Y"][a]);ui.add(egui::DragValue::new(&mut r.minimum_mm[a]).speed(map.half_extent_mm[a]/100.).suffix(" mm"));ui.label("〜");ui.add(egui::DragValue::new(&mut r.maximum_mm[a]).speed(map.half_extent_mm[a]/100.).suffix(" mm"));});}
+        ui.menu_button("断面位置・ROI", |ui| {
+            let map = &result.report.detectors[index];
+            let [hx, hy] = map.half_extent_mm;
+            let mut cursor = display.cursor_mm.is_some();
+            if ui.checkbox(&mut cursor, "断面位置を指定").changed() {
+                display.cursor_mm = cursor.then_some([0., 0.]);
+                display.profiles = true;
+            }
+            if let Some(c) = &mut display.cursor_mm {
+                ui.horizontal(|ui| {
+                    ui.label("X");
+                    ui.add(
+                        egui::DragValue::new(&mut c[0])
+                            .range(-hx..=hx)
+                            .speed(hx / 100.)
+                            .suffix(" mm"),
+                    );
+                    ui.label("Y");
+                    ui.add(
+                        egui::DragValue::new(&mut c[1])
+                            .range(-hy..=hy)
+                            .speed(hy / 100.)
+                            .suffix(" mm"),
+                    );
+                });
+                ui.label("最も近い画素列を表示します。");
+            }
+            let mut roi = display.roi.is_some();
+            if ui.checkbox(&mut roi, "ROIの光量を表示").changed() {
+                display.roi = roi.then_some(raytrace_core::screen::ScreenRoi {
+                    minimum_mm: [-hx / 2., -hy / 2.],
+                    maximum_mm: [hx / 2., hy / 2.],
+                });
+            }
+            if let Some(r) = &mut display.roi {
+                for a in 0..2 {
+                    ui.horizontal(|ui| {
+                        ui.label(["X", "Y"][a]);
+                        ui.add(
+                            egui::DragValue::new(&mut r.minimum_mm[a])
+                                .speed(map.half_extent_mm[a] / 100.)
+                                .suffix(" mm"),
+                        );
+                        ui.label("〜");
+                        ui.add(
+                            egui::DragValue::new(&mut r.maximum_mm[a])
+                                .speed(map.half_extent_mm[a] / 100.)
+                                .suffix(" mm"),
+                        );
+                    });
+                }
             }
         });
     });
@@ -237,13 +296,6 @@ fn draw_detector(
                     }
                     ui.add_space(10.0);
                 }
-                ui.label(
-                    egui::RichText::new(
-                        "赤破線：各断面の最大値の50%とその交点。画素中心の値を線形補間。",
-                    )
-                    .size(SIZE_CAPTION)
-                    .color(TEXT_MUTED),
-                );
             } else {
                 ui.label("受光がありません。");
             }
@@ -261,16 +313,12 @@ fn draw_detector(
         match &result.roi_cache.as_ref().unwrap().1 {
             Ok(r) => {
                 ui.label(format!(
-                    "ROI {:.5}%（基準光量比） · 面積 {:.4} mm² · 平均 {:.5} %/mm²",
+                    "ROI {:.2}% · 面積 {:.4} mm² · 平均 {:.2} %/mm²",
                     r.percent_of_reference, r.area_mm2, r.percent_of_reference_per_mm2
+                )).on_hover_text(format!(
+                    "基準光量比：ROI {}% · 平均 {} %/mm²\nROI端の画素は重なる面積で按分。画素内の光量密度を一定とする後処理です。",
+                    r.percent_of_reference, r.percent_of_reference_per_mm2
                 ));
-                ui.label(
-                    egui::RichText::new(
-                        "ROI端の画素は重なる面積で按分。画素内の光量密度を一定とする後処理です。",
-                    )
-                    .size(SIZE_CAPTION)
-                    .color(TEXT_MUTED),
-                );
             }
             Err(e) => {
                 ui.label(e);
@@ -345,9 +393,9 @@ pub(super) fn draw_detector_map(
         };
         let label = match display.normalization {
             ScreenNormalization::Peak => format!("{value:.1}"),
-            ScreenNormalization::Reference => format!("{value:.3}%"),
+            ScreenNormalization::Reference => format!("{value:.2}%"),
         };
-        painter.text(
+        let label_rect = painter.text(
             Pos2::new(
                 colorbar.right() + 5.0,
                 colorbar.bottom() - size.y * fraction as f32,
@@ -357,6 +405,14 @@ pub(super) fn draw_detector_map(
             egui::FontId::proportional(SIZE_CAPTION),
             TEXT_MUTED,
         );
+        if display.normalization == ScreenNormalization::Reference {
+            ui.interact(
+                label_rect,
+                ui.id().with(("colorbar", fraction.to_bits())),
+                egui::Sense::hover(),
+            )
+            .on_hover_text(format!("基準光量比：{value}%"));
+        }
     }
     if display.half_maximum {
         draw_half_width_guides(&painter, rect, analysis, [hx, hy]);
@@ -385,7 +441,7 @@ pub(super) fn draw_detector_map(
     }
     ui.label(
         egui::RichText::new(format!(
-            "X ±{hx:.3} / Y ±{hy:.3} mm  ·  画素 {:.4} × {:.4} mm",
+            "画素 {:.4} × {:.4} mm",
             analysis.pixel_pitch_mm[0], analysis.pixel_pitch_mm[1],
         ))
         .size(SIZE_CAPTION)
@@ -393,13 +449,18 @@ pub(super) fn draw_detector_map(
     );
     ui.label(
         egui::RichText::new(format!(
-            "このスクリーン {:.3}%  ·  最大画素 {:.5}%（基準光量比）",
+            "受光 {:.2}%  ·  最大画素 {:.2}%",
             100.0 * map.weights.iter().sum::<f64>() / reference,
             100.0 * peak / reference,
         ))
         .size(SIZE_CAPTION)
         .color(TEXT_MUTED),
-    );
+    )
+    .on_hover_text(format!(
+        "基準光量比：受光 {}% · 最大画素 {}%",
+        100.0 * map.weights.iter().sum::<f64>() / reference,
+        100.0 * peak / reference,
+    ));
     if display.half_maximum {
         let width = |axis: &str, p: &Option<Profile>| match p {
             None => format!("{axis}: 受光なし"),
@@ -408,11 +469,16 @@ pub(super) fn draw_detector_map(
                 None => format!("{axis}: 半値交点不足"),
             },
         };
-        ui.label(egui::RichText::new(format!(
-            "FWHM  {}  /  {}",
-            width("X", &analysis.x_profile), width("Y", &analysis.y_profile)
-        )).size(SIZE_CAPTION).color(viz::HALF_COLOR))
-            .on_hover_text("画素中心の値を線形補間した幅です。平滑化は行いません。半値の交点が両側で得られると幅を表示します。");
+        ui.label(
+            egui::RichText::new(format!(
+                "FWHM  {}  /  {}",
+                width("X", &analysis.x_profile),
+                width("Y", &analysis.y_profile)
+            ))
+            .size(SIZE_CAPTION)
+            .color(viz::HALF_COLOR),
+        )
+        .on_hover_text(FWHM_HELP);
         if [&analysis.x_profile, &analysis.y_profile]
             .iter()
             .any(|p| p.as_ref().is_some_and(|p| p.half_maximum.multiple_lobes))
@@ -506,11 +572,7 @@ pub(super) fn draw_profile(
     reference: f64,
 ) {
     let maximum = display.maximum_weight(peak, reference).max(1e-300);
-    let top = match display.normalization {
-        ScreenNormalization::Peak => "1.0".into(),
-        ScreenNormalization::Reference => format!("{:.5}%", maximum * 100.0 / reference),
-    };
-    ui.label(format!("{axis}断面 · 上端 {top}"));
+    ui.label(format!("{axis}断面"));
     let plot_height = ((ui.ctx().screen_rect().height() - 480.0) * 0.5).clamp(96.0, 170.0);
     let (rect, _) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), plot_height),
@@ -565,4 +627,79 @@ pub(super) fn draw_profile(
         egui::FontId::proportional(SIZE_CAPTION),
         TEXT_MUTED,
     );
+}
+
+fn detector_label(scene: &Scene, map: &raytrace_core::trace::DetectorMap) -> String {
+    let Some((number, rest)) = map.name.split_once(':') else {
+        return map.name.clone();
+    };
+    let Some((component, surface)) = rest.split_once(" / ") else {
+        return map.name.clone();
+    };
+    let prefix = format!("{number}:{component} / ");
+    let count = scene
+        .surfaces
+        .iter()
+        .filter(|s| {
+            s.name.starts_with(&prefix) && matches!(s.interaction, Interaction::Detector { .. })
+        })
+        .count();
+    if count > 1 {
+        format!("{number} {component} · {surface}")
+    } else {
+        format!("{number} {component}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gui::test_support::*;
+
+    #[test]
+    fn screen_uses_figures_and_hover_for_repeated_facts() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut app = App::demo();
+        calculate_demo(&mut app);
+        app.view = View::Screen;
+        app.screen_display.profiles = true;
+        for _ in 0..3 {
+            frame(&mut app, &ctx, vec![]);
+        }
+        let out = frame(&mut app, &ctx, vec![]);
+        let text = visible_text(&out);
+        for removed in ["上端", "±", "赤破線", "基準面："] {
+            assert!(
+                !text.iter().any(|s| s.contains(removed)),
+                "{removed}: {text:?}"
+            );
+        }
+        assert!(text.contains(&"X断面"));
+        assert!(text.contains(&"Y断面"));
+        assert!(text.iter().any(|s| s.starts_with("受光 ")));
+        assert!(text.iter().any(|s| s.starts_with("画素 ")));
+    }
+
+    #[test]
+    fn detector_labels_only_disambiguate_multiple_surfaces() {
+        let mut app = App::demo();
+        calculate_demo(&mut app);
+        let result = app.result.as_mut().unwrap();
+        let map = &mut result.report.detectors[0];
+        map.name = "4:スクリーン / 検出面".into();
+        let mut surface = result
+            .scene
+            .surfaces
+            .iter()
+            .find(|s| matches!(s.interaction, Interaction::Detector { .. }))
+            .unwrap()
+            .clone();
+        surface.name = map.name.clone();
+        result.scene.surfaces = vec![surface.clone()];
+        assert_eq!(detector_label(&result.scene, map), "4 スクリーン");
+        surface.name = "4:スクリーン / 裏面".into();
+        result.scene.surfaces.push(surface);
+        assert_eq!(detector_label(&result.scene, map), "4 スクリーン · 検出面");
+    }
 }

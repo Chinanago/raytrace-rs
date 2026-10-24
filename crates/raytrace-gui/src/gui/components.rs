@@ -93,11 +93,12 @@ impl App {
             .show(ui, |ui| {
                 let c = &mut assembly.components[self.component];
                 ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(kind_label(c.kind))
-                            .family(egui::FontFamily::Name("bold".into()))
-                            .color(TEXT),
-                    );
+                    changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut c.name)
+                                .desired_width(ui.available_width() - SPACE_8 * 2.0),
+                        )
+                        .changed();
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.menu_button("操作", |ui| {
                             if ui.button("この部品の値を走査…").clicked() {
@@ -115,9 +116,6 @@ impl App {
                         });
                     });
                 });
-                changed |= ui
-                    .add(egui::TextEdit::singleline(&mut c.name).desired_width(f32::INFINITY))
-                    .changed();
                 ui.add_space(8.0);
                 changed |= pose_controls(ui, &mut c.pose);
                 ui.label(
@@ -458,6 +456,29 @@ fn detector_controls(ui: &mut egui::Ui, surface: &mut Surface) -> bool {
 mod tests {
     use super::*;
     use crate::gui::test_support::*;
+    #[test]
+    fn selected_component_name_has_no_repeated_section_heading() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut app = App::demo();
+        app.component = 2;
+        app.project.assembly.as_mut().unwrap().components[2].name = "ロッド".into();
+        for _ in 0..3 {
+            frame(&mut app, &ctx, vec![]);
+        }
+        let out = frame(&mut app, &ctx, vec![]);
+        let text = visible_text(&out);
+        assert_eq!(
+            text.iter().filter(|s| **s == "ロッド").count(),
+            1,
+            "{text:?}"
+        );
+        assert!(text.contains(&"03  ロッド"));
+        let field = text_rect(&out, "ロッド").unwrap();
+        let operations = text_rect(&out, "操作").unwrap();
+        assert!(field.y_range().intersects(operations.y_range()));
+    }
+
     #[test]
     fn workspace_switches_and_part_selection_preserve_the_optical_system() {
         let ctx = egui::Context::default();

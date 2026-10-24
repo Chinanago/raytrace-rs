@@ -58,3 +58,38 @@ pub(super) fn click(app: &mut App, ctx: &egui::Context, p: Pos2) -> egui::FullOu
         }],
     )
 }
+
+pub(super) fn calculate_demo(app: &mut App) {
+    use raytrace_core::trace::{trace, TraceOptions};
+    let mut scene = app.project.trace_scene().unwrap();
+    for source in &mut scene.sources {
+        source.count = 64;
+    }
+    let prepared = scene.clone().prepare().unwrap();
+    let rays = prepared.generate_rays().unwrap();
+    app.result = Some(ResultView {
+        revision: app.history.revision,
+        calculation: RunContext::capture(&app.project, &scene, None, 1, TraceOptions::default()),
+        scene,
+        report: trace(&prepared, &rays, TraceOptions::default()),
+        seconds: 0.0,
+        texture: None,
+        screen: None,
+        roi_cache: None,
+    });
+}
+
+pub(super) fn visible_text(output: &egui::FullOutput) -> Vec<&str> {
+    output
+        .shapes
+        .iter()
+        .filter_map(|s| match &s.shape {
+            egui::Shape::Text(t)
+                if egui::Rect::from_min_size(t.pos, t.galley.size()).intersects(s.clip_rect) =>
+            {
+                Some(t.galley.job.text.as_str())
+            }
+            _ => None,
+        })
+        .collect()
+}

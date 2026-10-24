@@ -334,6 +334,33 @@ pub fn tab<T: PartialEq>(
     response
 }
 
+/// DADS-style inline notification; status colour is reserved for the icon.
+pub fn notification(ui: &mut egui::Ui, error: bool, message: &str) -> bool {
+    let (background, icon) = if error {
+        (status::ERROR_SUBTLE, status::ERROR_ICON)
+    } else {
+        (status::WARNING_SUBTLE, status::WARNING_PANEL_ICON)
+    };
+    egui::Frame::new()
+        .fill(background)
+        .corner_radius(RADIUS_PANEL)
+        .inner_margin(SPACE_3)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(if error { "✕" } else { "!" })
+                        .color(icon)
+                        .font(bold_font(SIZE_BODY_LARGE)),
+                );
+                ui.label(RichText::new(message).color(TEXT));
+                ui.button("確認").clicked()
+            })
+            .inner
+        })
+        .inner
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,6 +458,8 @@ mod tests {
         {
             check(color, BG_CANVAS, 3.0);
         }
+        check(status::ERROR_ICON, status::ERROR_SUBTLE, 3.0);
+        check(status::WARNING_PANEL_ICON, status::WARNING_SUBTLE, 3.0);
         check(FOCUS_RING, FOCUS_INNER, 3.0);
     }
 

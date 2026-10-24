@@ -451,8 +451,9 @@ impl eframe::App for App {
                         if let Some(r) = &self.result {
                             ui.label(
                                 egui::RichText::new(format!(
-                                    "{} 本 · {:.2} ms",
+                                    "{} 本 · {} 面 · {:.2} ms",
                                     r.calculation.input_count(),
+                                    r.scene.surfaces.len(),
                                     r.seconds * 1000.0
                                 ))
                                 .size(SIZE_CAPTION)

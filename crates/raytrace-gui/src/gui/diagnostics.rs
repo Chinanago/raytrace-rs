@@ -80,11 +80,11 @@ impl App {
             ui.label(egui::RichText::new(if report.traceable { "指定した条件で計算できます" } else { "計算前に確認が必要な項目があります" })
                 .color(if report.traceable { SUCCESS } else { WARNING }));
             for component in report.components {
+                let has_issues = component.entries.iter().any(|e| import_entry_needs_review(&self.project, &component, e));
+                ui.horizontal(|ui| {
                 egui::CollapsingHeader::new(format!("{}{}", component.name, if component.enabled { "" } else { "（使用停止）" }))
-                    .id_salt(("compatibility", component.component)).default_open(true).show(ui, |ui| {
-                    for entry in &component.entries {
-                        ui.label(egui::RichText::new(format!("{} · {}", entry.status.label(), entry.code)).size(SIZE_CAPTION).color(
-                            if entry.status.blocks() && component.enabled { WARNING } else { TEXT_MUTED }));
+                    .id_salt(("compatibility", component.component)).default_open(has_issues).show(ui, |ui| {
+                    for entry in component.entries.iter().filter(|e| e.code != "model") {
                         ui.label(egui::RichText::new(&entry.message).size(SIZE_BODY_LARGE));
                     }
                     egui::CollapsingHeader::new("計算波長・屈折率・吸収").id_salt(("optics", component.component)).show(ui, |ui| {
@@ -97,6 +97,8 @@ impl App {
                             }
                         }
                     });
+                });
+                if !has_issues { ui.label(theme::muted("問題なし")); }
                 });
             }
             section_label(ui, "材料・コーティングカタログ");
@@ -128,44 +130,45 @@ impl App {
         ui.add_space(8.0);
         ui.label(format!("基準面：{} = 100%", r.scene.reference_plane));
         ui.add_space(10.0);
+        let rows = [
+            ("スクリーン合計", b.detected),
+            ("追跡領域外", b.escaped),
+            ("幾何学的な枠外・外れ", b.geometric_miss),
+            (
+                "逐次追跡で追わない界面反射",
+                b.sequential_reflection_not_followed,
+            ),
+            ("全反射（シーケンシャル）", b.sequential_tir),
+            ("界面での吸収", b.surface_absorbed),
+            ("材料内部での吸収", b.bulk_absorbed),
+            ("分岐・深さの打切り", b.branch_cutoff + b.interaction_limit),
+            ("未解決の交差", b.numerical_failure),
+            ("媒質の不整合", b.medium_mismatch),
+        ];
         egui::Grid::new("budget")
             .num_columns(2)
             .min_col_width(260.0)
             .min_row_height(SIZE_BODY + SPACE_1)
             .spacing([SPACE_6, SPACE_2])
             .show(ui, |ui| {
-                for (label, value) in [
-                    ("スクリーン合計", b.detected),
-                    ("追跡領域外", b.escaped),
-                    ("幾何学的な枠外・外れ", b.geometric_miss),
-                    (
-                        "逐次追跡で追わない界面反射",
-                        b.sequential_reflection_not_followed,
-                    ),
-                    ("全反射（シーケンシャル）", b.sequential_tir),
-                    ("界面での吸収", b.surface_absorbed),
-                    ("材料内部での吸収", b.bulk_absorbed),
-                    ("分岐・深さの打切り", b.branch_cutoff + b.interaction_limit),
-                    ("未解決の交差", b.numerical_failure),
-                    ("媒質の不整合", b.medium_mismatch),
-                    ("合計", b.accounted()),
-                ] {
-                    ui.label(label);
-                    ui.label(format!("{:.4}%", value * 100.0 / reference));
+                for &(label, value) in rows.iter().filter(|(_, value)| *value != 0.0) {
+                    budget_row(ui, label, value * 100.0 / reference);
+                }
+                let zeros = rows.iter().filter(|(_, value)| *value == 0.0).count();
+                if zeros > 0 {
+                    egui::CollapsingHeader::new(format!("その他 0%（{zeros} 項目）"))
+                        .id_salt("zero_budget")
+                        .show(ui, |ui| {
+                            egui::Grid::new("zero_budget_rows").show(ui, |ui| {
+                                for &(label, _) in rows.iter().filter(|(_, value)| *value == 0.0) {
+                                    budget_row(ui, label, 0.0);
+                                }
+                            });
+                        });
                     ui.end_row();
                 }
+                budget_row(ui, "合計", b.accounted() * 100.0 / reference);
             });
-        ui.add_space(12.0);
-        ui.label(
-            egui::RichText::new(format!(
-                "{} 本 · {:.2} ms · {} 面",
-                r.calculation.input_count(),
-                r.seconds * 1000.0,
-                r.scene.surfaces.len()
-            ))
-            .size(SIZE_CAPTION)
-            .color(TEXT_MUTED),
-        );
         section_label(ui, "追跡の診断");
         let fallbacks = r
             .report
@@ -201,9 +204,10 @@ impl App {
                 "interaction_limit" => "回数上限の打切り",
                 _ => &d.reason,
             };
+            let percent = d.weight * 100.0 / reference;
             egui::CollapsingHeader::new(format!(
-                "{reason} · {:.6}% · {name}",
-                d.weight * 100.0 / reference
+                "{reason} · {} · {name}",
+                display_percent(percent)
             ))
             .id_salt(("diagnostic", i))
             .show(ui, |ui| {
@@ -250,12 +254,18 @@ impl App {
                 {
                     locate = d.surface;
                 }
-            });
+            })
+            .header_response
+            .on_hover_text(format!("{percent:.6}%"));
         }
         if r.report.diagnostic_overflow.branch_count > 0 {
             ui.label(format!(
-                "代表例の保存上限を超えた診断：{} 分岐 · {:.6}%",
+                "代表例の保存上限を超えた診断：{} 分岐 · {}",
                 r.report.diagnostic_overflow.branch_count,
+                display_percent(r.report.diagnostic_overflow.weight * 100.0 / reference)
+            ))
+            .on_hover_text(format!(
+                "{:.6}%",
                 r.report.diagnostic_overflow.weight * 100.0 / reference
             ));
         }
@@ -281,11 +291,138 @@ impl App {
     }
 }
 
+fn display_percent(value: f64) -> String {
+    if value > 0.0 && value < 0.005 {
+        "<0.01%".into()
+    } else {
+        format!("{value:.2}%")
+    }
+}
+fn budget_row(ui: &mut egui::Ui, label: &str, percent: f64) {
+    ui.label(label);
+    ui.label(display_percent(percent))
+        .on_hover_text(format!("{percent:.6}%"));
+    ui.end_row();
+}
+
+fn import_entry_needs_review(
+    project: &Project,
+    component: &raytrace_io::compatibility::ComponentCompatibility,
+    entry: &raytrace_io::compatibility::CompatibilityEntry,
+) -> bool {
+    use raytrace_io::compatibility::CompatibilityStatus;
+    if matches!(entry.code.as_str(), "model" | "barrel") {
+        return false;
+    }
+    let source = component
+        .component
+        .and_then(|i| project.assembly.as_ref()?.components.get(i))
+        .map_or(project, |c| &c.project);
+    entry.status != CompatibilityStatus::Computed
+        || source.issues.iter().any(|i| i.code == entry.code)
+}
+
+impl App {
+    pub(super) fn import_notification(&mut self, ui: &mut egui::Ui) {
+        let report = self.project.compatibility_report();
+        let entries: Vec<_> = report
+            .components
+            .iter()
+            .filter(|c| c.enabled)
+            .flat_map(|c| {
+                c.entries
+                    .iter()
+                    .filter(|e| import_entry_needs_review(&self.project, c, e))
+            })
+            .collect();
+        if !entries.is_empty() {
+            let error = entries.iter().any(|e| e.status.blocks());
+            if theme::notification(
+                ui,
+                error,
+                &format!("読込で確認が必要な項目が {} 件あります", entries.len()),
+            ) {
+                self.details = Some(Details::Import);
+            }
+            ui.add_space(SPACE_2);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::gui::test_support::*;
     use raytrace_core::trace::{trace, TraceOptions};
+    #[test]
+    fn percentages_keep_small_positive_values_visible() {
+        for (value, expected) in [
+            (0.0, "0.00%"),
+            (0.000019, "<0.01%"),
+            (0.004999, "<0.01%"),
+            (0.005, "0.01%"),
+            (86.934, "86.93%"),
+        ] {
+            assert_eq!(display_percent(value), expected);
+        }
+    }
+
+    #[test]
+    fn zero_budget_rows_are_collapsed_and_expand_to_the_full_list() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.style_mut(|s| s.animation_time = 0.0);
+        let mut app = App::demo();
+        calculate_demo(&mut app);
+        app.details = Some(Details::Budget);
+        for _ in 0..3 {
+            frame(&mut app, &ctx, vec![]);
+        }
+        let out = frame(&mut app, &ctx, vec![]);
+        let text = visible_text(&out);
+        let label = text.iter().find(|s| s.starts_with("その他 0%（")).unwrap();
+        assert!(!text.contains(&"媒質の不整合"));
+        assert!(text.contains(&"合計"));
+        let pos = text_rect(&out, label).unwrap().center();
+        click(&mut app, &ctx, pos);
+        let out = frame(&mut app, &ctx, vec![]);
+        assert!(visible_text(&out).contains(&"媒質の不整合"));
+    }
+
+    #[test]
+    fn import_notification_is_only_shown_for_issues_and_opens_the_report() {
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        let mut app = App::demo();
+        let out = frame(&mut app, &ctx, vec![]);
+        assert!(!visible_text(&out).iter().any(|s| s.contains("読込で確認")));
+        assert!(text_rect(&out, "読込レポート").is_none());
+        for blocking in [false, true] {
+            app.details = None;
+            app.project.assembly.as_mut().unwrap().components[0]
+                .project
+                .issues = vec![raytrace_io::project::Issue {
+                code: "unsupported_test".into(),
+                message: "読込の確認が必要です".into(),
+                blocking,
+            }];
+            let out = frame(&mut app, &ctx, vec![]);
+            assert!(text_rect(&out, "読込で確認が必要な項目が 1 件あります").is_some());
+            let pos = text_rect(&out, "確認").unwrap().center();
+            click(&mut app, &ctx, pos);
+            assert_eq!(app.details, Some(Details::Import));
+            for _ in 0..3 {
+                frame(&mut app, &ctx, vec![]);
+            }
+            let out = frame(&mut app, &ctx, vec![]);
+            assert!(text_rect(&out, "読込の確認が必要です").is_some());
+            assert!(text_rect(&out, "問題なし").is_some());
+            assert!(!visible_text(&out)
+                .iter()
+                .any(|s| s.contains("計算対応 ·") || s.contains("unsupported_test")));
+        }
+    }
+
     #[test]
     fn diagnostic_navigation_selects_the_component_without_changing_the_model() {
         let ctx = egui::Context::default();
@@ -307,8 +444,8 @@ mod tests {
         let report = trace(&prepared, &rays, TraceOptions::default());
         assert_eq!(report.diagnostics[0].reason, "medium_mismatch");
         let label = format!(
-            "媒質の不整合 · {:.6}% · {}",
-            report.diagnostics[0].weight * 100.0 / report.budget.launched,
+            "媒質の不整合 · {} · {}",
+            display_percent(report.diagnostics[0].weight * 100.0 / report.budget.launched),
             scene.surfaces[report.diagnostics[0].surface.unwrap()].name
         );
         let before = serde_json::to_value(&app.project).unwrap();

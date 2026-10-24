@@ -2,6 +2,8 @@ use super::components::kind_label;
 use super::*;
 use raytrace_core::geometry::sag;
 
+const LAYOUT_HELP: &str = "丸印をドラッグして配置 · ホイールで拡大 · 背景をドラッグして表示を移動";
+
 impl App {
     pub(super) fn layout_view(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
@@ -14,11 +16,12 @@ impl App {
                         ui.selectable_value(&mut self.projection, i, *t);
                     }
                 });
-            ui.checkbox(&mut self.show_rays, "光線");
+            ui.checkbox(&mut self.show_rays, "光線")
+                .on_hover_text("光路は表示用のサンプルです（光源ごとの上限は計算設定で確認）");
             if ui.small_button("選択へ").clicked() {
                 self.camera.request = Some(CameraRequest::Selected);
             }
-            if ui.small_button("全体").clicked() {
+            if ui.small_button("全体").on_hover_text(LAYOUT_HELP).clicked() {
                 self.camera.request = Some(CameraRequest::All);
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -117,6 +120,7 @@ fn draw_paths(
         Vec2::new(ui.available_width(), height),
         egui::Sense::click_and_drag(),
     );
+    let response = response.on_hover_text(LAYOUT_HELP);
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 6.0, BG_CANVAS);
     let axes = [(2, 0), (2, 1), (0, 1)][projection];
@@ -426,18 +430,9 @@ fn draw_paths(
     painter.text(
         rect.left_top() + Vec2::new(8.0, 7.0),
         egui::Align2::LEFT_TOP,
-        format!("{} [mm]  ·  光路は表示用サンプル", ["X", "Y", "Z"][axes.1]),
+        format!("{} [mm]", ["X", "Y", "Z"][axes.1]),
         egui::FontId::proportional(SIZE_CAPTION),
         TEXT_MUTED,
-    );
-    ui.label(
-        egui::RichText::new(if markers.is_empty() {
-            "ホイールで拡大 · 背景をドラッグして表示を移動"
-        } else {
-            "丸印をドラッグして配置 · ホイールで拡大 · 背景をドラッグして表示を移動"
-        })
-        .size(SIZE_CAPTION)
-        .color(TEXT_MUTED),
     );
     let mut action = None;
     if editable && response.clicked_by(egui::PointerButton::Primary) {

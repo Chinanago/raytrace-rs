@@ -6,6 +6,7 @@ impl App {
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(BG_CANVAS).inner_margin(20.0))
             .show(ctx, |ui| {
+                self.import_notification(ui);
                 if self.stale {
                     ui.horizontal(|ui| {
                         ui.colored_label(

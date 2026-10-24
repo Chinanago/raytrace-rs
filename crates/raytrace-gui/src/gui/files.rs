@@ -99,19 +99,9 @@ impl App {
                     theme::tab(ui, &mut self.view, View::Layout, "光学系");
                     theme::tab(ui, &mut self.view, View::Screen, "スクリーン");
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("読込レポート").clicked() {
-                            self.details = Some(Details::Import);
-                        }
                         if self.study.manifest.is_some() && ui.small_button("走査結果").clicked()
                         {
                             self.study.open = true;
-                        }
-                        if !self.project.issues.is_empty() {
-                            ui.label(
-                                egui::RichText::new(format!("{} 件", self.project.issues.len()))
-                                    .size(SIZE_CAPTION)
-                                    .color(TEXT_MUTED),
-                            );
                         }
                     });
                 });
