@@ -12,7 +12,7 @@ pub(super) struct Glass {
     text: String,
 }
 impl Glass {
-    fn material(&self) -> Result<Material> {
+    pub(super) fn material(&self) -> Result<Material> {
         if !self.errors.is_empty() {
             return Err(crate::Error::Agf(format!(
                 "{}: {}",

@@ -150,7 +150,42 @@ cargo run --release --example validation_suite -- results/validation
 python scripts/zemax_exchange_probe.py --input results/validation/even_asphere/even_asphere.zmx --rays results/validation/even_asphere/reference.json --output results/validation/even_asphere/opticstudio
 ```
 
-解析解との比較・Rust内のZMX往復保存と、OpticStudio実機との照合は別の検証です。生成したケースの実機照合状態は `not_run` から始まります。Pythonプローブは軸上Standard／Even Asphereの波長別・面別の交点と方向を比較し、許容差を超えると失敗します。Fresnel光量・光学距離・NSC分岐の実機照合は別途必要です。
+解析解との比較・Rust内のZMX往復保存と、OpticStudio実機との照合は別の検証です。生成したケースの実機照合状態は `not_run` から始まります。Pythonプローブは軸上Standard／Even Asphereの波長別・面別の交点と方向を比較し、許容差を超えると失敗します。光学距離の実機照合は別途必要です。Fresnel光量・NSC分岐・検出器マップの照合は次節のNSC比較器を使います。
+
+### NSCの検出器照度・光量収支
+
+`examples/nsc_reference.rs` と `scripts/opticstudio_nsc_probe.py` は、共通の `fixture.json` から両側のモデルを個別に構築します。NSCオブジェクトを相互にインポートする検証ではありません。SCHOTTのN-BK7は実行時にZemaxのGlasscatから読み、分散と内部透過率による吸収を使用します。カタログを別の場所に置く場合は `RAYTRACE_GLASSCAT` を指定してください。
+
+```powershell
+# 最初に少数光線で構築・画素方向を確認
+cargo run --release --locked --example nsc_reference -- prepare results/nsc_smoke --rays 20000 --budget-rays 5000
+uv run --no-project --python 3.12 --with pythonnet python scripts/opticstudio_nsc_probe.py --input results/nsc_smoke --rays 20000 --budget-rays 5000
+cargo run --release --locked --example nsc_reference -- compare results/nsc_smoke
+
+# 既定値：マップ100万光線、保存光線による収支10万光線
+cargo run --release --locked --example nsc_reference -- prepare results/nsc_reference
+uv run --no-project --python 3.12 --with pythonnet python scripts/opticstudio_nsc_probe.py --input results/nsc_reference
+cargo run --release --locked --example nsc_reference -- compare results/nsc_reference
+```
+
+Python側の `--fixture NAME` で対象を限定できます。光線数を変える場合はRust側のprepareとPython側を同じ数で実行します。OpticStudioの接続・ライセンス障害は `status.json` の `failure_kind` に記録します。トレースには時間上限を設け、例外時もツールとアプリケーションを閉じます。
+
+| fixture | 条件 | モード |
+| --- | --- | --- |
+| diode_direct | 550 nm、X/Y発散8°/20°、X偏心+0.5 mm、50 mm先の検出器 | geometric |
+| lens_focus | N-BK7両凸レンズ、R=±50 mm、厚さ6 mm、半径10 mm | geometric 450/550/650 nm、fresnel 550 nm |
+| rod_homogenizer | 4×4×40 mmのN-BK7ロッド、X/Y発散10°/25° | geometric/fresnel、出口と20 mm後方 |
+| tilted_window | X軸まわり30°傾斜、厚さ3 mmのN-BK7平行平板 | fresnel |
+
+検出器は64×64画素の吸収型です。ロッド出口と後方の検出器は別トレースで測定します。各画素の値は積分光量で、照度は画素面積で割った値です。配列はXを先に進める行優先で、最初の画素は負のX/Y側です。OpticStudioの既定Pixel Interpolationは隣接画素へ光量を配分するため、比較では明示的にOFFにします。Standard Lensのclearとedgeの半径は同一とし、Rust側は球面2面とリムを結ぶ側面で構築します。Rectangular Volumeはassemblyの6平面ロッドで構築します。オブジェクトの回転はZemaxのintrinsic XYZに合わせます。
+
+geometricではRustの反射率を0とし、OpticStudioの偏光・分岐を無効にします。屈折と全反射は残ります。ただし実機2026 R1.02では偏光OFFにするとバルク吸収も無効になるため、RustもgeometricではAGFの内部吸収を0にします。geometricは形状・分散・全反射・画素集計の照合に限り、内部吸収はfresnelで照合します。fresnelでは偏光・分岐を有効にし、ランダム偏光、散乱なし、IgnoreErrors=True、相対強度閾値1e-7、絶対強度閾値0、交点数128、セグメント数4096を設定します。IgnoreErrors=Falseでは微小な交点誤差で全トレースが途中終了してもツール成功となる場合があるため、Trueで続行し、DeadRayErrorsとZRDのエラーを光量収支に記録します。温度20℃・圧力1 atmで環境による屈折率補正を無効にし、カタログの空気に対する相対屈折率を使用します。Rustも媒質0をn=1とし、同じ相対屈折率を使用します。
+
+Rustは各界面でS/P反射率を独立に平均します。OpticStudioは偏光状態を追跡するため、複数界面を通過した光量に差が生じます。傾斜平板については独立平均とS/P保存の両方の解析値を `material_info.json` に残します。550 nm・30°平板で両モデルの透過率差は約0.000508であり、光量許容差の絶対項0.001以内です。このモデル差を統計誤差として隠さず、比較結果と併記します。
+
+比較器は独立な疑似乱数seed A/Bを使用します。正規化マップL1の許容差は `1.5 * L1(A,B) + 0.005`、重心・RMS幅はseed差から求めた3σと半画素の大きい方、光量比は二項近似とseed差の大きい方の3σに絶対差0.001を加えます。重心とRMSは画素中心から算出します。ピーク画素も記録します。`opticstudio.json` がないfixtureは `not_run`、比較した指標が許容差を超えた場合は終了コード1です。
+
+各fixtureに `rust_seed_A.json`、`rust_seed_B.json`、`opticstudio.json`、`comparison.json` を保存し、全体は `summary.json` に集計します。Rustの全Budgetと投入光量、画素寸法、API設定の読み戻し、実機版、所要時間を残します。保存ZRDはZOS-API readerで読み、分類根拠と未対応理由を `opticstudio.json` に記録します。detectedは吸収検出器の総光量とZRD終端和、escapedはRayErrorなし・SegTerminatedかつHitObject=0のセグメント、branch_cutoffはDeadRayThresholdに対応します。無コーティング・散乱なし・エラーなし・未知終端なしの場合に限り、投入光量から検出・脱出・閾値損失を引いた残差をbulk_absorbedとします。surface_absorbedは無コーティング誘電体で0です。RayErrorとDeadRayErrorsがともに0の場合はerrorsとinteraction_limitを0として比較できます。非0の場合は両者を区別できないため未比較とします。傾斜板では透過・反射脱出・バルク吸収を多重反射込みの解析解とも比較します。界面で両子枝が閾値以下になると入射セグメントが終端となる場合があるため、2枝分の閾値以内の微小終端はDeadRayThresholdの内訳として扱います。それを超える未知終端があればbulk_absorbedは未比較とします。対応できない収支項目は `not_compared` であり、合格を意味しません。生成ZMX、ZRD、AGFを含む成果物はgit管理対象外の `results/` に置きます。
 
 ## リポジトリ構成
 

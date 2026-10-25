@@ -19,6 +19,7 @@ FILES = {
     "scripts/package_windows.py",
     "scripts/third_party_notices.toml",
     "scripts/check_publish.py", "scripts/zemax_exchange_probe.py",
+    "scripts/opticstudio_nsc_probe.py", "examples/nsc_reference.rs",
     "scripts/benchmark_compare.py",
     "skills/raytrace-rs/SKILL.md", "skills/raytrace-rs/LICENSE",
     "skills/raytrace-rs/agents/openai.yaml", "skills/raytrace-rs/references/workflows.md",
