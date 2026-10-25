@@ -458,24 +458,46 @@ fn trace_mode<I: Iterator<Item = Result<Ray>>, const SEQUENTIAL: bool, const PAC
             let mut packet_optics: [Vec<(f64, f64)>; crate::packet::WIDTH] = Default::default();
             let mut failed_packets = 0;
             let mut scalar_cooldown: usize = 0;
+            let mut cooldown_window: usize = 256;
             while let Some((position, ray)) = chunk.next() {
                 if control.is_some_and(|c| c.cancel.load(Ordering::Relaxed)) {
                     return Ok(None);
                 }
                 let ray = ray?;
-                let mut launches = [ray; crate::packet::WIDTH];
-                let mut count = 1;
-                if scalar_cooldown == 0 {
-                    for launch in &mut launches[1..] {
-                        if let Some((_, next)) = chunk.next() {
-                            *launch = next?;
-                            count += 1;
-                        } else {
-                            break;
+                if scalar_cooldown > 0 {
+                    // No SoA gather or packet bookkeeping in an incoherent run.
+                    let record_paths =
+                        ((chunk_index * chunk_size + position) as u64) < options.path_launch_count;
+                    let optics = cache.get(scene, ray.wavelength_um);
+                    trace_one::<SEQUENTIAL, false>(
+                        scene,
+                        ray,
+                        &mut report,
+                        options,
+                        record_paths,
+                        optics,
+                        &mut traversal,
+                        None,
+                    );
+                    if let Some(c) = control {
+                        completed += 1;
+                        if completed == 256 {
+                            c.completed.fetch_add(completed, Ordering::Relaxed);
+                            completed = 0;
                         }
                     }
-                } else {
                     scalar_cooldown -= 1;
+                    continue;
+                }
+                let mut launches = [ray; crate::packet::WIDTH];
+                let mut count = 1;
+                for launch in &mut launches[1..] {
+                    if let Some((_, next)) = chunk.next() {
+                        *launch = next?;
+                        count += 1;
+                    } else {
+                        break;
+                    }
                 }
                 let mixed = launches[..count]
                     .iter()
@@ -512,12 +534,15 @@ fn trace_mode<I: Iterator<Item = Result<Ray>>, const SEQUENTIAL: bool, const PAC
                 if count == crate::packet::WIDTH {
                     if cached {
                         failed_packets = 0;
+                        cooldown_window = 256;
                     } else {
                         failed_packets += 1;
                         // Repeated aperture misses or exceptional geometry are
-                        // cheaper on the scalar path. Probe again after 256 rays.
+                        // cheaper on the scalar path. Back off repeated probes
+                        // while allowing a later coherent source to recover.
                         if failed_packets == 4 {
-                            scalar_cooldown = 256;
+                            scalar_cooldown = cooldown_window;
+                            cooldown_window = (cooldown_window * 4).min(4096);
                             failed_packets = 0;
                         }
                     }
