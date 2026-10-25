@@ -7,6 +7,7 @@ pub mod illumination;
 pub mod math;
 pub mod mesh;
 pub mod model;
+mod packet;
 pub mod sampling;
 pub mod screen;
 pub mod spectrum;

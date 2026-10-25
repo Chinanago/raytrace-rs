@@ -163,6 +163,10 @@ impl Frame {
     pub(crate) fn plane_normal(&self) -> V3 {
         self.plane_normal
     }
+    #[cfg(target_arch = "x86_64")]
+    pub(crate) fn axes(&self) -> [V3; 3] {
+        self.axes
+    }
     pub fn local_vector(&self, v: V3) -> V3 {
         V3(self.axes.map(|axis| axis.dot(v)))
     }
