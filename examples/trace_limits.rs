@@ -2,7 +2,7 @@
 use raytrace_rs::{
     geometry,
     record::{RunContext, RunRecord},
-    trace::{trace, TraceOptions},
+    trace::{TraceOptions, trace},
 };
 use std::{fs, path::PathBuf, time::Instant};
 fn main() -> Result<(), Box<dyn std::error::Error>> {

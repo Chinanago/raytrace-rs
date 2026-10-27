@@ -2,7 +2,7 @@ use raytrace_rs::{
     math::V3,
     model::*,
     project::Project,
-    trace::{trace, TraceOptions},
+    trace::{TraceOptions, trace},
     zemax,
 };
 use std::{
@@ -81,7 +81,9 @@ fn sequential_edits_preserve_coating_notes_and_merit_records() {
 }
 
 fn diode() -> String {
-    let mut text=String::from("MODE NSC\nUNIT MM\nWAVM 1 0.55 1\nPWAV 1\nSURF 1\n TYPE NONSEQCO\n NSOH NSC_SDIO 0 0 Source\n NSOP 0 0 0 0 0 0\n");
+    let mut text = String::from(
+        "MODE NSC\nUNIT MM\nWAVM 1 0.55 1\nPWAV 1\nSURF 1\n TYPE NONSEQCO\n NSOH NSC_SDIO 0 0 Source\n NSOP 0 0 0 0 0 0\n",
+    );
     for (k, v) in [
         (3, 1.0),
         (6, 0.0),
@@ -129,9 +131,10 @@ fn native_source_diode_angular_distribution_and_detector() {
     let rms = |v: &Vec<f64>| (v.iter().map(|x| x * x).sum::<f64>() / v.len() as f64).sqrt();
     assert!((rms(&x) - 5.0).abs() < 0.12);
     assert!((rms(&y) - 10.0).abs() < 0.25);
-    assert!(rays
-        .iter()
-        .all(|r| r.position_mm.0[0].abs() <= 0.01 && r.position_mm.0[1].abs() <= 0.01));
+    assert!(
+        rays.iter()
+            .all(|r| r.position_mm.0[0].abs() <= 0.01 && r.position_mm.0[1].abs() <= 0.01)
+    );
     let report = trace(&scene, &rays, TraceOptions::default());
     assert!((report.budget.detected - 1.0).abs() < 1e-8);
 }

@@ -63,7 +63,7 @@ fn coating_bytes(c: &raytrace_core::coating::Coating) -> usize {
         + c.back.as_ref().map_or(0, size)
 }
 fn scene_bytes(scene: &Scene) -> usize {
-    scene.sources.len() * std::mem::size_of::<Source>()
+    scene.sources.len() * size_of::<Source>()
         + scene
             .sources
             .iter()
@@ -75,7 +75,7 @@ fn scene_bytes(scene: &Scene) -> usize {
             .surfaces
             .iter()
             .map(|s| {
-                std::mem::size_of::<Surface>()
+                size_of::<Surface>()
                     + s.name.len()
                     + s.coating.as_ref().map_or(0, coating_bytes)
                     + match &s.shape {
@@ -84,7 +84,7 @@ fn scene_bytes(scene: &Scene) -> usize {
                             triangles,
                             normals,
                         } => {
-                            (vertices.len() + normals.len()) * std::mem::size_of::<V3>()
+                            (vertices.len() + normals.len()) * size_of::<V3>()
                                 + triangles.len() * 12
                         }
                         Shape::EvenAsphere { coefficients, .. }
@@ -192,7 +192,7 @@ impl App {
         self.dirty = false;
     }
     pub(super) fn history_shortcuts(&mut self, ctx: &egui::Context) {
-        if self.job.is_some() || ctx.wants_keyboard_input() {
+        if self.job.is_some() || ctx.egui_wants_keyboard_input() {
             return;
         }
         let redo = ctx.input_mut(|i| {
@@ -220,7 +220,7 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use raytrace_core::trace::{trace, TraceOptions};
+    use raytrace_core::trace::{TraceOptions, trace};
     #[test]
     fn edits_coalesce_until_release_and_undo_restores_the_matching_result_revision() {
         let mut app = App::demo();

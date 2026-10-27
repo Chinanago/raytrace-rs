@@ -13,7 +13,7 @@ impl App {
         let mut compare = false;
         egui::Window::new("パラメーター走査")
             .vscroll(true)
-            .max_height((ctx.screen_rect().height() - 70.0).max(300.0))
+            .max_height((ctx.content_rect().height() - 70.0).max(300.0))
             .open(&mut open)
             .default_width(860.0)
             .default_height(620.0)
@@ -28,10 +28,10 @@ impl App {
                     }
                     if self.job.is_some() {
                         ui.spinner();
-                        if let Some(c) = &self.control {
-                            if ui.button("中止").clicked() {
-                                c.cancel.store(true, Ordering::Relaxed);
-                            }
+                        if let Some(c) = &self.control
+                            && ui.button("中止").clicked()
+                        {
+                            c.cancel.store(true, Ordering::Relaxed);
                         }
                     }
                 });
@@ -60,10 +60,10 @@ impl App {
                                     }
                                 });
 
-                            if old != self.study.parameter {
-                                if let Some(p) = self.study.parameter.clone() {
-                                    self.set_study_parameter(p);
-                                }
+                            if old != self.study.parameter
+                                && let Some(p) = self.study.parameter.clone()
+                            {
+                                self.set_study_parameter(p);
                             }
                             let suffix = self.study.parameter.as_ref().map_or("", unit);
                             ui.horizontal(|ui| {
@@ -88,7 +88,7 @@ impl App {
                             egui::CollapsingHeader::new("2軸の走査・値の連動").show(ui, |ui| {
                                 let options = parameters(&self.project);
                                 let mut enabled = self.study.secondary.is_some();
-                                if ui.checkbox(&mut enabled, "第2軸を追加").changed() {
+                                if checkbox(ui, &mut enabled, "第2軸を追加").changed() {
                                     self.study.secondary = if enabled {
                                         options
                                             .iter()
@@ -161,35 +161,28 @@ impl App {
                                     self.study.links.remove(i);
                                 }
                                 if ui.small_button("距離・差分を保つ連動を追加").clicked()
+                                    && let Some(source) = self.study.parameter.clone()
+                                    && let Some(target) = options
+                                        .iter()
+                                        .find(|p| {
+                                            **p != source
+                                                && p.unit() == source.unit()
+                                                && Some(*p) != self.study.secondary.as_ref()
+                                                && !self.study.links.iter().any(|l| l.target == **p)
+                                        })
+                                        .cloned()
                                 {
-                                    if let Some(source) = self.study.parameter.clone() {
-                                        if let Some(target) = options
-                                            .iter()
-                                            .find(|p| {
-                                                **p != source
-                                                    && p.unit() == source.unit()
-                                                    && Some(*p) != self.study.secondary.as_ref()
-                                                    && !self
-                                                        .study
-                                                        .links
-                                                        .iter()
-                                                        .any(|l| l.target == **p)
-                                            })
-                                            .cloned()
-                                        {
-                                            let offset = target.value(&self.project).unwrap_or(0.)
-                                                - source.value(&self.project).unwrap_or(0.);
-                                            self.study.links.push(ParameterLink {
-                                                source,
-                                                target,
-                                                scale: 1.,
-                                                offset,
-                                            });
-                                        }
-                                    }
+                                    let offset = target.value(&self.project).unwrap_or(0.)
+                                        - source.value(&self.project).unwrap_or(0.);
+                                    self.study.links.push(ParameterLink {
+                                        source,
+                                        target,
+                                        scale: 1.,
+                                        offset,
+                                    });
                                 }
                             });
-                            ui.checkbox(&mut self.study.use_current, "現在の光源本数を使用");
+                            checkbox(ui, &mut self.study.use_current, "現在の光源本数を使用");
                             if !self.study.use_current {
                                 ui.horizontal(|ui| {
                                     ui.label("各光源の本数");
@@ -208,10 +201,10 @@ impl App {
                                 .color(TEXT_MUTED),
                             );
                             ui.horizontal(|ui| {
-                                if ui.button("保存先…").clicked() {
-                                    if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                                        self.study.root = dir;
-                                    }
+                                if ui.button("保存先…").clicked()
+                                    && let Some(dir) = rfd::FileDialog::new().pick_folder()
+                                {
+                                    self.study.root = dir;
                                 }
                                 ui.label(self.study.root.display().to_string());
                             });
@@ -381,8 +374,8 @@ impl App {
             self.open_study(ctx);
         } else if compare {
             self.load_comparison(ctx);
-        } else if let Some(i) = selected_case.filter(|_| self.job.is_none()) {
-            if let Some(path) = self
+        } else if let Some(i) = selected_case.filter(|_| self.job.is_none())
+            && let Some(path) = self
                 .study
                 .manifest
                 .as_ref()
@@ -390,10 +383,9 @@ impl App {
                 .and_then(|c| c.run_file.as_ref())
                 .zip(self.study.directory.as_ref())
                 .map(|(file, dir)| dir.join(file))
-            {
-                self.load(path, ctx);
-                self.study.open = false;
-            }
+        {
+            self.load(path, ctx);
+            self.study.open = false;
         }
     }
 }

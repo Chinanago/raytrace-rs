@@ -550,14 +550,18 @@ mod tests {
     fn tolerances() {
         let a = map(vec![1., 0., 0., 0.]);
         let b = map(vec![0., 1., 0., 0.]);
-        assert!(compare_maps(&a, &a, &a, 1000, 1000, [1.; 3])
-            .unwrap()
-            .iter()
-            .all(|c| c.passed));
-        assert!(compare_maps(&a, &a, &b, 1000, 1000, [1.; 3])
-            .unwrap()
-            .iter()
-            .any(|c| !c.passed));
+        assert!(
+            compare_maps(&a, &a, &a, 1000, 1000, [1.; 3])
+                .unwrap()
+                .iter()
+                .all(|c| c.passed)
+        );
+        assert!(
+            compare_maps(&a, &a, &b, 1000, 1000, [1.; 3])
+                .unwrap()
+                .iter()
+                .any(|c| !c.passed)
+        );
         assert_eq!(power_tolerance(1., 1., 1000, 1000), 0.001);
         assert!(!Check::new("nan", f64::NAN, 1.).passed);
     }

@@ -38,7 +38,9 @@ pub fn index(formula: usize, a: &[f64], wavelength: f64) -> Option<f64> {
         }
         2 | 6 | 11 => (1.
             + a[..count]
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|s| s[0] * l2 / (l2 - s[1]))
                 .sum::<f64>())
         .sqrt(),

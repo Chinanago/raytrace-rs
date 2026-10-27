@@ -3,9 +3,9 @@ use raytrace_rs::{
     math::V3,
     model::{Mode, Ray, Scene},
     project::Project,
-    trace::{trace, TraceOptions},
+    trace::{TraceOptions, trace},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn near(a: f64, b: f64) {
     assert!((a - b).abs() < 1e-12, "{a} != {b}");
@@ -78,7 +78,7 @@ fn ideal_tir_uses_its_own_reflectance_and_absorption() {
 
 #[test]
 fn table_interpolates_wavelength_and_cosine_in_lower_index_medium() {
-    let text="TABLE TEST\nANGL 0\nWAVE 0.4 0.1 0.1 0.9 0.9\nWAVE 0.8 0.3 0.3 0.7 0.7\nANGL 60\nWAVE 0.4 0.3 0.3 0.7 0.7\nWAVE 0.8 0.5 0.5 0.5 0.5\n";
+    let text = "TABLE TEST\nANGL 0\nWAVE 0.4 0.1 0.1 0.9 0.9\nWAVE 0.8 0.3 0.3 0.7 0.7\nANGL 60\nWAVE 0.4 0.3 0.3 0.7 0.7\nWAVE 0.8 0.5 0.5 0.5 0.5\n";
     let c = parse_zemax(text, "TEST").unwrap().unwrap();
     near(c.front.evaluate(0.6, 0.75, 1., 1.5, false)[0], 0.3);
     let cos_high = (1. - (1. - 0.75f64.powi(2)) / 1.5f64.powi(2)).sqrt();
@@ -123,10 +123,12 @@ fn native_zmx_coating_is_saved_with_results_and_uncoated_override_is_explicit() 
     let mut p = Project::open(&path, &[]).unwrap();
     assert!(p.trace_scene().is_ok());
     let report = p.compatibility_report();
-    assert!(report.components[0]
-        .entries
-        .iter()
-        .any(|e| e.code == "coating_model"));
+    assert!(
+        report.components[0]
+            .entries
+            .iter()
+            .any(|e| e.code == "coating_model")
+    );
     let json_path = dir.join("project.json");
     p.save(&json_path).unwrap();
     std::fs::remove_file(dir.join("TEST.DAT")).unwrap();

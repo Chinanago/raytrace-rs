@@ -153,7 +153,7 @@ fn material_data(m: &Material) -> Result<(usize, Vec<f64>, [f64; 2])> {
         _ => {
             return Err(crate::Error::zmx(
                 "表形式の屈折率をAGF分散式へ厳密に変換できません。JSONで保存してください".into(),
-            ))
+            ));
         }
     })
 }
@@ -222,7 +222,9 @@ pub(super) fn recover(project: &Project, output: &Path) -> Result<Sidecars> {
                     .values()
                     .any(|r| !existing.contains(r.trim()))
                 {
-                    return Err(crate::Error::zmx(format!("保存先の{name}には元の材料定義が揃っていません。別フォルダーへ保存してください")));
+                    return Err(crate::Error::zmx(format!(
+                        "保存先の{name}には元の材料定義が揃っていません。別フォルダーへ保存してください"
+                    )));
                 }
             }
         }
@@ -269,7 +271,9 @@ pub(super) fn recover(project: &Project, output: &Path) -> Result<Sidecars> {
             .0
             .replace("\r\n", "\n");
             if definitions.values().any(|r| !existing.contains(r.trim())) {
-                return Err(crate::Error::zmx(format!("保存先の{name}は元のコーティング定義と異なります。別フォルダーへ保存してください")));
+                return Err(crate::Error::zmx(format!(
+                    "保存先の{name}は元のコーティング定義と異なります。別フォルダーへ保存してください"
+                )));
             }
         }
     }
@@ -286,27 +290,28 @@ pub(super) fn recover(project: &Project, output: &Path) -> Result<Sidecars> {
                 None
             };
         }
-        if w.starts_with(&["NSCS", "7", "3", "8"]) {
-            if let Some(spectrum) = source
+        if w.starts_with(&["NSCS", "7", "3", "8"])
+            && let Some(spectrum) = source
                 .and_then(|i| doc.baseline_scene.sources.get(i))
                 .and_then(|s| s.spectrum.as_ref())
-            {
-                let name = line
-                    .split('"')
-                    .nth(1)
-                    .ok_or_else(|| crate::Error::zmx("SPCDの参照ファイル名がありません".into()))?;
-                let relative = safe_relative(name)?;
-                if !from.join(relative).is_file() && !to.join(relative).is_file() {
-                    put(
-                        &mut files,
-                        to.join(relative),
-                        spectrum_text(spectrum, output)?,
-                    )?;
-                } else if !from.join(relative).is_file() && to.join(relative).is_file() {
-                    let existing = read_spcd(&to.join(relative))?;
-                    if existing.samples != spectrum.samples {
-                        return Err(crate::Error::zmx(format!("保存先の{name}は元のスペクトルと異なります。別フォルダーへ保存してください")));
-                    }
+        {
+            let name = line
+                .split('"')
+                .nth(1)
+                .ok_or_else(|| crate::Error::zmx("SPCDの参照ファイル名がありません".into()))?;
+            let relative = safe_relative(name)?;
+            if !from.join(relative).is_file() && !to.join(relative).is_file() {
+                put(
+                    &mut files,
+                    to.join(relative),
+                    spectrum_text(spectrum, output)?,
+                )?;
+            } else if !from.join(relative).is_file() && to.join(relative).is_file() {
+                let existing = read_spcd(&to.join(relative))?;
+                if existing.samples != spectrum.samples {
+                    return Err(crate::Error::zmx(format!(
+                        "保存先の{name}は元のスペクトルと異なります。別フォルダーへ保存してください"
+                    )));
                 }
             }
         }
@@ -362,27 +367,26 @@ pub(super) fn nsc_spectra(
         .zip(&original.baseline_scene.sources)
         .enumerate()
     {
-        if let Some(spectrum) = &s.spectrum {
-            if freeze_system_waves
-                || serde_json::to_value(&s.spectrum).ok() != serde_json::to_value(&b.spectrum).ok()
-            {
-                let name = format!(
-                    "{}.raytrace-source-{}.SPCD",
-                    output.file_stem().unwrap_or_default().to_string_lossy(),
-                    i + 1
-                );
-                put(
-                    files,
-                    output.with_file_name(&name),
-                    spectrum_text(spectrum, output)?,
-                )?;
-                plan.settings[i] = Some(format!(
-                    "  NSCS 7 3 8 0 0 0 {} {} {} \"{name}\"",
-                    spectrum.samples[0][0],
-                    spectrum.samples.last().unwrap()[0],
-                    spectrum.samples.len().max(3)
-                ));
-            }
+        if let Some(spectrum) = &s.spectrum
+            && (freeze_system_waves
+                || serde_json::to_value(&s.spectrum).ok() != serde_json::to_value(&b.spectrum).ok())
+        {
+            let name = format!(
+                "{}.raytrace-source-{}.SPCD",
+                output.file_stem().unwrap_or_default().to_string_lossy(),
+                i + 1
+            );
+            put(
+                files,
+                output.with_file_name(&name),
+                spectrum_text(spectrum, output)?,
+            )?;
+            plan.settings[i] = Some(format!(
+                "  NSCS 7 3 8 0 0 0 {} {} {} \"{name}\"",
+                spectrum.samples[0][0],
+                spectrum.samples.last().unwrap()[0],
+                spectrum.samples.len().max(3)
+            ));
         }
     }
     Ok(plan)

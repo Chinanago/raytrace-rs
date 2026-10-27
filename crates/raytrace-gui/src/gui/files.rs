@@ -2,21 +2,21 @@ use super::jobs::record_viewer_paths;
 use super::*;
 
 impl App {
-    pub(super) fn toolbar(&mut self, ctx: &egui::Context) {
+    pub(super) fn toolbar(&mut self, ui: &mut egui::Ui) {
+        let ctx = &ui.ctx().clone();
         self.update_window_title(ctx);
-        egui::TopBottomPanel::top("toolbar")
-            .exact_height(TOOLBAR_HEIGHT)
+        egui::Panel::top("toolbar")
+            .exact_size(TOOLBAR_HEIGHT)
             .show_separator_line(false)
-            .frame(theme::toolbar_frame())
-            .show(ctx, |ui| {
+            .frame(toolbar_frame())
+            .show(ui, |ui| {
                 let row = ui.max_rect().expand2(Vec2::new(SPACE_4, 0.0));
                 let mut selected = egui::Rect::NOTHING;
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Max), |ui| {
                     ui.set_height(TOOLBAR_HEIGHT);
-                    ui.spacing_mut().item_spacing.x = -theme::TAB_LINE_WIDTH;
-                    let layout = theme::tab(ui, &mut self.view, View::Layout, "光学系", BG_PANEL);
-                    let screen =
-                        theme::tab(ui, &mut self.view, View::Screen, "スクリーン", BG_CANVAS);
+                    ui.spacing_mut().item_spacing.x = -TAB_LINE_WIDTH;
+                    let layout = tab(ui, &mut self.view, View::Layout, "光学系", BG_PANEL);
+                    let screen = tab(ui, &mut self.view, View::Screen, "スクリーン", BG_CANVAS);
                     selected = if self.view == View::Layout {
                         layout.rect
                     } else {
@@ -24,7 +24,7 @@ impl App {
                     };
                     ui.spacing_mut().item_spacing.x = SPACE_2;
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if theme::primary_scope(ui, |ui| {
+                        if primary_scope(ui, |ui| {
                             ui.add_enabled(
                                 self.job.is_none() || self.control.is_some(),
                                 egui::Button::new(
@@ -36,7 +36,7 @@ impl App {
                                         "▶  計算する"
                                     })
                                     .color(TEXT_ON_PRIMARY)
-                                    .font(theme::bold_font(SIZE_BODY)),
+                                    .font(bold_font(SIZE_BODY)),
                                 )
                                 .min_size(Vec2::new(PRIMARY_BUTTON_WIDTH, CONTROL_HEIGHT)),
                             )
@@ -57,13 +57,13 @@ impl App {
                             self.details = Some(Details::Calculation);
                         }
                         ui.add_enabled_ui(self.job.is_none(), |ui| {
-                            if theme::history_button(ui, self.history.can_redo(), "↷")
+                            if history_button(ui, self.history.can_redo(), "↷")
                                 .on_hover_text("やり直す (Ctrl+Y)")
                                 .clicked()
                             {
                                 self.redo();
                             }
-                            if theme::history_button(ui, self.history.can_undo(), "↶")
+                            if history_button(ui, self.history.can_undo(), "↶")
                                 .on_hover_text("元に戻す (Ctrl+Z)")
                                 .clicked()
                             {
@@ -77,7 +77,7 @@ impl App {
                         }
                     });
                 });
-                theme::tab_baseline(ui, row, selected);
+                tab_baseline(ui, row, selected);
             });
     }
 
@@ -97,16 +97,16 @@ impl App {
     fn file_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         if ui.button("パラメーター走査…").clicked() {
             self.configure_study();
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("新規の光学系").clicked() {
             self.replace_project(Project::new_assembly(), Some(256), 0);
             self.changed();
             self.status = "部品を追加して光学系を組み立てます".into();
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("開く…").clicked() {
-            ui.close_menu();
+            ui.close();
             if let Some(path) = optics_dialog().pick_file() {
                 self.load(path, ctx);
             }
@@ -120,12 +120,12 @@ impl App {
                     .clicked()
                 {
                     self.load(path, ctx);
-                    ui.close_menu();
+                    ui.close();
                 }
             }
         });
         if ui.button("保存…").clicked() {
-            ui.close_menu();
+            ui.close();
             if let Some(path) = rfd::FileDialog::new()
                 .set_file_name("optics.raytrace.json")
                 .add_filter("Raytrace", &["json"])
@@ -147,7 +147,7 @@ impl App {
             .on_hover_text("計算時の部品・材料・光源条件と画素データを保存します")
             .clicked()
         {
-            ui.close_menu();
+            ui.close();
             if let Some(path) = rfd::FileDialog::new()
                 .set_file_name("calculation.raytrace-run.json")
                 .add_filter("Raytrace calculation", &["json"])
@@ -172,7 +172,7 @@ impl App {
             )
             .clicked()
         {
-            ui.close_menu();
+            ui.close();
             if let Some(parent) = rfd::FileDialog::new()
                 .set_title("スクリーンの出力先")
                 .pick_folder()
@@ -192,7 +192,7 @@ impl App {
             .on_hover_text("組立光学系はJSONプロジェクトで保存します")
             .clicked()
         {
-            ui.close_menu();
+            ui.close();
             if let Some(path) = rfd::FileDialog::new()
                 .set_file_name("optics_edited.zmx")
                 .add_filter("Zemax", &["zmx"])
@@ -209,7 +209,7 @@ impl App {
             if ui.button("光源＋レンズ＋ロッド").clicked() {
                 self.replace_project(assembly::demo_project().expect("assembly demo"), None, 2);
                 self.run(ctx);
-                ui.close_menu();
+                ui.close();
             }
             for (name, text) in [
                 (
@@ -232,7 +232,7 @@ impl App {
                         0,
                     );
                     self.run(ctx);
-                    ui.close_menu();
+                    ui.close();
                 }
             }
         });
@@ -264,7 +264,7 @@ impl App {
             ("レンズのZMX…", ComponentKind::Optic),
         ] {
             if ui.button(label).clicked() {
-                ui.close_menu();
+                ui.close();
                 if let Some(path) = optics_dialog().pick_file() {
                     self.add_file(path, kind, ctx);
                 }
@@ -276,11 +276,11 @@ impl App {
                 serde_json::from_str(include_str!("../../../../examples/integrator_rod.json"))
                     .unwrap();
             self.append_component(Component::rod(demo.materials[1].clone(), "Silica".into()));
-            ui.close_menu();
+            ui.close();
         }
         if ui.button("スクリーン").clicked() {
             self.append_component(Component::detector());
-            ui.close_menu();
+            ui.close();
         }
     }
 
@@ -354,7 +354,7 @@ mod tests {
     #[test]
     fn toolbar_has_one_row_without_app_or_project_labels() {
         let ctx = egui::Context::default();
-        theme::install(&ctx);
+        install(&ctx);
         let mut app = App::demo();
         frame(&mut app, &ctx, vec![]);
         let out = frame(&mut app, &ctx, vec![]);
@@ -381,10 +381,9 @@ mod tests {
             }
             previous = Some(rect.right());
         }
-        let height = ctx
-            .read_response(egui::Id::new("toolbar"))
+        let height = egui::PanelState::load(&ctx, ctx.viewport_id().root_ui_id().with("toolbar"))
             .unwrap()
-            .rect
+            .outer_rect
             .height();
         assert_eq!(height, TOOLBAR_HEIGHT);
     }
@@ -392,7 +391,7 @@ mod tests {
     #[test]
     fn toolbar_tabs_touch_content_and_actions_stay_centered() {
         let ctx = egui::Context::default();
-        theme::install(&ctx);
+        install(&ctx);
         let mut app = App::demo();
         for view in [View::Layout, View::Screen] {
             app.view = view;
@@ -408,7 +407,7 @@ mod tests {
                 .iter()
                 .filter_map(|s| match &s.shape {
                     egui::Shape::Rect(r)
-                        if r.rect.height() == theme::TAB_HEIGHT
+                        if r.rect.height() == TAB_HEIGHT
                             && r.rect.bottom() == TOOLBAR_HEIGHT
                             && r.corner_radius == egui::CornerRadius::ZERO =>
                     {
@@ -420,9 +419,11 @@ mod tests {
             assert_eq!(tabs.len(), 2);
             let active = usize::from(view == View::Screen);
             assert_eq!(tabs[active].fill, fill);
-            assert_eq!(tabs[0].rect.top(), TOOLBAR_HEIGHT - theme::TAB_HEIGHT);
-            let action = ctx.read_response(egui::Id::new("toolbar")).unwrap();
-            assert_eq!(action.rect.height(), TOOLBAR_HEIGHT);
+            assert_eq!(tabs[0].rect.top(), TOOLBAR_HEIGHT - TAB_HEIGHT);
+            let action =
+                egui::PanelState::load(&ctx, ctx.viewport_id().root_ui_id().with("toolbar"))
+                    .unwrap();
+            assert_eq!(action.outer_rect.height(), TOOLBAR_HEIGHT);
             let button = out
                 .shapes
                 .iter()
@@ -442,7 +443,7 @@ mod tests {
     #[test]
     fn window_title_tracks_existing_dirty_history_and_only_sends_changes() {
         let ctx = egui::Context::default();
-        theme::install(&ctx);
+        install(&ctx);
         let mut app = App::demo();
         let name = app.project.scene.name.clone();
         let out = frame(&mut app, &ctx, vec![]);

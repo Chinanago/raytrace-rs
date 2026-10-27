@@ -30,7 +30,11 @@ fn diode_native(astigmatism: f64) -> String {
     text
 }
 fn pupil_native(mode: usize, finite: bool) -> String {
-    format!("MODE SEQ\nUNIT MM\nGCAT own\nENPD 6\nRAIM {mode} 0 0\nFTYP {} 0 2 2\nXFLN 0 3\nYFLN 0 0\nFWGN 1 2\nWAVM 1 .45 1\nWAVM 2 .65 1\nPWAV 1\nSURF 0\nTYPE STANDARD\nDISZ {}\nSURF 1\nTYPE STANDARD\nCURV .05\nDIAM 5.5\nGLAS OWN 0 0\nDISZ 2\nSURF 2\nTYPE STANDARD\nCURV -.05\nDIAM 5.5\nDISZ 8\nSURF 3\nTYPE STANDARD\nSTOP\nDIAM 6\nDISZ 10\nSURF 4\nTYPE STANDARD\nDIAM 20\nDISZ 0\n",if finite {1}else{0},if finite {"50"}else{"INFINITY"})
+    format!(
+        "MODE SEQ\nUNIT MM\nGCAT own\nENPD 6\nRAIM {mode} 0 0\nFTYP {} 0 2 2\nXFLN 0 3\nYFLN 0 0\nFWGN 1 2\nWAVM 1 .45 1\nWAVM 2 .65 1\nPWAV 1\nSURF 0\nTYPE STANDARD\nDISZ {}\nSURF 1\nTYPE STANDARD\nCURV .05\nDIAM 5.5\nGLAS OWN 0 0\nDISZ 2\nSURF 2\nTYPE STANDARD\nCURV -.05\nDIAM 5.5\nDISZ 8\nSURF 3\nTYPE STANDARD\nSTOP\nDIAM 6\nDISZ 10\nSURF 4\nTYPE STANDARD\nDIAM 20\nDISZ 0\n",
+        if finite { 1 } else { 0 },
+        if finite { "50" } else { "INFINITY" }
+    )
 }
 
 pub fn scenes() -> Vec<(String, Scene)> {

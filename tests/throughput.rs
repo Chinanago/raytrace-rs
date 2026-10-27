@@ -1,7 +1,7 @@
 use raytrace_rs::{
     math::{Frame, Pose, V3},
     model::{Material, Mode, Ray, Scene},
-    trace::{trace, TraceOptions},
+    trace::{TraceOptions, trace},
 };
 use serde_json::json;
 

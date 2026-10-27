@@ -486,7 +486,7 @@ impl PreparedPupil {
                     _ => {
                         return Err(crate::Error::InvalidScene(
                             "Ray Aimingの局所的な光路を求められません".into(),
-                        ))
+                        ));
                     }
                 }
             }
@@ -505,16 +505,18 @@ impl PreparedPupil {
             for backtrack in 0..12 {
                 let rate = 0.5_f64.powi(backtrack);
                 let next = [q[0] - rate * delta[0], q[1] - rate * delta[1]];
-                if let Ok(h) = self.stop_hit(next, wavelength, self.object_origin, self.direction) {
-                    if (h[0] - target[0]).hypot(h[1] - target[1]) < norm {
-                        q = next;
-                        accepted = true;
-                        break;
-                    }
+                if let Ok(h) = self.stop_hit(next, wavelength, self.object_origin, self.direction)
+                    && (h[0] - target[0]).hypot(h[1] - target[1]) < norm
+                {
+                    q = next;
+                    accepted = true;
+                    break;
                 }
             }
             if !accepted {
-                return Err(crate::Error::InvalidScene(format!("Ray Aimingが収束しません（絞り上の誤差 {norm:.3e} mm）。瞳径・視野・STOP位置を確認してください")));
+                return Err(crate::Error::InvalidScene(format!(
+                    "Ray Aimingが収束しません（絞り上の誤差 {norm:.3e} mm）。瞳径・視野・STOP位置を確認してください"
+                )));
             }
         }
         Err(crate::Error::InvalidScene(

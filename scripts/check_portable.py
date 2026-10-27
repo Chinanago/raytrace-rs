@@ -11,7 +11,7 @@ import tomllib
 import zipfile
 
 from check_publish import embedded_document
-from package_windows import FILES, ROOT
+from package_windows import FILES, ROOT, dependency_notices
 
 
 def owned_step_box():
@@ -91,6 +91,9 @@ def check(archive, output):
                     raise ValueError(f"Package checksum mismatch: {name}")
                 if name.startswith("examples/") and embedded_document(json.loads(package.read(prefix + name))):
                     raise ValueError("Example contains an original optical document")
+            if package.read(prefix + "THIRD_PARTY_LICENSES.txt") != dependency_notices():
+                raise ValueError("Third-party notices do not match the resolved Windows dependencies")
+            checks.append("License texts for the complete resolved Windows dependency graph")
             package.extractall(destination)
         root = destination / prefix.rstrip("/")
         environment = os.environ.copy()

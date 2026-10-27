@@ -116,7 +116,7 @@ impl App {
 
 pub(super) fn section_label(ui: &mut egui::Ui, label: &str) {
     ui.add_space(10.0);
-    ui.label(theme::heading(label));
+    ui.label(heading(label));
 }
 
 pub(super) fn number_row(
@@ -357,7 +357,7 @@ pub(super) fn source_controls(
                         }
                         ui.label("物点のXY位置は視野角と入射瞳から決まります");
                     }
-                    if let raytrace_core::model::Aperture::Circle { radius_mm } = &mut p.aperture {
+                    if let Aperture::Circle { radius_mm } = &mut p.aperture {
                         changed |= number_row(ui, "入射瞳半径", radius_mm, " mm", 0.1, 1e-9..=1e9);
                     }
                 }
@@ -489,17 +489,19 @@ mod tests {
             assert_eq!(current.medium, old.medium);
             assert_eq!(current.wavelength_um, old.wavelength_um);
         }
-        assert!(project
-            .assembly
-            .as_ref()
-            .unwrap()
-            .components
-            .last()
-            .unwrap()
-            .project
-            .scene
-            .sources
-            .iter()
-            .all(|s| s.count == 1024));
+        assert!(
+            project
+                .assembly
+                .as_ref()
+                .unwrap()
+                .components
+                .last()
+                .unwrap()
+                .project
+                .scene
+                .sources
+                .iter()
+                .all(|s| s.count == 1024)
+        );
     }
 }

@@ -3,7 +3,7 @@ use raytrace_rs::{
     math::V3,
     model::Ray,
     project::Project,
-    trace::{trace, TraceOptions},
+    trace::{TraceOptions, trace},
     zemax,
 };
 use std::{fs, path::PathBuf};

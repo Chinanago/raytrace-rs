@@ -1,6 +1,6 @@
+use crate::Result;
 use crate::math::{Frame, Pose, V3};
 pub use crate::sampling::Sampling;
-use crate::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -250,7 +250,7 @@ impl Scene {
                     }
                 }
                 Material::Constant { n, .. } if !positive(*n) => {
-                    return Err(crate::Error::InvalidScene("屈折率が不正です".into()))
+                    return Err(crate::Error::InvalidScene("屈折率が不正です".into()));
                 }
                 Material::Sellmeier {
                     b,
@@ -311,7 +311,7 @@ impl Scene {
                         return Err(crate::Error::InvalidScene(format!(
                             "{}: コーティングには屈折界面、または透過率0のミラーを指定してください",
                             surface.name
-                        )))
+                        )));
                     }
                 }
             }
@@ -370,7 +370,7 @@ impl Scene {
                 {
                     return Err(crate::Error::InvalidScene(
                         "球面の開口半径は曲率半径の絶対値より小さくしてください".into(),
-                    ))
+                    ));
                 }
                 Shape::FlatEvenAsphere { coefficients }
                     if coefficients.len() > 8 || !coefficients.iter().all(|v| v.is_finite()) =>
@@ -415,7 +415,7 @@ impl Scene {
                 Interaction::Mirror { reflectance } if !fraction(reflectance) => {
                     return Err(crate::Error::InvalidScene(
                         "ミラーの反射率が不正です".into(),
-                    ))
+                    ));
                 }
                 Interaction::Detector { pixels } => {
                     if !matches!(surface.shape, Shape::Plane) || pixels.contains(&0) {

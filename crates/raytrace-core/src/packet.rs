@@ -1,5 +1,7 @@
 //! Four independent f64 rays in structure-of-arrays form. The scalar tracer
 //! replays successful packets in launch order, preserving every accumulation.
+#![allow(unsafe_code)]
+
 #[cfg(target_arch = "x86_64")]
 use crate::model::{Interaction, Shape};
 use crate::{
@@ -99,15 +101,18 @@ mod avx {
     impl F {
         #[inline(always)]
         fn splat(value: f64) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_set1_pd(value)) }
         }
         #[inline(always)]
         fn load(values: [f64; WIDTH]) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree. The four-element array is in bounds; loadu permits unaligned data.
             unsafe { Self(_mm256_loadu_pd(values.as_ptr())) }
         }
         #[inline(always)]
         fn array(self) -> [f64; WIDTH] {
             let mut result = [0.; WIDTH];
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree. The four-element destination is in bounds; storeu permits unaligned data.
             unsafe {
                 _mm256_storeu_pd(result.as_mut_ptr(), self.0);
             }
@@ -115,42 +120,52 @@ mod avx {
         }
         #[inline(always)]
         fn sqrt(self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_sqrt_pd(self.0)) }
         }
         #[inline(always)]
         fn abs(self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_andnot_pd(_mm256_set1_pd(-0.), self.0)) }
         }
         #[inline(always)]
         fn min(self, b: Self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_min_pd(self.0, b.0)) }
         }
         #[inline(always)]
         fn max(self, b: Self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_max_pd(self.0, b.0)) }
         }
         #[inline(always)]
         fn lt(self, b: Self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_cmp_pd::<_CMP_LT_OQ>(self.0, b.0)) }
         }
         #[inline(always)]
         fn le(self, b: Self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_cmp_pd::<_CMP_LE_OQ>(self.0, b.0)) }
         }
         #[inline(always)]
         fn eq(self, b: Self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_cmp_pd::<_CMP_EQ_OQ>(self.0, b.0)) }
         }
         #[inline(always)]
         fn or(self, b: Self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_or_pd(self.0, b.0)) }
         }
         #[inline(always)]
         fn and(self, b: Self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_and_pd(self.0, b.0)) }
         }
         #[inline(always)]
         fn same_mask(self, b: Self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_xor_pd(self.0, b.0)) }.not()
         }
         #[inline(always)]
@@ -159,6 +174,7 @@ mod avx {
         }
         #[inline(always)]
         fn bits(self) -> i32 {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { _mm256_movemask_pd(self.0) }
         }
         #[inline(always)]
@@ -171,6 +187,7 @@ mod avx {
         }
         #[inline(always)]
         fn select(self, yes: Self, no: Self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_blendv_pd(no.0, yes.0, self.0)) }
         }
     }
@@ -178,6 +195,7 @@ mod avx {
         type Output = Self;
         #[inline(always)]
         fn add(self, b: Self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_add_pd(self.0, b.0)) }
         }
     }
@@ -185,6 +203,7 @@ mod avx {
         type Output = Self;
         #[inline(always)]
         fn sub(self, b: Self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_sub_pd(self.0, b.0)) }
         }
     }
@@ -192,6 +211,7 @@ mod avx {
         type Output = Self;
         #[inline(always)]
         fn mul(self, b: Self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_mul_pd(self.0, b.0)) }
         }
     }
@@ -199,6 +219,7 @@ mod avx {
         type Output = Self;
         #[inline(always)]
         fn div(self, b: Self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_div_pd(self.0, b.0)) }
         }
     }
@@ -206,6 +227,7 @@ mod avx {
         type Output = Self;
         #[inline(always)]
         fn neg(self) -> Self {
+            // SAFETY: AVX2 was detected at runtime before entering this private call tree.
             unsafe { Self(_mm256_xor_pd(self.0, _mm256_set1_pd(-0.))) }
         }
     }

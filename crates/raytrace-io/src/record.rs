@@ -3,7 +3,7 @@ use crate::Result;
 use crate::{compatibility::CompatibilityReport, project::Project};
 use raytrace_core::{
     model::{PreparedScene, Ray, Scene},
-    trace::{trace, trace_generated, Report, TraceOptions},
+    trace::{Report, TraceOptions, trace, trace_generated},
 };
 use serde::{Deserialize, Serialize};
 use std::{

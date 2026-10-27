@@ -117,7 +117,7 @@ pub(super) fn read_source_spectrum(
         _ => {
             return Err(crate::Error::zmx(format!(
                 "光源の色・スペクトルモデル{mode}は未対応です。単色波長を明示できます"
-            )))
+            )));
         }
     };
     if samples.is_empty() {

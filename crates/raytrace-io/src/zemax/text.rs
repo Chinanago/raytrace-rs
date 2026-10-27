@@ -14,8 +14,10 @@ pub fn decode(bytes: &[u8]) -> (String, TextEncoding) {
         return (
             String::from_utf16_lossy(
                 &bytes[2..]
-                    .chunks_exact(2)
-                    .map(|p| u16::from_le_bytes([p[0], p[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|p| u16::from_le_bytes(*p))
                     .collect::<Vec<_>>(),
             ),
             TextEncoding::Utf16Le,
@@ -25,8 +27,10 @@ pub fn decode(bytes: &[u8]) -> (String, TextEncoding) {
         return (
             String::from_utf16_lossy(
                 &bytes[2..]
-                    .chunks_exact(2)
-                    .map(|p| u16::from_be_bytes([p[0], p[1]]))
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|p| u16::from_be_bytes(*p))
                     .collect::<Vec<_>>(),
             ),
             TextEncoding::Utf16Be,

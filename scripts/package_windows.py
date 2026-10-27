@@ -30,6 +30,8 @@ def dependency_notices():
         "cargo", "metadata", "--locked", "--offline", "--all-features",
         "--filter-platform", "x86_64-pc-windows-msvc", "--format-version", "1",
     ], cwd=ROOT, text=True, encoding="utf-8"))
+    # Include the whole resolved Windows graph, including build dependencies.
+    # Keep this conservative so a renderer feature cannot silently lose its notices.
     active = {node["id"] for node in metadata["resolve"]["nodes"]}
     catalog = tomllib.loads((ROOT / "scripts/third_party_notices.toml").read_text(encoding="utf-8"))
     supplements = catalog["notice"]

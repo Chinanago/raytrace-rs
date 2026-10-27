@@ -1,6 +1,6 @@
 use super::{
     geometry::{self, Curve, Surface, Transform},
-    step::{field, Table},
+    step::{Table, field},
 };
 use crate::Result;
 use raytrace_core::{math::V3, model::Shape};
@@ -48,11 +48,7 @@ pub(super) struct Mesher<'a> {
     curves: HashMap<usize, Curve>,
 }
 fn key(a: usize, b: usize) -> (usize, usize) {
-    if a < b {
-        (a, b)
-    } else {
-        (b, a)
-    }
+    if a < b { (a, b) } else { (b, a) }
 }
 fn segment_distance(p: V3, a: V3, b: V3) -> f64 {
     let edge = b - a;
@@ -319,12 +315,12 @@ impl<'a> Mesher<'a> {
             if !forward {
                 samples.reverse();
             }
-            if let Some(last) = points.last() {
-                if (last.point - samples[0]).norm() > (self.tolerance * 0.001).max(1e-8) {
-                    return Err(crate::Error::step(format!(
-                        "STEP #{id}: 境界の辺がつながっていません"
-                    )));
-                }
+            if let Some(last) = points.last()
+                && (last.point - samples[0]).norm() > (self.tolerance * 0.001).max(1e-8)
+            {
+                return Err(crate::Error::step(format!(
+                    "STEP #{id}: 境界の辺がつながっていません"
+                )));
             }
             let occurrence = *seen.entry(edge_id).or_insert(0);
             *seen.get_mut(&edge_id).unwrap() += 1;
@@ -444,10 +440,10 @@ impl<'a> Mesher<'a> {
                 }
                 if let Some(previous) = previous {
                     for i in 0..2 {
-                        if Some(i) != forced_axis {
-                            if let Some(period) = periods[i] {
-                                uv[i] += ((previous[i] - uv[i]) / period).round() * period;
-                            }
+                        if Some(i) != forced_axis
+                            && let Some(period) = periods[i]
+                        {
+                            uv[i] += ((previous[i] - uv[i]) / period).round() * period;
                         }
                     }
                 }

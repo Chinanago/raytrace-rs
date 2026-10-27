@@ -20,11 +20,11 @@ mod sequential;
 mod text;
 mod write;
 
-use materials::{catalogs, material_id, Glass};
+use materials::{Glass, catalogs, material_id};
 use nsc::read_nsc;
 use sequential::read_sequential;
+pub use text::{TextEncoding, decode, read_spcd};
 use text::{checked_parameters, encode, field, number, parameters, pose_from, scalar, words};
-pub use text::{decode, read_spcd, TextEncoding};
 pub use write::export;
 
 /// Read one glass through the native AGF parser without importing geometry.

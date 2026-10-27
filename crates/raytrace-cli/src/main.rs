@@ -1,14 +1,13 @@
 //! Command-line tracing, project workflows and calculation replay.
 use raytrace_core::math::V3;
 use raytrace_core::model::{Mode, PreparedScene, Ray, Sampling, Scene};
-use raytrace_core::trace::{trace, trace_generated, TraceOptions};
-use raytrace_io::record::{LaunchInput, RunContext, RunRecord, RUN_FORMAT};
+use raytrace_core::trace::{TraceOptions, trace, trace_generated};
+use raytrace_io::record::{LaunchInput, RUN_FORMAT, RunContext, RunRecord};
 use raytrace_io::{project::Project, zemax};
 use serde::Serialize;
 use std::{env, error::Error, fs, path::PathBuf, time::Instant};
 
-const HELP: &str =
-    "raytrace-rs MODEL.json|MODEL.zmx [--output REPORT.json] [--rays-csv INPUT.csv]\n\
+const HELP: &str = "raytrace-rs MODEL.json|MODEL.zmx [--output REPORT.json] [--rays-csv INPUT.csv]\n\
     [--mode sequential|non_sequential] [--threads N] [--repeat N]\n\
     [--terminals] [--paths FIRST_N_LAUNCH_RAYS]\n\
     [--inspect] [--export-zmx COPY.zmx] [--ignore-coatings]\n\
@@ -238,7 +237,9 @@ fn run() -> Result<(), Box<dyn Error>> {
                     "sobol" => Sampling::Sobol,
                     "pseudorandom" => Sampling::Pseudorandom,
                     _ => {
-                        return Err("サンプリングはsobolまたはpseudorandomで指定してください".into())
+                        return Err(
+                            "サンプリングはsobolまたはpseudorandomで指定してください".into()
+                        );
                     }
                 })
             }
@@ -425,7 +426,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Err("発射光線の重み合計は正の有限値にしてください".into());
     }
     timings.sort_by(f64::total_cmp);
-    let median = if repeat % 2 == 0 {
+    let median = if repeat.is_multiple_of(2) {
         (timings[repeat / 2 - 1] + timings[repeat / 2]) * 0.5
     } else {
         timings[repeat / 2]
@@ -523,7 +524,9 @@ fn run() -> Result<(), Box<dyn Error>> {
         .iter()
         .any(|key| budget[key].as_f64().unwrap() > 0.0)
     {
-        eprintln!("未解決の光線重みがあります。保存したレポートのnumerical_failure・medium_mismatch・interaction_limitを確認してください。");
+        eprintln!(
+            "未解決の光線重みがあります。保存したレポートのnumerical_failure・medium_mismatch・interaction_limitを確認してください。"
+        );
     }
     Ok(())
 }

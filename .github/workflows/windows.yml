@@ -28,10 +28,14 @@ jobs:
           python-version: '3.12'
       - name: Install Rust tools
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          rustup default stable
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.95.0
       - name: Check publication contents
         run: python scripts/check_publish.py
+      - name: Check dependencies
+        run: |
+          cargo install cargo-deny --version 0.20.2 --locked
+          cargo deny --workspace check
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Check code
@@ -69,8 +73,12 @@ jobs:
           persist-credentials: false
       - name: Install Rust tools
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          rustup default stable
+          rustup toolchain install 1.95.0 --profile minimal --component rustfmt --component clippy
+          rustup default 1.95.0
+      - name: Check dependencies
+        run: |
+          cargo install cargo-deny --version 0.20.2 --locked
+          cargo deny --workspace check
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Check code

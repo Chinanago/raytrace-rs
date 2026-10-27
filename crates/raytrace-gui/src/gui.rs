@@ -15,9 +15,9 @@ use raytrace_io::{
 use std::{
     path::PathBuf,
     sync::{
+        Arc,
         atomic::Ordering,
         mpsc::{self, Receiver},
-        Arc,
     },
     time::{Duration, Instant},
 };
@@ -161,7 +161,7 @@ struct App {
 }
 impl App {
     fn new(cc: &eframe::CreationContext<'_>, args: &[String]) -> Self {
-        theme::install(&cc.egui_ctx);
+        install(&cc.egui_ctx);
         let mut app = Self::demo();
         app.data_directory = raytrace_io::storage::data_dir();
         app.preferences =
@@ -389,55 +389,49 @@ impl App {
                 dir.join("gui_smoke.json"),
                 serde_json::to_vec_pretty(&status).unwrap(),
             );
-            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            let path = dir.join("gui.png");
+            let context = ctx.clone();
+            ctx.request_screenshot(move |image| {
+                let bytes: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_array()).collect();
+                image::save_buffer(
+                    path,
+                    &bytes,
+                    image.width() as u32,
+                    image.height() as u32,
+                    image::ColorType::Rgba8,
+                )
+                .expect("save smoke screenshot");
+                context.send_viewport_cmd(egui::ViewportCommand::Close);
+            });
             self.screenshot_requested = true;
-        }
-        let screenshots: Vec<_> = ctx.input(|i| {
-            i.events
-                .iter()
-                .filter_map(|e| {
-                    if let egui::Event::Screenshot { image, .. } = e {
-                        Some(image.clone())
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        });
-        for image in screenshots {
-            let bytes: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_array()).collect();
-            let _ = image::save_buffer(
-                dir.join("gui.png"),
-                &bytes,
-                image.width() as u32,
-                image.height() as u32,
-                image::ColorType::Rgba8,
-            );
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         ctx.request_repaint_after(Duration::from_millis(100));
     }
 }
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = &ui.ctx().clone();
         self.poll(ctx);
-        if self.job.is_none() && self.result.is_some() && self.error.is_none() {
-            if let Some(dir) = self.export_requested.take() {
-                self.export_current_screen(&dir, ctx);
-            }
+        if self.job.is_none()
+            && self.result.is_some()
+            && self.error.is_none()
+            && let Some(dir) = self.export_requested.take()
+        {
+            self.export_current_screen(&dir, ctx);
         }
         self.history_shortcuts(ctx);
-        self.toolbar(ctx);
-        egui::TopBottomPanel::bottom("status")
-            .exact_height(38.0)
+        self.toolbar(ui);
+        egui::Panel::bottom("status")
+            .exact_size(STATUS_HEIGHT)
             .frame(
                 egui::Frame::new()
                     .fill(BG_PANEL)
-                    .inner_margin(egui::Margin::symmetric(18, 5)),
+                    .inner_margin(egui::Margin::symmetric(18, 0)),
             )
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
+                ui.add_space(STATUS_PADDING_Y);
                 ui.horizontal(|ui| {
-                    ui.label(theme::muted(&self.status));
+                    ui.label(muted(&self.status));
                     if let Some(control) = &self.control {
                         let total = control.total.load(Ordering::Relaxed);
                         let completed = control.completed.load(Ordering::Relaxed).min(total);
@@ -465,9 +459,10 @@ impl eframe::App for App {
                     });
                 });
             });
-        self.sidebar(ctx);
-        self.content(ctx);
-        self.details_window(ctx);
+        self.sidebar(ui);
+        let workspace = ui.available_rect_before_wrap();
+        self.content(ui);
+        self.details_window(ctx, workspace);
         self.study_window(ctx);
         self.comparison_window(ctx);
         if let Some(error) = self.error.clone() {
@@ -489,16 +484,16 @@ impl eframe::App for App {
         if self.job.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
-        if !ctx.input(|i| i.pointer.any_down()) && !ctx.wants_keyboard_input() {
+        if !ctx.input(|i| i.pointer.any_down()) && !ctx.egui_wants_keyboard_input() {
             self.commit_edit();
         }
         self.update_window_title(ctx);
         self.smoke(ctx);
-        let dropped = ctx.input(|i| i.raw.dropped_files.first().and_then(|f| f.path.clone()));
-        if let Some(path) = dropped {
-            if self.job.is_none() {
-                self.load(path, ctx);
-            }
+        let dropped = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf()));
+        if let Some(path) = dropped
+            && self.job.is_none()
+        {
+            self.load(path, ctx);
         }
     }
 }
@@ -508,18 +503,81 @@ pub fn main() {
         println!("raytrace-gui {}", env!("CARGO_PKG_VERSION"));
         return;
     }
+    let mut args = args;
+    let mut renderer = eframe::Renderer::Wgpu;
+    let mut automatic = true;
+    if let Some(index) = args.iter().position(|a| a == "--renderer") {
+        renderer = match args.get(index + 1).map(String::as_str) {
+            Some("wgpu") => eframe::Renderer::Wgpu,
+            Some("glow") => eframe::Renderer::Glow,
+            _ => {
+                eprintln!("--renderer requires wgpu or glow");
+                std::process::exit(2);
+            }
+        };
+        automatic = false;
+        args.drain(index..=index + 1);
+    }
+    if let Err(error) = run(&args, renderer) {
+        if automatic && matches!(error, eframe::Error::Wgpu(_)) {
+            let notice = error.to_string().replace(['\r', '\n'], " ");
+            eprintln!("wgpu initialization failed; retrying with glow: {notice}");
+            if let Err(error) = run(&args, eframe::Renderer::Glow) {
+                eprintln!("{error}");
+                std::process::exit(1);
+            }
+        } else {
+            eprintln!("{error}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn run(args: &[String], renderer: eframe::Renderer) -> eframe::Result {
+    let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
+        setup.native_adapter_selector = Some(Arc::new(|adapters, surface| {
+            use eframe::wgpu::{Backend, DeviceType};
+
+            let name = std::env::var("WGPU_ADAPTER_NAME").ok();
+            adapters
+                .iter()
+                .filter(|adapter| surface.is_none_or(|s| adapter.is_surface_supported(s)))
+                .filter(|adapter| {
+                    name.as_ref().is_none_or(|name| {
+                        adapter
+                            .get_info()
+                            .name
+                            .to_lowercase()
+                            .contains(&name.to_lowercase())
+                    })
+                })
+                .min_by_key(|adapter| {
+                    let info = adapter.get_info();
+                    // Prefer hardware, then DX12 on Windows. Keep CPU adapters
+                    // eligible so WARP works on machines without a usable GPU.
+                    let backend = match info.backend {
+                        Backend::Dx12 => 0,
+                        Backend::Vulkan => 1,
+                        _ => 2,
+                    };
+                    (info.device_type == DeviceType::Cpu, backend)
+                })
+                .cloned()
+                .ok_or_else(|| "no compatible wgpu adapter".into())
+        }));
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1320.0, 860.0])
             .with_min_inner_size([1050.0, 740.0]),
-        renderer: eframe::Renderer::Glow,
+        renderer,
+        wgpu_options,
         ..Default::default()
     };
-    if let Err(e) = eframe::run_native(
+    eframe::run_native(
         "Raytrace · 光線追跡",
         options,
-        Box::new(move |cc| Ok(Box::new(App::new(cc, &args)))),
-    ) {
-        eprintln!("{e}");
-    }
+        Box::new(move |cc| Ok(Box::new(App::new(cc, args)))),
+    )
 }

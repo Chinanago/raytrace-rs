@@ -1,6 +1,6 @@
 use raytrace_app::nsc_reference::*;
 use raytrace_core::trace::DetectorMap;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::{error::Error, fs, path::Path};
 fn write(path: &Path, v: &impl serde::Serialize) -> Result<(), Box<dyn Error>> {
     fs::write(path, serde_json::to_vec_pretty(v)?)?;

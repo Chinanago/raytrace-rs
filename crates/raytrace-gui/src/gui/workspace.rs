@@ -2,10 +2,11 @@
 use super::*;
 
 impl App {
-    pub(super) fn content(&mut self, ctx: &egui::Context) {
+    pub(super) fn content(&mut self, ui: &mut egui::Ui) {
+        let ctx = &ui.ctx().clone();
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(BG_CANVAS).inner_margin(20.0))
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 self.import_notification(ui);
                 if self.stale {
                     ui.horizontal(|ui| {

@@ -4,7 +4,7 @@ use raytrace_rs::{
     math::{Frame, Pose, V3},
     model::*,
     project::{Issue, Project},
-    trace::{trace, TraceOptions},
+    trace::{TraceOptions, trace},
 };
 use std::{
     fs,
@@ -113,13 +113,15 @@ fn separate_zmx_parts_drop_test_sources_detectors_and_remap_materials() {
         0.0
     );
     assert!((report.budget.accounted() - report.budget.launched).abs() < 1e-11);
-    assert!(report
-        .surfaces
-        .iter()
-        .filter(|s| s.name.contains(" / S")
-            || s.name.contains(" / 入口")
-            || s.name.contains(" / 出口"))
-        .all(|s| s.encounters > 0));
+    assert!(
+        report
+            .surfaces
+            .iter()
+            .filter(|s| s.name.contains(" / S")
+                || s.name.contains(" / 入口")
+                || s.name.contains(" / 出口"))
+            .all(|s| s.encounters > 0)
+    );
 }
 
 #[test]

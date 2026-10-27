@@ -250,13 +250,13 @@ impl Table {
                     _ => {
                         return Err(crate::Error::step(format!(
                             "STEP #{id}: 未対応のSI接頭辞です"
-                        )))
+                        )));
                     }
                 },
                 _ => {
                     return Err(crate::Error::step(format!(
                         "STEP #{id}: SI接頭辞が不正です"
-                    )))
+                    )));
                 }
             };
             if !matches!(field(a,1)?, Value::Enum(s) if s == symbol) {
@@ -504,9 +504,11 @@ mod tests {
             "GLOBAL_UNIT_ASSIGNED_CONTEXT((#3))",
             "GLOBAL_UNIT_ASSIGNED_CONTEXT((#1,#3))",
         );
-        assert!(Table::read(invalid.as_bytes())
-            .unwrap()
-            .angle_scale_rad()
-            .is_err());
+        assert!(
+            Table::read(invalid.as_bytes())
+                .unwrap()
+                .angle_scale_rad()
+                .is_err()
+        );
     }
 }

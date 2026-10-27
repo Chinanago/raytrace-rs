@@ -1,7 +1,7 @@
 //! Editable project plus the original Zemax document and compatibility diagnostics.
-use crate::assembly::{empty_scene, Assembly, Component, ComponentKind};
-use crate::zemax::{self, ZmxDocument};
 use crate::Result;
+use crate::assembly::{Assembly, Component, ComponentKind, empty_scene};
+use crate::zemax::{self, ZmxDocument};
 use raytrace_core::model::Scene;
 use serde::{Deserialize, Serialize};
 use std::{

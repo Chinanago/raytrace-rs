@@ -69,7 +69,7 @@ impl App {
         }
         let mut open = true;
         egui::Window::new("スクリーン比較")
-            .max_height((ctx.screen_rect().height() - 40.0).max(300.0))
+            .max_height((ctx.content_rect().height() - 40.0).max(300.0))
             .open(&mut open)
             .default_width(900.0)
             .default_height(720.0)
@@ -97,7 +97,7 @@ impl App {
                 };
                 egui::ScrollArea::vertical()
                     .id_salt("comparison_images")
-                    .max_height((ctx.screen_rect().height() - 130.0).max(200.0))
+                    .max_height((ctx.content_rect().height() - 130.0).max(200.0))
                     .show(ui, |ui| {
                         ui.columns(2, |cols| {
                             for (i, c) in self.study.comparisons.iter_mut().take(2).enumerate() {
@@ -120,10 +120,7 @@ impl App {
                                         .collect();
                                     c.texture = Some(ctx.load_texture(
                                         format!("comparison_{i}"),
-                                        egui::ColorImage {
-                                            size: c.map.pixels,
-                                            pixels,
-                                        },
+                                        egui::ColorImage::new(c.map.pixels, pixels),
                                         egui::TextureOptions::NEAREST,
                                     ));
                                 }

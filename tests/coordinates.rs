@@ -3,7 +3,7 @@ use raytrace_rs::{
     math::{Frame, Pose, V3},
     model::Ray,
     project::Project,
-    trace::{trace, TraceOptions},
+    trace::{TraceOptions, trace},
     zemax,
 };
 use std::{
@@ -166,7 +166,7 @@ fn nsc_reference_hierarchy_and_compound_tilts_hit_the_referenced_detector() {
 fn invalid_references_and_inside_of_missing_volumes_block_tracing() {
     let dir = folder();
     let path = dir.join("invalid.zmx");
-    let base="MODE NSC\nUNIT MM\nWAVM 1 0.55 1\nSURF 1\n TYPE NONSEQCO\n NSOH NSC_NULL 0 0\n NSOP 0 0 0 0 0 0\n NSOH NSC_SDIO REF INSIDE\n NSOP 0 0 0 0 0 0\n";
+    let base = "MODE NSC\nUNIT MM\nWAVM 1 0.55 1\nSURF 1\n TYPE NONSEQCO\n NSOH NSC_NULL 0 0\n NSOP 0 0 0 0 0 0\n NSOH NSC_SDIO REF INSIDE\n NSOP 0 0 0 0 0 0\n";
     for (reference, inside) in [("2", "0"), ("3", "0"), ("-3", "0"), ("0", "1")] {
         fs::write(
             &path,

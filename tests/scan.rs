@@ -5,8 +5,8 @@ use raytrace_rs::{
     model::Scene,
     project::Project,
     record::RunRecord,
-    scan::{linear_values, Parameter, ScanManifest, ScanPlan},
-    trace::{trace, trace_controlled, TraceControl, TraceOptions},
+    scan::{Parameter, ScanManifest, ScanPlan, linear_values},
+    trace::{TraceControl, TraceOptions, trace, trace_controlled},
 };
 use std::{
     fs,
@@ -125,46 +125,54 @@ fn cyclic_links_duplicate_targets_axis_conflicts_and_case_explosion_are_rejected
         ],
         vec![link.clone(), link.clone()],
     ] {
-        assert!(ScanManifest::new(
+        assert!(
+            ScanManifest::new(
+                &base,
+                ScanPlan {
+                    links,
+                    ..ScanPlan::default()
+                }
+            )
+            .is_err()
+        );
+    }
+    assert!(
+        ScanManifest::new(
             &base,
             ScanPlan {
-                links,
+                parameter: b.clone(),
+                links: vec![link],
                 ..ScanPlan::default()
             }
         )
-        .is_err());
-    }
-    assert!(ScanManifest::new(
-        &base,
-        ScanPlan {
-            parameter: b.clone(),
-            links: vec![link],
-            ..ScanPlan::default()
-        }
-    )
-    .is_err());
-    assert!(ScanManifest::new(
-        &base,
-        ScanPlan {
-            secondary: Some(ScanAxis {
-                parameter: a,
-                values: (0..100).map(|x| x as f64).collect()
-            }),
-            ..ScanPlan::default()
-        }
-    )
-    .is_err());
-    assert!(ScanManifest::new(
-        &base,
-        ScanPlan {
-            secondary: Some(ScanAxis {
-                parameter: Parameter::Wavelength,
-                values: vec![0.55]
-            }),
-            ..ScanPlan::default()
-        }
-    )
-    .is_err());
+        .is_err()
+    );
+    assert!(
+        ScanManifest::new(
+            &base,
+            ScanPlan {
+                secondary: Some(ScanAxis {
+                    parameter: a,
+                    values: (0..100).map(|x| x as f64).collect()
+                }),
+                ..ScanPlan::default()
+            }
+        )
+        .is_err()
+    );
+    assert!(
+        ScanManifest::new(
+            &base,
+            ScanPlan {
+                secondary: Some(ScanAxis {
+                    parameter: Parameter::Wavelength,
+                    values: vec![0.55]
+                }),
+                ..ScanPlan::default()
+            }
+        )
+        .is_err()
+    );
 }
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 fn folder() -> PathBuf {
@@ -289,24 +297,30 @@ fn parameter_units_limits_and_failed_cases_are_retained() {
             .length_mm,
         40.0
     );
-    assert!(Parameter::RodSize {
-        component: 2,
-        axis: 0
-    }
-    .apply(&mut assembly, -1.0)
-    .is_err());
-    assert!(Parameter::ComponentPosition {
-        component: 2,
-        axis: 3
-    }
-    .apply(&mut assembly, 1.0)
-    .is_err());
-    assert!(Parameter::SurfacePosition {
-        surface: 0,
-        axis: 2
-    }
-    .apply(&mut assembly, 1.0)
-    .is_err());
+    assert!(
+        Parameter::RodSize {
+            component: 2,
+            axis: 0
+        }
+        .apply(&mut assembly, -1.0)
+        .is_err()
+    );
+    assert!(
+        Parameter::ComponentPosition {
+            component: 2,
+            axis: 3
+        }
+        .apply(&mut assembly, 1.0)
+        .is_err()
+    );
+    assert!(
+        Parameter::SurfacePosition {
+            surface: 0,
+            axis: 2
+        }
+        .apply(&mut assembly, 1.0)
+        .is_err()
+    );
     assert_eq!(linear_values(0.4, 0.7, 4).unwrap().last(), Some(&0.7));
     assert!(linear_values(0.4, 0.7, 1).is_err());
     let dir = folder();

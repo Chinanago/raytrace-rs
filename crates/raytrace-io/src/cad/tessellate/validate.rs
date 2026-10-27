@@ -124,7 +124,9 @@ pub(super) fn validate_closed(
         .filter(|(count, balance)| *count == 2 && *balance != 0)
         .count();
     if open > 0 || reversed > 0 {
-        return Err(crate::Error::step(format!("STEP: 閉じたソリッドを復元できません（未接続・非多様体の辺 {open}、向きの不一致 {reversed}）")));
+        return Err(crate::Error::step(format!(
+            "STEP: 閉じたソリッドを復元できません（未接続・非多様体の辺 {open}、向きの不一致 {reversed}）"
+        )));
     }
     let components = triangles
         .iter()
@@ -187,9 +189,11 @@ mod tests {
         points.append(&mut second);
         triangles.extend(triangles.clone().into_iter().map(|t| t.map(|i| i + offset)));
         normals.resize(points.len(), V3([1., 0., 0.]));
-        assert!(validate_closed(&points, &mut normals, &mut triangles)
-            .unwrap_err()
-            .to_string()
-            .contains("単一"));
+        assert!(
+            validate_closed(&points, &mut normals, &mut triangles)
+                .unwrap_err()
+                .to_string()
+                .contains("単一")
+        );
     }
 }

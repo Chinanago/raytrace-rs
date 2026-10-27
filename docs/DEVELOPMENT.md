@@ -6,7 +6,7 @@
 
 ## ソースからビルドして起動
 
-WindowsとRust（Cargo）が必要です。初回ビルド時に依存ライブラリを取得します。
+WindowsとRust 1.95以降（Cargo）が必要です。初回ビルド時に依存ライブラリを取得します。
 
 ```powershell
 cargo build --release --locked --workspace --bins
@@ -22,6 +22,21 @@ GUIなしで使う場合は `cargo build --release --locked -p raytrace-cli` で
 cargo run --release --locked -p raytrace-cli -- examples/sequential_lens.json --threads 4 --output results/lens.json
 cargo run --release --example assembly_demo -- results/assembly_demo.json
 ./target/release/raytrace-rs.exe results/assembly_demo.json --threads 4 --output results/assembly_trace.json
+```
+
+## GUI・Rustの基盤
+
+GUIは egui / eframe 0.37.0、ファイル選択は rfd 0.17.2 を使います。既定の描画は wgpu です。WindowsではDX12とVulkanを有効にし、ソフトウェアアダプター（WARP）も選択対象に含めます。wgpuの初期化に失敗した場合は、標準エラーに1行出力してglowで起動し直します。`--renderer wgpu` または `--renderer glow` で描画方式を固定できます。固定した場合は自動切替を行いません。`--smoke 出力先` はどちらでも画面と状態を保存します。
+
+全クレートはedition 2024です。`rust-version` は依存するegui / eframeの最低要件に合わせて1.95に設定し、CIも1.95.0で検証します。wgpu 30.0.1の要件は1.87、rfd 0.17.2には最低Rust版の指定がありません。
+
+workspaceのlintで `unsafe_code` をdeny、`unused_qualifications`・Clippyの `dbg_macro`・`todo` をwarnにします。全クレートがこの設定を継承します。unsafeを許可するのは `raytrace-core/src/packet.rs` のAVX2カーネルだけです。各unsafeブロックには、実行時のCPU機能検出・配列範囲・非整列アクセスなどの成立条件を `// SAFETY:` に記載します。
+
+依存関係は `cargo deny check` で検査できます。GUIを含む全workspaceの検査には次を使います。RustSecの脆弱性はエラー、保守停止・yank・重複バージョンは警告にします。許可ライセンスとフォントに限る例外は `deny.toml` に記載します。
+
+```powershell
+cargo install cargo-deny --version 0.20.2 --locked
+cargo deny --workspace check
 ```
 
 ## Windows配布ZIPを作成する

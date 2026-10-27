@@ -175,10 +175,10 @@ impl Coating {
                 "表裏で異なるコーティングは単一のZemax IDEAL/TABLEで表現できません".into(),
             ));
         }
-        if let Some(original) = &self.zemax_definition {
-            if parse_zemax(original, &self.name)?.is_some_and(|c| same(&c.front, &self.front)) {
-                return Ok(original.clone());
-            }
+        if let Some(original) = &self.zemax_definition
+            && parse_zemax(original, &self.name)?.is_some_and(|c| same(&c.front, &self.front))
+        {
+            return Ok(original.clone());
         }
         if self.name.is_empty()
             || self.name.len() > 32
@@ -223,7 +223,7 @@ impl Coating {
                 return Err(crate::Error::Coating(
                     "この角度基準・全反射係数の表はZemax TABLEで表現できません。JSONへ保存できます"
                         .into(),
-                ))
+                ));
             }
         }
         Ok(text)
@@ -350,7 +350,7 @@ pub fn parse_zemax(text: &str, name: &str) -> Result<Option<Coating>> {
                         return Err(crate::Error::Coating(format!(
                             "TABLEのレコードが不正または未対応です: {}",
                             w.join(" ")
-                        )))
+                        )));
                     }
                 }
             }

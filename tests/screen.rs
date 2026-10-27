@@ -44,12 +44,14 @@ fn roi_integrals_clip_and_weight_partial_pixels_without_changing_original_data()
     assert_eq!(outside.power_weight, 0.);
     assert_eq!(outside.area_mm2, 0.);
     assert_eq!(m.weights, original);
-    assert!(ScreenRoi {
-        minimum_mm: [1., 0.],
-        maximum_mm: [0., 1.]
-    }
-    .integrate(&m, 10.)
-    .is_err());
+    assert!(
+        ScreenRoi {
+            minimum_mm: [1., 0.],
+            maximum_mm: [0., 1.]
+        }
+        .integrate(&m, 10.)
+        .is_err()
+    );
 }
 
 fn map(nx: usize, ny: usize, hx: f64, hy: f64, f: impl Fn(f64, f64) -> f64) -> DetectorMap {

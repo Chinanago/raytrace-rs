@@ -16,7 +16,7 @@ impl App {
                         ui.selectable_value(&mut self.projection, i, *t);
                     }
                 });
-            ui.checkbox(&mut self.show_rays, "光線")
+            checkbox(ui, &mut self.show_rays, "光線")
                 .on_hover_text("光路は表示用のサンプルです（光源ごとの上限は計算設定で確認）");
             if ui.small_button("選択へ").clicked() {
                 self.camera.request = Some(CameraRequest::Selected);
@@ -26,14 +26,14 @@ impl App {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.menu_button("表示", |ui| {
-                    ui.checkbox(&mut self.equal_scale, "縦横を同じ縮尺にする");
+                    checkbox(ui, &mut self.equal_scale, "縦横を同じ縮尺にする");
                     if ui.button("拡大").clicked() {
                         self.camera.request = Some(CameraRequest::Zoom(0.5));
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("縮小").clicked() {
                         self.camera.request = Some(CameraRequest::Zoom(2.0));
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
                 if self.job.is_some() {
@@ -249,7 +249,7 @@ fn draw_paths(
         }
     }
     let inner = rect.shrink2(Vec2::new(64.0, 44.0));
-    let grid_id = ui.id().with(("part_grid", projection));
+    let grid_id = ui.scope_id().with(("part_grid", projection));
     let active_id = grid_id.with("active");
     if focus_points.is_empty() {
         let center = markers
@@ -276,25 +276,22 @@ fn draw_paths(
             inner.bottom() - ((p.0[axes.1] - g[1]) / g[3]) as f32 * inner.height(),
         )
     };
-    if response.drag_started_by(egui::PointerButton::Primary) && editable {
-        if let Some(pointer) = ui.ctx().input(|i| i.pointer.press_origin()) {
-            if let Some(m) = markers
-                .iter()
-                .filter(|m| {
-                    m.position.finite() && to_screen(grid, m.position).distance(pointer) < 22.0
-                })
-                .min_by(|a, b| {
-                    to_screen(grid, a.position)
-                        .distance(pointer)
-                        .total_cmp(&to_screen(grid, b.position).distance(pointer))
-                })
-            {
-                ui.ctx().data_mut(|d| {
-                    d.insert_temp(active_id, m.index);
-                    d.insert_temp(grid_id, grid);
-                });
-            }
-        }
+    if response.drag_started_by(egui::PointerButton::Primary)
+        && editable
+        && let Some(pointer) = ui.ctx().input(|i| i.pointer.press_origin())
+        && let Some(m) = markers
+            .iter()
+            .filter(|m| m.position.finite() && to_screen(grid, m.position).distance(pointer) < 22.0)
+            .min_by(|a, b| {
+                to_screen(grid, a.position)
+                    .distance(pointer)
+                    .total_cmp(&to_screen(grid, b.position).distance(pointer))
+            })
+    {
+        ui.ctx().data_mut(|d| {
+            d.insert_temp(active_id, m.index);
+            d.insert_temp(grid_id, grid);
+        });
     }
     let active = ui.ctx().data_mut(|d| d.get_temp::<usize>(active_id));
     if response.dragged_by(egui::PointerButton::Primary) && active.is_some() {
@@ -313,20 +310,22 @@ fn draw_paths(
             d.remove_temp::<usize>(active_id);
         });
     }
-    if !requested_view && response.hovered() && !ui.ctx().input(|i| i.pointer.any_down()) {
-        if let Some(pointer) = response.hover_pos().filter(|p| inner.contains(*p)) {
-            let scroll = ui.ctx().input(|i| i.smooth_scroll_delta.y);
-            if scroll != 0.0 {
-                grid = camera::zoom_grid(
-                    grid,
-                    [
-                        (pointer.x - inner.left()) as f64 / inner.width() as f64,
-                        (inner.bottom() - pointer.y) as f64 / inner.height() as f64,
-                    ],
-                    (-scroll as f64 * 0.003).exp(),
-                );
-                camera.set(projection, grid, inner.size());
-            }
+    if !requested_view
+        && response.hovered()
+        && !ui.ctx().input(|i| i.pointer.any_down())
+        && let Some(pointer) = response.hover_pos().filter(|p| inner.contains(*p))
+    {
+        let scroll = ui.ctx().input(|i| i.smooth_scroll_delta.y);
+        if scroll != 0.0 {
+            grid = camera::zoom_grid(
+                grid,
+                [
+                    (pointer.x - inner.left()) as f64 / inner.width() as f64,
+                    (inner.bottom() - pointer.y) as f64 / inner.height() as f64,
+                ],
+                (-scroll as f64 * 0.003).exp(),
+            );
+            camera.set(projection, grid, inner.size());
         }
     }
     let map = |p: V3| {
@@ -440,8 +439,8 @@ fn draw_paths(
             .ctx()
             .input(|i| i.pointer.press_origin())
             .or_else(|| response.interact_pointer_pos());
-        if let Some(p) = pointer {
-            if let Some(m) = markers
+        if let Some(p) = pointer
+            && let Some(m) = markers
                 .iter()
                 .filter(|m| m.position.finite() && map(m.position).distance(p) < 22.0)
                 .min_by(|a, b| {
@@ -449,19 +448,19 @@ fn draw_paths(
                         .distance(p)
                         .total_cmp(&map(b.position).distance(p))
                 })
-            {
-                action = Some((m.index, V3::default()));
-            }
+        {
+            action = Some((m.index, V3::default()));
         }
     }
-    if editable && response.dragged_by(egui::PointerButton::Primary) {
-        if let Some(index) = ui.ctx().data_mut(|d| d.get_temp::<usize>(active_id)) {
-            let pixel = ui.ctx().input(|i| i.pointer.delta());
-            let mut delta = V3::default();
-            delta.0[axes.0] = pixel.x as f64 / inner.width() as f64 * grid[2];
-            delta.0[axes.1] = -pixel.y as f64 / inner.height() as f64 * grid[3];
-            action = Some((index, delta));
-        }
+    if editable
+        && response.dragged_by(egui::PointerButton::Primary)
+        && let Some(index) = ui.ctx().data_mut(|d| d.get_temp::<usize>(active_id))
+    {
+        let pixel = ui.ctx().input(|i| i.pointer.delta());
+        let mut delta = V3::default();
+        delta.0[axes.0] = pixel.x as f64 / inner.width() as f64 * grid[2];
+        delta.0[axes.1] = -pixel.y as f64 / inner.height() as f64 * grid[3];
+        action = Some((index, delta));
     }
     action
 }
@@ -517,7 +516,7 @@ mod tests {
     #[test]
     fn drag_handle_changes_the_component_in_the_selected_projection() {
         let ctx = egui::Context::default();
-        theme::install(&ctx);
+        install(&ctx);
         let scene = assembly::empty_scene("drag check");
         let markers = [
             PartMarker {
@@ -544,8 +543,8 @@ mod tests {
                 events,
                 ..Default::default()
             };
-            let output = ctx.run(input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
+            let output = run_ui(&ctx, input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     action = draw_paths(
                         ui,
                         &scene,
@@ -592,7 +591,7 @@ mod tests {
     fn zoom_and_background_pan_change_only_the_view_and_all_restores_auto_fit() {
         let mut app = App::demo();
         let ctx = egui::Context::default();
-        theme::install(&ctx);
+        install(&ctx);
         for _ in 0..3 {
             frame(&mut app, &ctx, vec![]);
         }
@@ -604,6 +603,8 @@ mod tests {
             vec![
                 egui::Event::PointerMoved(p),
                 egui::Event::MouseWheel {
+                    phase: egui::TouchPhase::Move,
+                    source: egui::MouseWheelSource::Unknown,
                     unit: egui::MouseWheelUnit::Point,
                     delta: Vec2::new(0.0, 100.0),
                     modifiers: egui::Modifiers::NONE,

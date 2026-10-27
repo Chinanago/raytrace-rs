@@ -9,7 +9,9 @@ pub enum Error {
     InvalidSource { source_index: usize, detail: String },
     #[error("{detail}")]
     InvalidRay { id: u64, detail: String },
-    #[error("材料 {material} は波長 {wavelength_um} um（光線 {launch}）で定義されていません。有効な波長範囲を確認してください")]
+    #[error(
+        "材料 {material} は波長 {wavelength_um} um（光線 {launch}）で定義されていません。有効な波長範囲を確認してください"
+    )]
     Wavelength {
         material: usize,
         wavelength_um: f64,

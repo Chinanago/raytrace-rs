@@ -7,7 +7,7 @@ use raytrace_rs::{
     model::*,
     project::Project,
     record::{LaunchInput, RunContext, RunRecord},
-    trace::{trace, TraceOptions},
+    trace::{TraceOptions, trace},
 };
 use std::{
     fs,
@@ -99,12 +99,16 @@ fn cli_replays_generated_and_csv_runs_without_the_original_inputs() {
             saved["calculation"]["scene"],
             replayed["calculation"]["scene"]
         );
-        assert!(!cli(&["--replay", "run.json", "--wavelength-um", "0.55"])
-            .status
-            .success());
-        assert!(!cli(&["--replay", "run.json", "--output", "run.json"])
-            .status
-            .success());
+        assert!(
+            !cli(&["--replay", "run.json", "--wavelength-um", "0.55"])
+                .status
+                .success()
+        );
+        assert!(
+            !cli(&["--replay", "run.json", "--output", "run.json"])
+                .status
+                .success()
+        );
         assert_eq!(original, fs::read(dir.join("run.json")).unwrap());
     }
 }
@@ -140,25 +144,33 @@ fn compatibility_keeps_component_conditions_even_when_flat_issues_are_resolved()
     let report = p.compatibility_report();
     assert!(report.traceable);
     assert_eq!(report.components.len(), 4);
-    assert!(report.components[0]
-        .entries
-        .iter()
-        .any(|e| e.code == "spectrum" && e.status == Status::OverrideApplied));
-    assert!(report.components[1]
-        .entries
-        .iter()
-        .any(|e| e.code == "coating" && e.status == Status::OverrideApplied));
-    assert!(report.components[2]
-        .entries
-        .iter()
-        .any(|e| e.status == Status::Unsupported));
+    assert!(
+        report.components[0]
+            .entries
+            .iter()
+            .any(|e| e.code == "spectrum" && e.status == Status::OverrideApplied)
+    );
+    assert!(
+        report.components[1]
+            .entries
+            .iter()
+            .any(|e| e.code == "coating" && e.status == Status::OverrideApplied)
+    );
+    assert!(
+        report.components[2]
+            .entries
+            .iter()
+            .any(|e| e.status == Status::Unsupported)
+    );
     assert!(!report.components[2].enabled);
-    assert!(report
-        .components
-        .iter()
-        .flat_map(|c| &c.materials)
-        .flat_map(|m| &m.samples)
-        .all(|s| s.wavelength_um == 0.55 && s.refractive_index.is_some()));
+    assert!(
+        report
+            .components
+            .iter()
+            .flat_map(|c| &c.materials)
+            .flat_map(|m| &m.samples)
+            .all(|s| s.wavelength_um == 0.55 && s.refractive_index.is_some())
+    );
     p.monochromatic_override_um = None;
     assert!(!p.compatibility_report().traceable);
     assert!(p.trace_scene().is_err());
@@ -192,17 +204,19 @@ fn unknown_records_and_invalid_or_missing_wavelengths_do_not_silently_trace() {
 fn unknown_nsc_attributes_and_coated_air_cad_are_explicit_conditions() {
     let dir = folder();
     let path = dir.join("attributes.zmx");
-    let base="MODE NSC\nUNIT MM\nWAVM 1 0.55 1\nSURF 1\n TYPE NONSEQCO\n NSOH NSC_IMPT 0 0 unused.step\n NSOP 0 0 0 0 0 0\n";
+    let base = "MODE NSC\nUNIT MM\nWAVM 1 0.55 1\nSURF 1\n TYPE NONSEQCO\n NSOH NSC_IMPT 0 0 unused.step\n NSOP 0 0 0 0 0 0\n";
     fs::write(&path, format!("{base} NSCS 1 0 \"EXAMPLE_COATING\"\n")).unwrap();
     let mut p = Project::open(&path, &[]).unwrap();
     assert!(p.trace_scene().is_err());
     p.allow_uncoated = true;
     let report = p.compatibility_report();
     assert!(report.traceable);
-    assert!(report.components[0]
-        .entries
-        .iter()
-        .any(|e| e.status == Status::PreservedOnly));
+    assert!(
+        report.components[0]
+            .entries
+            .iter()
+            .any(|e| e.status == Status::PreservedOnly)
+    );
     fs::write(&path, format!("{base} NSCS 999 0 0\n")).unwrap();
     let mut p = Project::open(&path, &[]).unwrap();
     p.allow_uncoated = true;
@@ -359,15 +373,19 @@ fn explicit_record_keeps_launches_and_uses_their_actual_wavelengths() {
     let report = trace(&prepared, &rays, TraceOptions::default());
     let mut context = RunContext::capture(&p, &scene, Some(&rays), 1, TraceOptions::default());
     assert_eq!(context.launch_wavelengths_um, vec![0.55]);
-    assert!(context.compatibility.components[0]
-        .entries
-        .iter()
-        .any(|e| e.code == "spectrum" && e.status == Status::PreservedOnly));
-    assert!(context.compatibility.components[0]
-        .materials
-        .iter()
-        .flat_map(|m| &m.samples)
-        .all(|s| s.wavelength_um == 0.55));
+    assert!(
+        context.compatibility.components[0]
+            .entries
+            .iter()
+            .any(|e| e.code == "spectrum" && e.status == Status::PreservedOnly)
+    );
+    assert!(
+        context.compatibility.components[0]
+            .materials
+            .iter()
+            .flat_map(|m| &m.samples)
+            .all(|s| s.wavelength_um == 0.55)
+    );
     let path = folder().join("explicit.json");
     context.save(&report, 0.1, &path).unwrap();
     let saved = RunRecord::open(&path).unwrap();

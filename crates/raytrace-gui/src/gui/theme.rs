@@ -2,6 +2,7 @@
 //! © Digital Agency, Government of Japan) and the DADS guidelines.
 //! This is a local style guide for raytrace-rs, not an official Digital Agency product.
 
+use eframe::egui::NumExt as _;
 use eframe::egui::{self, Color32, FontFamily, FontId, RichText, Stroke, Vec2};
 
 // Keep the small source palette here, separate from roles used by the GUI.
@@ -94,11 +95,95 @@ pub const TAB_PADDING_Y: f32 = 7.0;
 pub const TAB_LINE_WIDTH: f32 = 1.0;
 pub const TAB_UNDERLINE_OFFSET: f32 = 3.0;
 pub const PRIMARY_BUTTON_WIDTH: f32 = 118.0;
+pub const STATUS_HEIGHT: f32 = 38.0;
+pub const STATUS_PADDING_Y: f32 = 5.0;
+pub const WINDOW_CHROME_HEIGHT: f32 = CONTROL_HEIGHT + SPACE_4 * 4.0 + 2.0;
+
+// Preserve the 0.31 checkbox geometry, including its leading icon and radius.
+pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool, label: &str) -> egui::Response {
+    let spacing = ui.spacing();
+    let extra = Vec2::new(spacing.icon_width + spacing.icon_spacing, 0.0);
+    let galley = (!label.is_empty()).then(|| {
+        egui::WidgetText::from(label).into_galley(
+            ui,
+            None,
+            ui.available_width() - extra.x,
+            egui::TextStyle::Button,
+        )
+    });
+    let size = galley
+        .as_ref()
+        .map_or(Vec2::new(spacing.icon_width, 0.0), |g| {
+            (extra + g.size()).at_least(spacing.interact_size)
+        });
+    let size = size.at_least(Vec2::splat(spacing.interact_size.y));
+    let (rect, mut response) = ui.allocate_exact_size(size, egui::Sense::click());
+    if response.clicked() {
+        *checked = !*checked;
+        response.mark_changed();
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::CheckBox, ui.is_enabled(), *checked, label)
+    });
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.style().interact(&response);
+        let (small, big) = ui.spacing().icon_rectangles(rect);
+        ui.painter().rect(
+            big.expand(visuals.expansion),
+            visuals.corner_radius,
+            visuals.bg_fill,
+            visuals.bg_stroke,
+            egui::StrokeKind::Inside,
+        );
+        if *checked {
+            ui.painter().add(egui::Shape::line(
+                vec![
+                    egui::pos2(small.left(), small.center().y),
+                    egui::pos2(small.center().x, small.bottom()),
+                    egui::pos2(small.right(), small.top()),
+                ],
+                visuals.fg_stroke,
+            ));
+        }
+        if let Some(galley) = galley {
+            let pos = egui::pos2(
+                rect.left() + extra.x,
+                rect.center().y - galley.size().y / 2.0,
+            );
+            ui.painter().galley(pos, galley, visuals.text_color());
+        }
+    }
+    response
+}
+
+pub fn name_edit(ui: &mut egui::Ui, name: &mut String, width: f32) -> egui::Response {
+    ui.scope(|ui| {
+        ui.spacing_mut().interact_size.y = 0.0;
+        ui.add(
+            egui::TextEdit::singleline(name)
+                .margin(egui::Margin::symmetric(4, 2))
+                // TextEdit now takes an outer width instead of a text-area width.
+                .desired_width(width + SPACE_2),
+        )
+    })
+    .inner
+}
 
 pub fn toolbar_frame() -> egui::Frame {
     egui::Frame::new()
         .fill(BG_PANEL)
         .inner_margin(egui::Margin::symmetric(SPACE_4 as i8, 0))
+}
+
+pub fn sidebar_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(BG_PANEL)
+        .inner_margin(SPACE_4)
+        // Panels now reserve their separator outside the frame.
+        .outer_margin(egui::Margin {
+            right: -1,
+            ..Default::default()
+        })
 }
 
 pub fn history_button(ui: &mut egui::Ui, enabled: bool, glyph: &str) -> egui::Response {
@@ -133,6 +218,19 @@ pub fn muted(text: impl Into<String>) -> RichText {
     RichText::new(text).size(SIZE_CAPTION).color(TEXT_MUTED)
 }
 
+pub fn window_title(ctx: &egui::Context, text: &str) -> egui::Atoms<'static> {
+    let font = bold_font(SIZE_HEADING_M);
+    let height = ctx.fonts_mut(|fonts| fonts.row_height(&font));
+    let mut atoms =
+        egui::Atoms::new(RichText::new(text.to_owned()).line_height(Some(CONTROL_HEIGHT)));
+    // Balance the close button so the title stays centered on the full window.
+    atoms.push_left(egui::Atom::custom(
+        egui::IdSalt::new("title_balance"),
+        Vec2::new(height + SPACE_2, 0.0),
+    ));
+    atoms
+}
+
 /// Data colors are independent of interface roles. All opaque line/marker colors
 /// have >=3:1 contrast on white. The heatmap and the translucent ray bundle are
 /// density displays, not UI ink: their overlap carries the information.
@@ -143,7 +241,14 @@ pub mod viz {
     pub const HALF_COLOR: Color32 = Color32::from_rgb(188, 48, 92);
     /// Ray segment colour; opacity follows the relative branch weight `t` in [0, 1].
     pub fn ray(t: f64) -> Color32 {
-        Color32::from_rgba_unmultiplied(224, 135, 48, (25.0 + 155.0 * t.sqrt()) as u8)
+        // 0.31 premultiplied in linear space before encoding back to sRGB.
+        let alpha = (25.0 + 155.0 * t.sqrt()) as u8;
+        let premultiply = |value| {
+            eframe::egui::ecolor::gamma_u8_from_linear_f32(
+                eframe::egui::ecolor::linear_f32_from_gamma_u8(value) * f32::from(alpha) / 255.0,
+            )
+        };
+        Color32::from_rgba_premultiplied(premultiply(224), premultiply(135), premultiply(48), alpha)
     }
     pub const GEOMETRY: Color32 = Color32::from_rgb(104, 139, 172);
     pub const ROI: Color32 = Color32::from_rgb(46, 139, 87);
@@ -165,8 +270,7 @@ pub mod viz {
 }
 
 pub fn install(ctx: &egui::Context) {
-    // set_style targets the currently active theme. Pin light before installing:
-    // the first native input event may otherwise switch from dark to light defaults.
+    // Pin the light theme before the first native input event.
     ctx.set_theme(egui::Theme::Light);
     let mut fonts = egui::FontDefinitions::default();
     for (name, bytes) in [
@@ -210,7 +314,7 @@ pub fn install(ctx: &egui::Context) {
         .splice(0..0, ["Noto Sans Mono".into(), "Noto Sans JP".into()]);
     ctx.set_fonts(fonts);
 
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.style_of(egui::Theme::Light)).clone();
     for text_style in [
         egui::TextStyle::Small,
         egui::TextStyle::Body,
@@ -230,7 +334,9 @@ pub fn install(ctx: &egui::Context) {
     style.spacing.button_padding = Vec2::new(SPACE_3, SPACE_3 / 2.0);
     style.spacing.interact_size = Vec2::new(SPACE_6, SPACE_8);
     style.spacing.window_margin = egui::Margin::same(SPACE_4 as i8);
+    style.spacing.scroll.fade.strength = 0.0;
     let mut visuals = egui::Visuals::light();
+    visuals.text_options.font_hinting = false;
     let widget = |fill, border, text| egui::style::WidgetVisuals {
         bg_fill: fill,
         weak_bg_fill: fill,
@@ -267,33 +373,34 @@ pub fn install(ctx: &egui::Context) {
     };
     visuals.popup_shadow = visuals.window_shadow;
     style.visuals = visuals;
-    ctx.set_style(style);
+    ctx.set_style_of(egui::Theme::Light, style);
 
-    // egui 0.31 exposes one focus stroke, shared with active widgets. Paint two
-    // layers after widgets instead. read_response only knows the interaction rect:
+    // Paint the two DADS focus layers after widgets.
+    // read_response only knows the interaction rect:
     // partly scrolled/clipped widgets get a ring around their visible rect. Pointer
     // focus also receives the ring; native OS dialogs are outside egui's control.
     ctx.on_end_pass(
         "DADS focus ring",
         std::sync::Arc::new(|ctx| {
             let focused = ctx.memory(|m| m.focused());
-            if let Some(response) = focused.and_then(|id| ctx.read_response(id)) {
-                if response.enabled() && response.interact_rect.is_positive() {
-                    let painter = ctx.layer_painter(response.layer_id);
-                    let rect = response.interact_rect;
-                    painter.rect_stroke(
-                        rect.expand(SPACE_1 - 1.0),
-                        RADIUS_PANEL,
-                        Stroke::new(3.0_f32, FOCUS_RING),
-                        egui::StrokeKind::Outside,
-                    );
-                    painter.rect_stroke(
-                        rect.expand(1.0),
-                        RADIUS_CONTROL,
-                        Stroke::new(2.0_f32, FOCUS_INNER),
-                        egui::StrokeKind::Outside,
-                    );
-                }
+            if let Some(response) = focused.and_then(|id| ctx.read_response(id))
+                && response.enabled()
+                && response.interact_rect.is_positive()
+            {
+                let painter = ctx.layer_painter(response.layer_id);
+                let rect = response.interact_rect;
+                painter.rect_stroke(
+                    rect.expand(SPACE_1 - 1.0),
+                    RADIUS_PANEL,
+                    Stroke::new(3.0_f32, FOCUS_RING),
+                    egui::StrokeKind::Outside,
+                );
+                painter.rect_stroke(
+                    rect.expand(1.0),
+                    RADIUS_CONTROL,
+                    Stroke::new(2.0_f32, FOCUS_INNER),
+                    egui::StrokeKind::Outside,
+                );
             }
         }),
     );
@@ -330,6 +437,12 @@ pub fn component_button(ui: &mut egui::Ui, label: String, selected: bool) -> egu
                     }))
                     .min_size(Vec2::new(width, SPACE_8))
                     .selected(selected)
+                    .corner_radius(egui::CornerRadius::ZERO)
+                    .stroke(if selected {
+                        ui.visuals().selection.stroke
+                    } else {
+                        Stroke::NONE
+                    })
                     .frame(selected),
                 )
             },
@@ -373,12 +486,7 @@ pub fn tab<T: PartialEq>(
         egui::Sense::click(),
     );
     response.widget_info(|| {
-        egui::WidgetInfo::selected(
-            egui::WidgetType::SelectableLabel,
-            ui.is_enabled(),
-            selected,
-            label,
-        )
+        egui::WidgetInfo::selected(egui::Role::Tab, ui.is_enabled(), selected, label)
     });
     let rect = response.rect;
     let hover = response.hovered() && !selected;
@@ -577,8 +685,8 @@ mod tests {
         for active in 0..3 {
             let mut value = active;
             let mut rects = Vec::new();
-            let output = ctx.run(egui::RawInput::default(), |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
+            let output = crate::gui::test_support::run_ui(&ctx, egui::RawInput::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     let row = ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = -TAB_LINE_WIDTH;
                         for (target, label) in ["First", "Second", "Third"].into_iter().enumerate()
@@ -664,8 +772,8 @@ mod tests {
                 },
                 ..Default::default()
             };
-            let output = ctx.run(input, |ctx| {
-                egui::CentralPanel::default().show(ctx, |ui| {
+            let output = crate::gui::test_support::run_ui(&ctx, input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
                     rect = tab(ui, &mut false, true, "Hover", BG_RAISED).rect;
                 });
             });
@@ -718,20 +826,20 @@ mod tests {
     fn installed_fonts_sizes_and_keyboard_focus_ring() {
         let ctx = egui::Context::default();
         install(&ctx);
-        let style = ctx.style();
+        let style = ctx.style_of(egui::Theme::Light);
         assert!(style.text_styles.values().all(|f| f.size >= SIZE_CAPTION));
         assert_eq!(
             style.text_styles[&egui::TextStyle::Heading],
             bold_font(SIZE_HEADING_M)
         );
-        let output = ctx.run(egui::RawInput::default(), |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
+        let output = crate::gui::test_support::run_ui(&ctx, egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
                 for font in [
                     FontId::proportional(SIZE_BODY),
                     FontId::monospace(SIZE_BODY),
                     bold_font(SIZE_BODY),
                 ] {
-                    assert!(ui.fonts(|f| f.has_glyphs(&font, "日本語 ▶ ↶ ↷ ✓")));
+                    assert!(ui.fonts_mut(|f| f.has_glyphs(&font, "日本語 ▶ ↶ ↷ ✓")));
                 }
                 let response = ui.button("Focus");
                 response.request_focus();

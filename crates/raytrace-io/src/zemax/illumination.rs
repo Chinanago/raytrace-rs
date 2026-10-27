@@ -95,7 +95,7 @@ pub(super) fn sources(
         _ => {
             return Err(crate::Error::zmx(
                 "RAIMは0（Off）・1（Paraxial）・2（Real）に対応しています".into(),
-            ))
+            ));
         }
     };
     let stop = blocks
@@ -207,10 +207,9 @@ pub(super) fn sources(
                 .as_ref()
                 .and_then(|p| p.optical.as_ref())
                 .is_some_and(|p| p.finite_field_angle_deg.is_some())
+                && let Some(g) = raytrace_core::illumination::pupil_geometry(&prepared, i)?
             {
-                if let Some(g) = raytrace_core::illumination::pupil_geometry(&prepared, i)? {
-                    s.origin_mm = g.object_origin_mm;
-                }
+                s.origin_mm = g.object_origin_mm;
             }
         }
     }

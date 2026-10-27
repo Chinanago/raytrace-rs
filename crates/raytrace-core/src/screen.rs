@@ -1,6 +1,6 @@
 //! Screen post-processing. Detector weights remain integrated power per pixel.
-use crate::trace::DetectorMap;
 use crate::Result;
+use crate::trace::DetectorMap;
 
 #[derive(Clone, Debug)]
 pub struct HalfMaximum {

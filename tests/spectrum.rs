@@ -4,7 +4,7 @@ use raytrace_rs::{
     project::Project,
     record::RunContext,
     spectrum::Spectrum,
-    trace::{trace, TraceOptions},
+    trace::{TraceOptions, trace},
 };
 use serde_json::json;
 use std::{
@@ -79,9 +79,11 @@ fn spectral_sobol_matches_power_weights_without_position_correlation_and_replays
     near(result.budget.detected, 4.);
     let mut overridden = p;
     overridden.monochromatic_override_um = Some(0.55);
-    assert!(overridden.trace_scene().unwrap().sources[0]
-        .spectrum
-        .is_none());
+    assert!(
+        overridden.trace_scene().unwrap().sources[0]
+            .spectrum
+            .is_none()
+    );
 }
 
 #[test]
@@ -109,7 +111,9 @@ fn spectra_and_catalog_absorption_enforce_the_whole_supported_band() {
 }
 
 fn diode(color: &str) -> String {
-    format!("MODE NSC\nUNIT MM\nWAVM 1 0.45 1\nWAVM 2 0.55 2\nWAVM 3 0.65 1\nSURF 1\n TYPE NONSEQCO\n NSOH NSC_SDIO 0 0\n NSOP 0 0 -1 0 0 0\n NSOD 2 256\n NSOD 4 0\n NSCS 7 3 {color}\n NSOH NSC_DETC 0 0\n NSOP 0 0 2 0 0 0 ABSORB\n NSOD 1 10\n NSOD 2 10\n NSOD 3 4\n NSOD 4 4\n")
+    format!(
+        "MODE NSC\nUNIT MM\nWAVM 1 0.45 1\nWAVM 2 0.55 2\nWAVM 3 0.65 1\nSURF 1\n TYPE NONSEQCO\n NSOH NSC_SDIO 0 0\n NSOP 0 0 -1 0 0 0\n NSOD 2 256\n NSOD 4 0\n NSCS 7 3 {color}\n NSOH NSC_DETC 0 0\n NSOP 0 0 2 0 0 0 ABSORB\n NSOD 1 10\n NSOD 2 10\n NSOD 3 4\n NSOD 4 4\n"
+    )
 }
 
 #[test]
@@ -142,13 +146,15 @@ fn nsc_spcd_is_embedded_and_inactive_spectrum_files_are_ignored() {
     fs::write(&path, diode("4 0 0 0 0.45 0.65 3 \"missing.SPCD\"")).unwrap();
     let uniform = Project::open(&path, &[]).unwrap();
     assert!(uniform.trace_scene().is_ok());
-    assert!(uniform.scene.sources[0]
-        .spectrum
-        .as_ref()
-        .unwrap()
-        .samples
-        .iter()
-        .all(|s| s[1] == 1.));
+    assert!(
+        uniform.scene.sources[0]
+            .spectrum
+            .as_ref()
+            .unwrap()
+            .samples
+            .iter()
+            .all(|s| s[1] == 1.)
+    );
     fs::write(&path, diode("7 5000 0 0 0.45 0.65 3 \"missing.SPCD\"")).unwrap();
     let blackbody = Project::open(&path, &[]).unwrap();
     assert!(blackbody.trace_scene().is_ok());

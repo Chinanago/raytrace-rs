@@ -1,7 +1,7 @@
 use raytrace_core::{
+    Error,
     math::V3,
     model::{Aperture, Interaction, Material, Mode, Ray, Scene, Settings, Shape, Surface},
-    Error,
 };
 use raytrace_io::zemax::read_zmx;
 
@@ -98,7 +98,7 @@ fn catalog_wavelength_error_retains_material_wavelength_and_launch() {
 #[test]
 fn library_errors_are_thread_safe_standard_errors() {
     fn check<T: std::error::Error + Send + Sync + 'static>() {}
-    check::<raytrace_core::Error>();
+    check::<Error>();
     check::<raytrace_io::Error>();
     check::<raytrace_app::Error>();
     check::<raytrace_rs::error::CoreError>();
