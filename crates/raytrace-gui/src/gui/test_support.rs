@@ -1,11 +1,23 @@
 use super::*;
 
+pub(super) fn run_ui(
+    ctx: &egui::Context,
+    input: egui::RawInput,
+    ui: impl FnMut(&mut egui::Ui),
+) -> egui::FullOutput {
+    let mut output = ctx.run_ui(input, ui);
+    // These tests inspect shapes without uploading textures to a renderer.
+    output.textures_delta.clear();
+    output
+}
+
 pub(super) fn frame(
     app: &mut App,
     ctx: &egui::Context,
     events: Vec<egui::Event>,
 ) -> egui::FullOutput {
-    ctx.run(
+    run_ui(
+        ctx,
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 Pos2::ZERO,
@@ -14,11 +26,12 @@ pub(super) fn frame(
             events,
             ..Default::default()
         },
-        |ctx| {
-            app.toolbar(ctx);
-            app.sidebar(ctx);
-            app.content(ctx);
-            app.details_window(ctx);
+        |ui| {
+            app.toolbar(ui);
+            app.sidebar(ui);
+            let workspace = ui.available_rect_before_wrap();
+            app.content(ui);
+            app.details_window(ui.ctx(), workspace);
         },
     )
 }
@@ -60,7 +73,7 @@ pub(super) fn click(app: &mut App, ctx: &egui::Context, p: Pos2) -> egui::FullOu
 }
 
 pub(super) fn calculate_demo(app: &mut App) {
-    use raytrace_core::trace::{trace, TraceOptions};
+    use raytrace_core::trace::{TraceOptions, trace};
     let mut scene = app.project.trace_scene().unwrap();
     for source in &mut scene.sources {
         source.count = 64;

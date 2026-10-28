@@ -3,7 +3,7 @@ use raytrace_rs::{
     math::{Frame, Pose, V3},
     model::Interaction,
     project::Project,
-    trace::{trace, TraceOptions},
+    trace::{TraceOptions, trace},
     zemax,
 };
 use std::{
@@ -145,11 +145,13 @@ fn unsupported_fields_block_system_but_keep_optic_import_available() {
             let mut p = p;
             p.scene.surfaces[0].interaction = Interaction::Mirror { reflectance: 1. };
             let optic = Component::imported(p, ComponentKind::Optic).unwrap();
-            assert!(!optic
-                .project
-                .issues
-                .iter()
-                .any(|i| i.code == "illumination_definition"));
+            assert!(
+                !optic
+                    .project
+                    .issues
+                    .iter()
+                    .any(|i| i.code == "illumination_definition")
+            );
         }
     }
 }

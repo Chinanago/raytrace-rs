@@ -20,12 +20,25 @@ mod sequential;
 mod text;
 mod write;
 
-use materials::{catalogs, material_id, Glass};
+use materials::{Glass, catalogs, material_id};
 use nsc::read_nsc;
 use sequential::read_sequential;
+pub use text::{TextEncoding, decode, read_spcd};
 use text::{checked_parameters, encode, field, number, parameters, pose_from, scalar, words};
-pub use text::{decode, read_spcd, TextEncoding};
 pub use write::export;
+
+/// Read one glass through the native AGF parser without importing geometry.
+pub fn read_catalog_material(directory: &Path, catalog: &str, name: &str) -> Result<Material> {
+    let glasses = catalogs(
+        &directory.join("reference.zmx"),
+        &[directory.to_path_buf()],
+        &[catalog.into()],
+    );
+    glasses
+        .get(&name.to_uppercase())
+        .ok_or_else(|| crate::Error::Agf(format!("Glass {name} absent from {catalog}")))?
+        .material()
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ZmxDocument {

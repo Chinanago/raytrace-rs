@@ -1,6 +1,6 @@
 use super::{
     nurbs,
-    step::{field, Table, Value},
+    step::{Table, Value, field},
 };
 use crate::Result;
 use raytrace_core::math::V3;
@@ -85,7 +85,7 @@ fn direction(table: &Table, id: usize) -> Result<V3> {
         _ => {
             return Err(crate::Error::step(format!(
                 "STEP #{id}: 方向の座標数が不正です"
-            )))
+            )));
         }
     };
     unit(v)
@@ -346,10 +346,8 @@ impl Surface {
                 } else {
                     false
                 };
-                if !singular {
-                    if let Ok(n) = unit(du.cross(dv)) {
-                        return Ok(n);
-                    }
+                if !singular && let Ok(n) = unit(du.cross(dv)) {
+                    return Ok(n);
                 }
                 if let Self::Spline(s, _) = self {
                     let ranges = [s.u.range(), s.v.range()];

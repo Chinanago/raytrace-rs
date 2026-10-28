@@ -1,6 +1,6 @@
 //! Conservative world-space broad phase; the original surface solvers remain authoritative.
 use crate::{
-    geometry::{intersect, search_start, Hit, Miss, RAY_EPS_MM},
+    geometry::{Hit, Miss, RAY_EPS_MM, intersect, search_start},
     math::V3,
     model::PreparedSurface,
 };
@@ -228,12 +228,11 @@ pub(crate) fn nearest(
                 hit = Some((i, candidate))
             }
             Err(Miss::Numerical) => {
-                if let Some(start) = search_start(surface, p, d) {
-                    if numerical
+                if let Some(start) = search_start(surface, p, d)
+                    && numerical
                         .is_none_or(|(j, previous)| start < previous || start == previous && i < j)
-                    {
-                        numerical = Some((i, start));
-                    }
+                {
+                    numerical = Some((i, start));
                 }
             }
             _ => (),

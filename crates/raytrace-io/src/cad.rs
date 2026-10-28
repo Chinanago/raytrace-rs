@@ -118,14 +118,13 @@ fn load_cached(path: &Path, deflection_mm: f64, cache_dir: &Path) -> Result<Shap
     check_tolerance(deflection_mm)?;
     let bytes = read_step(path)?;
     let cache = cache_dir.join(cache_key(&bytes, deflection_mm));
-    if fs::metadata(&cache).is_ok_and(|m| m.len() <= 512 * 1024 * 1024) {
-        if let Ok(bytes) = fs::read(&cache) {
-            if let Ok(saved) = serde_json::from_slice::<CachedMesh>(&bytes) {
-                if saved.format == CACHE_FORMAT && usable(&saved.shape) {
-                    return Ok(saved.shape);
-                }
-            }
-        }
+    if fs::metadata(&cache).is_ok_and(|m| m.len() <= 512 * 1024 * 1024)
+        && let Ok(bytes) = fs::read(&cache)
+        && let Ok(saved) = serde_json::from_slice::<CachedMesh>(&bytes)
+        && saved.format == CACHE_FORMAT
+        && usable(&saved.shape)
+    {
+        return Ok(saved.shape);
     }
     let shape = mesh(&bytes, deflection_mm)?;
     // An unwritable/corrupt optional cache must not prevent geometry import.

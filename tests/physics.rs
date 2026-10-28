@@ -1,8 +1,8 @@
 use raytrace_rs::geometry::{dielectric, intersect, sag};
 use raytrace_rs::math::{Frame, Pose, V3};
 use raytrace_rs::model::{Material, Mode, PreparedScene, Ray, Scene};
-use raytrace_rs::trace::{trace, TraceOptions};
-use serde_json::{json, Value};
+use raytrace_rs::trace::{TraceOptions, trace};
+use serde_json::{Value, json};
 
 fn near(a: f64, b: f64, tolerance: f64) {
     assert!((a - b).abs() < tolerance, "{a} != {b}");

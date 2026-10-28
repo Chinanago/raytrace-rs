@@ -74,9 +74,11 @@ fn convergence_varies_one_axis_at_a_time_and_saves_replayable_conditions() {
             + usize::from(a.settings.cad_deflection_mm != b.settings.cad_deflection_mm);
         assert_eq!(changed, 1);
         assert_eq!(comparison.detectors[0].comparison_pixels, [8, 8]);
-        assert!(comparison.detectors[0]
-            .distribution_l1_percent_of_reference
-            .is_finite());
+        assert!(
+            comparison.detectors[0]
+                .distribution_l1_percent_of_reference
+                .is_finite()
+        );
     }
     let first = &report.cases[0];
     let run = RunRecord::open(&dir.join("runs").join(first.run_file.as_ref().unwrap())).unwrap();

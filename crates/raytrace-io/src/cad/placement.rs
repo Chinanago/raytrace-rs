@@ -1,6 +1,6 @@
 use super::{
-    geometry::{frame, point, Transform},
-    step::{field, Table, Value},
+    geometry::{Transform, frame, point},
+    step::{Table, Value, field},
 };
 use crate::Result;
 use raytrace_core::math::V3;

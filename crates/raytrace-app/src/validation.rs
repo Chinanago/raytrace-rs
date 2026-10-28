@@ -3,7 +3,7 @@ use crate::Result;
 use raytrace_core::{
     math::{Frame, Pose, V3},
     model::*,
-    trace::{trace, Report, TraceOptions},
+    trace::{Report, TraceOptions, trace},
 };
 use raytrace_io::{project::Project, record::RunContext, zemax};
 use serde::Serialize;

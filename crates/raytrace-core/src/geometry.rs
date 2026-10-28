@@ -179,25 +179,24 @@ pub fn intersect_ordered(surface: &PreparedSurface, p_world: V3, d_world: V3) ->
         if p.0[2] >= surface.local_bounds[0].0[2] - tolerance
             && p.0[2] <= surface.local_bounds[1].0[2] + tolerance
             && surface.spec.aperture.contains(p.0[0], p.0[1])
+            && let Some((z, gx, gy)) = sag(&surface.spec.shape, p.0[0], p.0[1])
         {
-            if let Some((z, gx, gy)) = sag(&surface.spec.shape, p.0[0], p.0[1]) {
-                let normal = if matches!(surface.spec.shape, Shape::Plane) {
-                    surface.frame.plane_normal()
-                } else {
-                    surface
-                        .frame
-                        .world_vector(V3([-gx, -gy, 1.0]).unit())
-                        .unit()
-                };
-                if (p.0[2] - z).abs() <= tolerance && d_world.dot(normal).abs() > 1e-14 {
-                    return Ok(Hit {
-                        geometric_normal: normal,
-                        distance_mm: 0.0,
-                        point: p_world,
-                        local_point: p,
-                        normal,
-                    });
-                }
+            let normal = if matches!(surface.spec.shape, Shape::Plane) {
+                surface.frame.plane_normal()
+            } else {
+                surface
+                    .frame
+                    .world_vector(V3([-gx, -gy, 1.0]).unit())
+                    .unit()
+            };
+            if (p.0[2] - z).abs() <= tolerance && d_world.dot(normal).abs() > 1e-14 {
+                return Ok(Hit {
+                    geometric_normal: normal,
+                    distance_mm: 0.0,
+                    point: p_world,
+                    local_point: p,
+                    normal,
+                });
             }
         }
     }

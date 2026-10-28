@@ -3,7 +3,7 @@ use raytrace_rs::{
     math::V3,
     model::{Material, Ray, Scene},
     project::Project,
-    trace::{trace, TraceOptions},
+    trace::{TraceOptions, trace},
     zemax,
 };
 use serde_json::json;
@@ -84,9 +84,11 @@ fn coatings_phases_and_catalog_absorption_roundtrip_without_input_files() {
     let c = detected(&restored);
     assert!((a.0 - c.0).abs() < 1e-12);
     assert!((a.1 - c.1).abs() < 1e-11);
-    assert!(fs::read_to_string(out.join("native.raytrace-coatings.DAT"))
-        .unwrap()
-        .contains("17 29 31 43"));
+    assert!(
+        fs::read_to_string(out.join("native.raytrace-coatings.DAT"))
+            .unwrap()
+            .contains("17 29 31 43")
+    );
 }
 #[test]
 fn nsc_wave_edit_does_not_change_the_other_sources_system_spectrum() {
@@ -131,10 +133,12 @@ fn nsc_wave_edit_does_not_change_the_other_sources_system_spectrum() {
         &restore.join("restored.zmx"),
     )
     .unwrap();
-    assert!(Project::open(&restore.join("restored.zmx"), &[])
-        .unwrap()
-        .trace_scene()
-        .is_ok());
+    assert!(
+        Project::open(&restore.join("restored.zmx"), &[])
+            .unwrap()
+            .trace_scene()
+            .is_ok()
+    );
 }
 #[test]
 fn unsupported_exports_and_conflicting_sidecars_preserve_existing_files() {

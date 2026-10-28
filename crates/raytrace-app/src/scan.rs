@@ -3,7 +3,7 @@ use crate::Result;
 use raytrace_core::{
     model::Interaction,
     screen::ScreenAnalysis,
-    trace::{trace_generated_controlled, TraceControl, TraceOptions},
+    trace::{TraceControl, TraceOptions, trace_generated_controlled},
 };
 use raytrace_io::{
     project::Project,

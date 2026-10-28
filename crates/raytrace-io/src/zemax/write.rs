@@ -10,16 +10,15 @@ pub fn export(project: &Project, path: &Path) -> Result<()> {
         ));
     }
     let mut sidecars = exchange::recover(project, path)?;
-    if let Some(original) = &project.zemax {
-        if serde_json::to_value(&project.scene).map_err(|e| crate::Error::json(None, e))?
+    if let Some(original) = &project.zemax
+        && serde_json::to_value(&project.scene).map_err(|e| crate::Error::json(None, e))?
             == serde_json::to_value(&original.baseline_scene)
                 .map_err(|e| crate::Error::json(None, e))?
-        {
-            copy_dependencies(original, path)?;
-            exchange::write(&sidecars)?;
-            return fs::write(path, encode(&original.text, &original.encoding)?)
-                .map_err(|e| crate::Error::io(path, e));
-        }
+    {
+        copy_dependencies(original, path)?;
+        exchange::write(&sidecars)?;
+        return fs::write(path, encode(&original.text, &original.encoding)?)
+            .map_err(|e| crate::Error::io(path, e));
     }
     let scene = &project.scene;
     scene.clone().prepare()?;
@@ -56,14 +55,14 @@ pub fn export(project: &Project, path: &Path) -> Result<()> {
                 .into(),
         ));
     }
-    if scene.mode == Mode::NonSequential {
-        if let Some(original) = &project.zemax {
-            let text = patch_nsc(project, original, path, &mut sidecars)?;
-            let bytes = encode(&text, &original.encoding)?;
-            copy_dependencies(original, path)?;
-            exchange::write(&sidecars)?;
-            return fs::write(path, bytes).map_err(|e| crate::Error::io(path, e));
-        }
+    if scene.mode == Mode::NonSequential
+        && let Some(original) = &project.zemax
+    {
+        let text = patch_nsc(project, original, path, &mut sidecars)?;
+        let bytes = encode(&text, &original.encoding)?;
+        copy_dependencies(original, path)?;
+        exchange::write(&sidecars)?;
+        return fs::write(path, bytes).map_err(|e| crate::Error::io(path, e));
     }
     if scene.mode != Mode::Sequential {
         return Err(crate::Error::zmx("非シーケンシャルZMXは元定義の無変更保存に対応しています。編集したモデルはJSONプロジェクトで保存してください".into()));
@@ -259,7 +258,7 @@ pub fn export(project: &Project, path: &Path) -> Result<()> {
             _ => {
                 return Err(crate::Error::zmx(
                     "この面形状の逐次ZMX書出しは未対応です".into(),
-                ))
+                ));
             }
         };
         let (hx, hy) = s.aperture.bounds();
@@ -302,7 +301,7 @@ pub fn export(project: &Project, path: &Path) -> Result<()> {
             _ => {
                 return Err(crate::Error::zmx(
                     "固定反射率・ミラー・中間検出器のZMX書出しは未対応です".into(),
-                ))
+                ));
             }
         }
         if let Aperture::Rectangle { .. } = s.aperture {
@@ -367,7 +366,10 @@ pub fn export(project: &Project, path: &Path) -> Result<()> {
             .sources
             .first()
             .map_or(1.0, |s| 2.0 * s.disk_radius_mm.max(0.01));
-        let mut head=format!("VERS 260000 0 0\r\nMODE SEQ\r\nNAME {}\r\nUNIT MM X W X CM MR CPMM\r\nENPD {pupil}\r\nENVD 20 1 0\r\nGCAT {catalog}\r\nFTYP 0 0 1 1 0 0 0\r\nXFLN 0\r\nYFLN 0\r\nPWAV 1\r\n",scene.name.replace(['\r','\n']," "));
+        let mut head = format!(
+            "VERS 260000 0 0\r\nMODE SEQ\r\nNAME {}\r\nUNIT MM X W X CM MR CPMM\r\nENPD {pupil}\r\nENVD 20 1 0\r\nGCAT {catalog}\r\nFTYP 0 0 1 1 0 0 0\r\nXFLN 0\r\nYFLN 0\r\nPWAV 1\r\n",
+            scene.name.replace(['\r', '\n'], " ")
+        );
         for (i, [w, weight]) in waves.iter().enumerate() {
             head.push_str(&format!("WAVM {} {w:.17e} {weight:.17e}\r\n", i + 1));
         }
@@ -609,10 +611,10 @@ fn patch_nsc(
         let w = words(line);
         if matches!(w.first(), Some(&"NSOH") | Some(&"SURF")) {
             append_missing_parameters(&mut lines, current_source, &seen, &values);
-            if !saw_spectrum {
-                if let Some(row) = current_source.and_then(|i| spectral.settings[i].as_ref()) {
-                    lines.push(row.clone());
-                }
+            if !saw_spectrum
+                && let Some(row) = current_source.and_then(|i| spectral.settings[i].as_ref())
+            {
+                lines.push(row.clone());
             }
             saw_spectrum = false;
             seen.clear();
@@ -630,20 +632,20 @@ fn patch_nsc(
                 source_index += 1;
             }
         }
-        if w.first() == Some(&"NSOP") {
-            if let Some(pose) = object_index.checked_sub(1).and_then(|i| local_poses.get(i)) {
-                lines.push(format!(
-                    "  NSOP {} {} {} {} {} {} {}",
-                    pose.translation_mm.0[0],
-                    pose.translation_mm.0[1],
-                    pose.translation_mm.0[2],
-                    pose.rotation_deg.0[0],
-                    pose.rotation_deg.0[1],
-                    pose.rotation_deg.0[2],
-                    w.get(7..).unwrap_or(&[]).join(" ")
-                ));
-                continue;
-            }
+        if w.first() == Some(&"NSOP")
+            && let Some(pose) = object_index.checked_sub(1).and_then(|i| local_poses.get(i))
+        {
+            lines.push(format!(
+                "  NSOP {} {} {} {} {} {} {}",
+                pose.translation_mm.0[0],
+                pose.translation_mm.0[1],
+                pose.translation_mm.0[2],
+                pose.rotation_deg.0[0],
+                pose.rotation_deg.0[1],
+                pose.rotation_deg.0[2],
+                w.get(7..).unwrap_or(&[]).join(" ")
+            ));
+            continue;
         }
         if w.starts_with(&["NSCS", "7", "3"]) {
             saw_spectrum = true;
@@ -652,29 +654,28 @@ fn patch_nsc(
                 continue;
             }
         }
-        if w.first() == Some(&"NSOD") && w.len() >= 3 {
-            if let Some(i) = current_source {
-                let k = w[1].parse::<usize>().unwrap_or(0);
-                seen.insert(k);
-                let value = values[i].get(&k);
-                if let Some(value) = value {
-                    lines.push(format!(
-                        "  NSOD {} {:.17e} {}",
-                        w[1],
-                        value,
-                        w.get(3..).unwrap_or(&[]).join(" ")
-                    ));
-                    continue;
-                }
+        if w.first() == Some(&"NSOD")
+            && w.len() >= 3
+            && let Some(i) = current_source
+        {
+            let k = w[1].parse::<usize>().unwrap_or(0);
+            seen.insert(k);
+            let value = values[i].get(&k);
+            if let Some(value) = value {
+                lines.push(format!(
+                    "  NSOD {} {:.17e} {}",
+                    w[1],
+                    value,
+                    w.get(3..).unwrap_or(&[]).join(" ")
+                ));
+                continue;
             }
         }
         lines.push(line.into());
     }
     append_missing_parameters(&mut lines, current_source, &seen, &values);
-    if !saw_spectrum {
-        if let Some(row) = current_source.and_then(|i| spectral.settings[i].as_ref()) {
-            lines.push(row.clone());
-        }
+    if !saw_spectrum && let Some(row) = current_source.and_then(|i| spectral.settings[i].as_ref()) {
+        lines.push(row.clone());
     }
     Ok(lines.join("\r\n") + "\r\n")
 }

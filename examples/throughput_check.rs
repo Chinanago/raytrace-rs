@@ -4,7 +4,7 @@ use raytrace_rs::{
     geometry::intersect_ordered,
     model::{Mode, Scene},
     spectrum::Spectrum,
-    trace::{trace, trace_generated, TraceOptions},
+    trace::{TraceOptions, trace, trace_generated},
 };
 use std::{hint::black_box, time::Instant};
 
@@ -162,7 +162,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "explicit_samples_seconds": explicit, "streaming_samples_seconds": streaming,
             "source_signature": source_signature,
             "report_signature": fingerprint(&serde_json::to_vec(&expected)?),
-            "launch_array_bytes": rays.len()*std::mem::size_of::<raytrace_rs::model::Ray>(),
+            "launch_array_bytes": rays.len()*size_of::<raytrace_rs::model::Ray>(),
             "report": expected
         }));
         eprintln!("{name}: completed {count} rays, {threads} threads");

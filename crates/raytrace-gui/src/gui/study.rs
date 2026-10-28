@@ -1,6 +1,6 @@
 use super::*;
 use raytrace_app::scan::{
-    linear_values, Parameter, ParameterLink, ScanAxis, ScanCase, ScanManifest, ScanPlan,
+    Parameter, ParameterLink, ScanAxis, ScanCase, ScanManifest, ScanPlan, linear_values,
 };
 use raytrace_io::record::RunRecord;
 
@@ -385,7 +385,7 @@ mod tests {
     fn gui_checks_the_total_before_generating_rays_and_can_cancel_a_single_trace() {
         let mut app = App::demo();
         let ctx = egui::Context::default();
-        theme::install(&ctx);
+        install(&ctx);
         for s in &mut app.project.assembly.as_mut().unwrap().components[0]
             .project
             .scene
@@ -401,10 +401,11 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
             app.poll(&ctx);
         }
-        assert!(app
-            .error
-            .as_ref()
-            .is_some_and(|e| e.contains("合計1〜2,000,000")));
+        assert!(
+            app.error
+                .as_ref()
+                .is_some_and(|e| e.contains("合計1〜2,000,000"))
+        );
         app.error = None;
         for s in &mut app.project.assembly.as_mut().unwrap().components[0]
             .project
@@ -428,7 +429,7 @@ mod tests {
     fn study_can_run_select_a_saved_case_and_compare_screens_without_retracing_the_full_case() {
         let mut app = App::demo();
         let ctx = egui::Context::default();
-        theme::install(&ctx);
+        install(&ctx);
         let dir = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
             .join("target/study_ui_tests")
             .join(format!("{}", std::process::id()));
@@ -443,14 +444,15 @@ mod tests {
         app.launch_study(&ctx, false);
         assert!(app.job.is_some());
         wait(&mut app, &ctx);
-        assert!(app
-            .study
-            .manifest
-            .as_ref()
-            .unwrap()
-            .cases
-            .iter()
-            .all(|c| c.state == "completed"));
+        assert!(
+            app.study
+                .manifest
+                .as_ref()
+                .unwrap()
+                .cases
+                .iter()
+                .all(|c| c.state == "completed")
+        );
         let path = app
             .study
             .directory
@@ -482,7 +484,8 @@ mod tests {
         wait(&mut app, &ctx);
         assert_eq!(app.study.comparisons.len(), 2);
         assert!(app.study.comparison_max > 0.0);
-        let output = ctx.run(
+        let output = test_support::run_ui(
+            &ctx,
             egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     Pos2::ZERO,

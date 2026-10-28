@@ -4,7 +4,7 @@ use raytrace_rs::{
     math::{Pose, V3},
     mesh::MeshAccel,
     model::{Aperture, Interaction, Material, Mode, Ray, Scene, Settings, Shape, Surface},
-    trace::{trace, Report, TraceOptions},
+    trace::{Report, TraceOptions, trace},
 };
 use std::{env, fs, path::Path, time::Instant};
 #[path = "../tests/support/step.rs"]

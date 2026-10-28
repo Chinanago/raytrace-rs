@@ -3,15 +3,16 @@ use super::*;
 use raytrace_core::math::Pose;
 
 impl App {
-    pub(super) fn sidebar(&mut self, ctx: &egui::Context) {
+    pub(super) fn sidebar(&mut self, ui: &mut egui::Ui) {
+        let ctx = &ui.ctx().clone();
         if self.view != View::Layout {
             return;
         }
-        egui::SidePanel::left("parts")
-            .exact_width(340.0)
+        egui::Panel::left("parts")
+            .exact_size(340.0)
             .resizable(false)
-            .frame(egui::Frame::new().fill(BG_PANEL).inner_margin(16.0))
-            .show(ctx, |ui| {
+            .frame(sidebar_frame())
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("部品")
@@ -62,12 +63,11 @@ impl App {
             .show(ui, |ui| {
                 for (i, c) in assembly.components.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
-                        changed |= ui
-                            .checkbox(&mut c.enabled, "")
+                        changed |= checkbox(ui, &mut c.enabled, "")
                             .on_hover_text("この部品を使用")
                             .changed();
                         let text = format!("{:02}  {}", i + 1, short_name(&c.name, 15));
-                        if theme::component_button(ui, text, self.component == i)
+                        if component_button(ui, text, self.component == i)
                             .on_hover_text(format!(
                                 "{}\n{} · Z = {:.3} mm",
                                 c.name,
@@ -93,25 +93,21 @@ impl App {
             .show(ui, |ui| {
                 let c = &mut assembly.components[self.component];
                 ui.horizontal(|ui| {
-                    changed |= ui
-                        .add(
-                            egui::TextEdit::singleline(&mut c.name)
-                                .desired_width(ui.available_width() - SPACE_8 * 2.0),
-                        )
-                        .changed();
+                    changed |=
+                        name_edit(ui, &mut c.name, ui.available_width() - SPACE_8 * 2.0).changed();
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.menu_button("操作", |ui| {
                             if ui.button("この部品の値を走査…").clicked() {
                                 study = true;
-                                ui.close_menu();
+                                ui.close();
                             }
                             if ui.button("部品を複製").clicked() {
                                 duplicate = true;
-                                ui.close_menu();
+                                ui.close();
                             }
                             if ui.button("部品を削除").clicked() {
                                 remove = true;
-                                ui.close_menu();
+                                ui.close();
                             }
                         });
                     });
@@ -456,7 +452,7 @@ mod tests {
     #[test]
     fn standalone_surface_properties_start_with_shape_without_repeating_the_name() {
         let ctx = egui::Context::default();
-        theme::install(&ctx);
+        install(&ctx);
         let mut app = App::demo();
         app.project.assembly = None;
         app.project.scene.sources.clear();
@@ -487,7 +483,7 @@ mod tests {
     #[test]
     fn selected_component_name_has_no_repeated_section_heading() {
         let ctx = egui::Context::default();
-        theme::install(&ctx);
+        install(&ctx);
         let mut app = App::demo();
         app.component = 2;
         app.project.assembly.as_mut().unwrap().components[2].name = "ロッド".into();
@@ -510,7 +506,7 @@ mod tests {
     #[test]
     fn workspace_switches_and_part_selection_preserve_the_optical_system() {
         let ctx = egui::Context::default();
-        theme::install(&ctx);
+        install(&ctx);
         let mut app = App::demo();
         let a = app.project.assembly.as_mut().unwrap();
         a.components[0].project.scene.sources[0].count = 3_000_000;

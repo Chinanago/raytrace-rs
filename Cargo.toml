@@ -4,9 +4,9 @@ resolver = "2"
 
 [workspace.package]
 version = "0.11.0"
-edition = "2021"
+edition = "2024"
 license = "MIT"
-rust-version = "1.82"
+rust-version = "1.95"
 repository = "https://github.com/Chinanago/raytrace-rs"
 
 [workspace.dependencies]
@@ -17,8 +17,9 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 encoding_rs = "0.8"
 libm = "0.2"
 spade = "2.15.1"
-eframe = { version = "0.31.1", default-features = false, features = ["glow", "default_fonts"] }
-rfd = { version = "0.15", default-features = false }
+eframe = { version = "0.37", default-features = false, features = ["wgpu", "glow", "default_fonts"] }
+egui = { version = "0.37", default-features = false }
+rfd = { version = "0.17", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
 raytrace-core = { path = "crates/raytrace-core", version = "0.11.0" }
 raytrace-io = { path = "crates/raytrace-io", version = "0.11.0" }
@@ -70,3 +71,14 @@ opt-level = 1
 
 [profile.test.package.raytrace-gui]
 opt-level = 1
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+
+[lints]
+workspace = true

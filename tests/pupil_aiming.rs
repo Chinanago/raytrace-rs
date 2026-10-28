@@ -1,11 +1,11 @@
 use raytrace_rs::{
     assembly::{Assembly, Component, ComponentKind},
     geometry::{dielectric, intersect_ordered},
-    illumination::{pupil_geometry, RayAiming},
+    illumination::{RayAiming, pupil_geometry},
     math::{Frame, Pose, V3},
     model::{Interaction, PreparedScene, Ray},
     project::Project,
-    trace::{trace, TraceOptions},
+    trace::{TraceOptions, trace},
     zemax,
 };
 use std::{
@@ -26,7 +26,11 @@ fn folder() -> PathBuf {
     p
 }
 fn native(mode: usize, finite: bool) -> String {
-    format!("MODE SEQ\nUNIT MM\nGCAT own\nENPD 6\nRAIM {mode} 0 0\nFTYP {} 0 2 2\nXFLN 0 3\nYFLN 0 0\nFWGN 1 2\nWAVM 1 .45 1\nWAVM 2 .65 1\nPWAV 1\nSURF 0\nTYPE STANDARD\nDISZ {}\nSURF 1\nTYPE STANDARD\nCURV .05\nDIAM 5.5\nGLAS OWN 0 0\nDISZ 2\nSURF 2\nTYPE STANDARD\nCURV -.05\nDIAM 5.5\nDISZ 8\nSURF 3\nTYPE STANDARD\nSTOP\nDIAM 6\nDISZ 10\nSURF 4\nTYPE STANDARD\nDIAM 20\nDISZ 0\n",if finite {1}else{0},if finite {"50"}else{"INFINITY"})
+    format!(
+        "MODE SEQ\nUNIT MM\nGCAT own\nENPD 6\nRAIM {mode} 0 0\nFTYP {} 0 2 2\nXFLN 0 3\nYFLN 0 0\nFWGN 1 2\nWAVM 1 .45 1\nWAVM 2 .65 1\nPWAV 1\nSURF 0\nTYPE STANDARD\nDISZ {}\nSURF 1\nTYPE STANDARD\nCURV .05\nDIAM 5.5\nGLAS OWN 0 0\nDISZ 2\nSURF 2\nTYPE STANDARD\nCURV -.05\nDIAM 5.5\nDISZ 8\nSURF 3\nTYPE STANDARD\nSTOP\nDIAM 6\nDISZ 10\nSURF 4\nTYPE STANDARD\nDIAM 20\nDISZ 0\n",
+        if finite { 1 } else { 0 },
+        if finite { "50" } else { "INFINITY" }
+    )
 }
 fn load(mode: usize, finite: bool, dispersive: bool) -> (PathBuf, Project) {
     let dir = folder();
@@ -214,10 +218,12 @@ fn finite_angle_fields_follow_the_computed_pupil_after_layout_changes() {
     let x = -3_f64.to_radians().tan() * (g.entrance_pose.translation_mm.0[2] + 50.);
     assert!((g.object_origin_mm.0[0] - x).abs() < 1e-12);
     let before = prepared.generate_rays().unwrap();
-    assert!(before
-        .iter()
-        .skip(128)
-        .all(|r| (r.position_mm.0[0] - x).abs() < 1e-12));
+    assert!(
+        before
+            .iter()
+            .skip(128)
+            .all(|r| (r.position_mm.0[0] - x).abs() < 1e-12)
+    );
     let out = dir.join("edited_angle.zmx");
     zemax::export(&p, &out).unwrap();
     let mut q = zemax::read_zmx(&out, &[]).unwrap();
@@ -244,10 +250,12 @@ fn saved_conditions_capture_pupil_geometry_and_enforce_sampling_revision() {
     let record =
         raytrace_rs::record::RunContext::capture(&p, &scene, None, 2, TraceOptions::default());
     assert_eq!(record.pupils.len(), 2);
-    assert!(record
-        .pupils
-        .iter()
-        .all(|p| p.geometry.is_some() && p.error.is_none()));
+    assert!(
+        record
+            .pupils
+            .iter()
+            .all(|p| p.geometry.is_some() && p.error.is_none())
+    );
     assert_eq!(
         record.pupils[0]
             .geometry

@@ -3,7 +3,7 @@ use crate::Result;
 use raytrace_core::{
     model::{Interaction, Shape},
     screen::ScreenAnalysis,
-    trace::{trace_generated, DetectorMap, TraceOptions},
+    trace::{DetectorMap, TraceOptions, trace_generated},
 };
 use raytrace_io::{project::Project, record::RunContext};
 use serde::{Deserialize, Serialize};
@@ -254,10 +254,9 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
                         }
                         for surface in &mut scene.surfaces {
                             if let Interaction::Detector { pixels: ref mut p } = surface.interaction
+                                && let Some(pixels) = pixels
                             {
-                                if let Some(pixels) = pixels {
-                                    *p = pixels;
-                                }
+                                *p = pixels;
                             }
                             if let Shape::TriangleMesh { triangles, .. } = &surface.shape {
                                 row.triangles += triangles.len();

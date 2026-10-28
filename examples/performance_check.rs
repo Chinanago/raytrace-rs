@@ -2,7 +2,7 @@
 use raytrace_rs::{
     model::Scene,
     spectrum::Spectrum,
-    trace::{trace, trace_generated, TraceOptions},
+    trace::{TraceOptions, trace, trace_generated},
 };
 use std::{hint::black_box, time::Instant};
 fn median(mut a: Vec<f64>) -> f64 {
@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             report_json = serde_json::to_value(&report)?;
         }
-        results.push(serde_json::json!({"wavelengths":waves,"rays":count,"threads":1,"repeats":5,"prepare_seconds":median(prepare_times),"generation_seconds":median(generation_times),"trace_seconds":median(trace_times),"streaming_seconds":median(streaming_times),"launch_signature":format!("{signature:016x}"),"ray_storage_bytes":count*std::mem::size_of::<raytrace_rs::model::Ray>(),"report":report_json}));
+        results.push(serde_json::json!({"wavelengths":waves,"rays":count,"threads":1,"repeats":5,"prepare_seconds":median(prepare_times),"generation_seconds":median(generation_times),"trace_seconds":median(trace_times),"streaming_seconds":median(streaming_times),"launch_signature":format!("{signature:016x}"),"ray_storage_bytes":count*size_of::<raytrace_rs::model::Ray>(),"report":report_json}));
     }
     println!(
         "{}",

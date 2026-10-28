@@ -3,8 +3,8 @@ mod fixtures;
 
 use raytrace_rs::{
     model::{Material, Sampling},
-    record::{RunContext, RunRecord, RUN_FORMAT},
-    trace::{trace, trace_generated, trace_generated_controlled, TraceControl, TraceOptions},
+    record::{RUN_FORMAT, RunContext, RunRecord},
+    trace::{TraceControl, TraceOptions, trace, trace_generated, trace_generated_controlled},
 };
 use std::sync::atomic::Ordering;
 

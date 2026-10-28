@@ -155,12 +155,11 @@ fn draw_detector(
                 ui.selectable_value(&mut display.scale, ScreenScale::Linear, "線形");
                 ui.selectable_value(&mut display.scale, ScreenScale::SquareRoot, "平方根");
             });
-        ui.checkbox(&mut display.half_maximum, "半値幅")
-            .on_hover_text(FWHM_HELP);
-        ui.checkbox(&mut display.profiles, "断面");
+        checkbox(ui, &mut display.half_maximum, "半値幅").on_hover_text(FWHM_HELP);
+        checkbox(ui, &mut display.profiles, "断面");
         ui.menu_button("表示範囲", |ui| {
             let mut fixed = display.maximum_percent.is_some();
-            if ui.checkbox(&mut fixed, "基準光量比の上端を固定").changed() {
+            if checkbox(ui, &mut fixed, "基準光量比の上端を固定").changed() {
                 display.maximum_percent = fixed.then_some(1.0);
                 display.normalization = ScreenNormalization::Reference;
             }
@@ -177,7 +176,7 @@ fn draw_detector(
             let map = &result.report.detectors[index];
             let [hx, hy] = map.half_extent_mm;
             let mut cursor = display.cursor_mm.is_some();
-            if ui.checkbox(&mut cursor, "断面位置を指定").changed() {
+            if checkbox(ui, &mut cursor, "断面位置を指定").changed() {
                 display.cursor_mm = cursor.then_some([0., 0.]);
                 display.profiles = true;
             }
@@ -201,7 +200,7 @@ fn draw_detector(
                 ui.label("最も近い画素列を表示します。");
             }
             let mut roi = display.roi.is_some();
-            if ui.checkbox(&mut roi, "ROIの光量を表示").changed() {
+            if checkbox(ui, &mut roi, "ROIの光量を表示").changed() {
                 display.roi = roi.then_some(raytrace_core::screen::ScreenRoi {
                     minimum_mm: [-hx / 2., -hy / 2.],
                     maximum_mm: [hx / 2., hy / 2.],
@@ -263,10 +262,7 @@ fn draw_detector(
             .collect();
         result.texture = Some(ctx.load_texture(
             "detector",
-            egui::ColorImage {
-                size: map.pixels,
-                pixels,
-            },
+            egui::ColorImage::new(map.pixels, pixels),
             egui::TextureOptions::NEAREST,
         ));
     }
@@ -408,7 +404,7 @@ pub(super) fn draw_detector_map(
         if display.normalization == ScreenNormalization::Reference {
             ui.interact(
                 label_rect,
-                ui.id().with(("colorbar", fraction.to_bits())),
+                ui.scope_id().with(("colorbar", fraction.to_bits())),
                 egui::Sense::hover(),
             )
             .on_hover_text(format!("基準光量比：{value}%"));
@@ -417,27 +413,26 @@ pub(super) fn draw_detector_map(
     if display.half_maximum {
         draw_half_width_guides(&painter, rect, analysis, [hx, hy]);
     }
-    if let Some(roi) = display.roi {
-        if roi
+    if let Some(roi) = display.roi
+        && roi
             .minimum_mm
             .iter()
             .chain(&roi.maximum_mm)
             .all(|v| v.is_finite())
-            && (0..2).all(|a| roi.minimum_mm[a] < roi.maximum_mm[a])
-        {
-            let pos = |v: [f64; 2]| {
-                Pos2::new(
-                    rect.left() + ((v[0].clamp(-hx, hx) + hx) / (2. * hx)) as f32 * rect.width(),
-                    rect.bottom() - ((v[1].clamp(-hy, hy) + hy) / (2. * hy)) as f32 * rect.height(),
-                )
-            };
-            painter.rect_stroke(
-                egui::Rect::from_two_pos(pos(roi.minimum_mm), pos(roi.maximum_mm)),
-                0.,
-                Stroke::new(1.5_f32, viz::ROI),
-                egui::StrokeKind::Inside,
-            );
-        }
+        && (0..2).all(|a| roi.minimum_mm[a] < roi.maximum_mm[a])
+    {
+        let pos = |v: [f64; 2]| {
+            Pos2::new(
+                rect.left() + ((v[0].clamp(-hx, hx) + hx) / (2. * hx)) as f32 * rect.width(),
+                rect.bottom() - ((v[1].clamp(-hy, hy) + hy) / (2. * hy)) as f32 * rect.height(),
+            )
+        };
+        painter.rect_stroke(
+            egui::Rect::from_two_pos(pos(roi.minimum_mm), pos(roi.maximum_mm)),
+            0.,
+            Stroke::new(1.5_f32, viz::ROI),
+            egui::StrokeKind::Inside,
+        );
     }
     ui.label(
         egui::RichText::new(format!(
@@ -573,7 +568,7 @@ pub(super) fn draw_profile(
 ) {
     let maximum = display.maximum_weight(peak, reference).max(1e-300);
     ui.label(format!("{axis}断面"));
-    let plot_height = ((ui.ctx().screen_rect().height() - 480.0) * 0.5).clamp(96.0, 170.0);
+    let plot_height = ((ui.ctx().content_rect().height() - 480.0) * 0.5).clamp(96.0, 170.0);
     let (rect, _) = ui.allocate_exact_size(
         Vec2::new(ui.available_width(), plot_height),
         egui::Sense::hover(),
@@ -659,7 +654,7 @@ mod tests {
     #[test]
     fn screen_uses_figures_and_hover_for_repeated_facts() {
         let ctx = egui::Context::default();
-        theme::install(&ctx);
+        install(&ctx);
         let mut app = App::demo();
         calculate_demo(&mut app);
         app.view = View::Screen;

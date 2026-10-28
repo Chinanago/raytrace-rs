@@ -34,11 +34,12 @@ fn selected_profiles_and_roi_export_include_the_reference_and_actual_pixel_coord
     assert_eq!(metadata["slice_position_mm"], serde_json::json!([0.5, 0.5]));
     assert_eq!(metadata["roi_integral"]["percent_of_reference"], 25.);
     let csv = fs::read_to_string(dir.join("selected_x_profile.csv")).unwrap();
-    assert!(csv
-        .lines()
-        .nth(1)
-        .unwrap()
-        .contains("3.00000000000000000e0"));
+    assert!(
+        csv.lines()
+            .nth(1)
+            .unwrap()
+            .contains("3.00000000000000000e0")
+    );
     assert_eq!(m.weights, vec![1., 2., 3., 4.]);
 }
 fn folder() -> PathBuf {

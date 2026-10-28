@@ -1,8 +1,8 @@
+use crate::Result;
 use crate::acceleration::SurfaceIndex;
-use crate::geometry::{dielectric_with_reflectance, intersect_ordered, Miss};
+use crate::geometry::{Miss, dielectric_with_reflectance, intersect_ordered};
 use crate::math::V3;
 use crate::model::{Interaction, Mode, PreparedScene, Ray};
-use crate::Result;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -697,9 +697,8 @@ impl OpticalCache {
             other: std::collections::HashMap::new(),
             uncached: Vec::new(),
             // Bound cached material data to ~64 KiB per chunk, up to 256 wavelengths.
-            capacity: (65536
-                / (scene.spec.materials.len().max(1) * std::mem::size_of::<(f64, f64)>()))
-            .clamp(1, 256),
+            capacity: (65536 / (scene.spec.materials.len().max(1) * size_of::<(f64, f64)>()))
+                .clamp(1, 256),
         }
     }
     fn get(&mut self, scene: &PreparedScene, wavelength: f64) -> &[(f64, f64)] {
@@ -1074,19 +1073,19 @@ fn trace_one<const SEQUENTIAL: bool, const CACHED: bool>(
                 } else {
                     report.budget.sequential_reflection_not_followed += reflected_weight;
                 }
-                if let Some(direction) = result.transmitted {
-                    if transmitted_weight > 0.0 {
-                        stack.push(Work {
-                            ray: Ray {
-                                direction,
-                                medium: after,
-                                weight: transmitted_weight,
-                                ..ray
-                            },
-                            next_surface: index + 1,
-                            depth: depth + 1,
-                        });
-                    }
+                if let Some(direction) = result.transmitted
+                    && transmitted_weight > 0.0
+                {
+                    stack.push(Work {
+                        ray: Ray {
+                            direction,
+                            medium: after,
+                            weight: transmitted_weight,
+                            ..ray
+                        },
+                        next_surface: index + 1,
+                        depth: depth + 1,
+                    });
                 }
             }
         }
@@ -1207,7 +1206,15 @@ mod packet_tests {
                             evaluate_optics(&prepared, first[i].wavelength_um).collect()
                         });
                         let mut steps = Vec::new();
-                        assert!(plan.build(&prepared,&first,materials.each_ref().map(|v|v.as_slice()),&mut steps),"eligible packet was not exercised: {shape:?}, rotated={rotated}, spectral={spectral}");
+                        assert!(
+                            plan.build(
+                                &prepared,
+                                &first,
+                                materials.each_ref().map(|v| v.as_slice()),
+                                &mut steps
+                            ),
+                            "eligible packet was not exercised: {shape:?}, rotated={rotated}, spectral={spectral}"
+                        );
                         assert_eq!(steps.len(), prepared.surfaces.len());
                     }
                     compare(&prepared, &rays, TraceOptions::default());

@@ -1,5 +1,5 @@
 use super::*;
-use raytrace_core::trace::{trace, trace_generated_controlled, TraceOptions};
+use raytrace_core::trace::{TraceOptions, trace, trace_generated_controlled};
 
 impl App {
     pub(super) fn run(&mut self, ctx: &egui::Context) {
@@ -125,10 +125,10 @@ impl App {
         if let Some(message) = message {
             self.job = None;
             self.control = None;
-            if let Some(path) = self.loading_path.take() {
-                if matches!(&message, Job::Loaded(Ok(_)) | Job::LoadedRun(Ok(_))) {
-                    self.path = Some(path);
-                }
+            if let Some(path) = self.loading_path.take()
+                && matches!(&message, Job::Loaded(Ok(_)) | Job::LoadedRun(Ok(_)))
+            {
+                self.path = Some(path);
             }
             match message {
                 Job::Exported(Ok(dir)) => {

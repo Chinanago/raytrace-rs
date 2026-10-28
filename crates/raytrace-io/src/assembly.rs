@@ -1,6 +1,6 @@
 //! Rigid optical components with independent local coordinates and original documents.
-use crate::project::{Issue, Project};
 use crate::Result;
+use crate::project::{Issue, Project};
 use raytrace_core::{
     geometry::sag,
     math::{Frame, Pose, V3},
@@ -102,16 +102,16 @@ impl Component {
         }
         if kind != ComponentKind::System {
             for source in &mut project.scene.sources {
-                if let Some(p) = &mut source.pupil {
-                    if let Some(i) = p.surface.take() {
-                        p.pose = project
-                            .scene
-                            .surfaces
-                            .get(i)
-                            .ok_or_else(|| crate::Error::Project("瞳の参照面が不正です".into()))?
-                            .pose
-                            .clone();
-                    }
+                if let Some(p) = &mut source.pupil
+                    && let Some(i) = p.surface.take()
+                {
+                    p.pose = project
+                        .scene
+                        .surfaces
+                        .get(i)
+                        .ok_or_else(|| crate::Error::Project("瞳の参照面が不正です".into()))?
+                        .pose
+                        .clone();
                 }
             }
             project.scene.surfaces.retain(|s| match s.interaction {
@@ -158,11 +158,7 @@ impl Component {
                     .iter()
                     .map(|s| s.origin_mm.0[a])
                     .fold(f64::NEG_INFINITY, f64::max);
-                if a == 2 {
-                    lo
-                } else {
-                    0.5 * (lo + hi)
-                }
+                if a == 2 { lo } else { 0.5 * (lo + hi) }
             }))
         } else if kind == ComponentKind::Optic {
             project.scene.surfaces[0].pose.translation_mm

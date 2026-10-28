@@ -2,28 +2,32 @@ use super::controls::{number_row, section_label};
 use super::*;
 
 impl App {
-    pub(super) fn details_window(&mut self, ctx: &egui::Context) {
+    pub(super) fn details_window(&mut self, ctx: &egui::Context, workspace: egui::Rect) {
         let Some(mut page) = self.details else {
             return;
         };
         let mut open = true;
-        egui::Window::new("設定とレポート")
+        egui::Window::new(window_title(ctx, "設定とレポート"))
+            .id(egui::Id::unique("settings_report"))
+            .auto_sized()
+            .resizable(true)
+            .default_pos(workspace.min + Vec2::splat(SPACE_4))
             .open(&mut open)
             .collapsible(false)
             .default_width(680.0)
-            .default_height(500.0)
-            .max_height((ctx.screen_rect().height() - 200.0).max(240.0))
+            .default_height(500.0 + WINDOW_CHROME_HEIGHT)
+            .max_height((ctx.content_rect().height() - 200.0).max(240.0) + WINDOW_CHROME_HEIGHT)
             .min_width(540.0)
             .show(ctx, |ui| {
                 let mut selected = egui::Rect::NOTHING;
                 let row = ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = -theme::TAB_LINE_WIDTH;
+                    ui.spacing_mut().item_spacing.x = -TAB_LINE_WIDTH;
                     for (target, label) in [
                         (Details::Calculation, "計算条件"),
                         (Details::Import, "読込レポート"),
                         (Details::Budget, "光量収支"),
                     ] {
-                        let response = theme::tab(ui, &mut page, target, label, BG_RAISED);
+                        let response = tab(ui, &mut page, target, label, BG_RAISED);
                         if page == target {
                             selected = response.rect;
                         }
@@ -31,7 +35,7 @@ impl App {
                 });
                 egui::ScrollArea::vertical()
                     .id_salt("details_content")
-                    .max_height((ctx.screen_rect().height() - 300.0).max(160.0))
+                    .max_height((ctx.content_rect().height() - 300.0).max(160.0))
                     .show(ui, |ui| match page {
                         Details::Calculation => self.calculation_controls(ui),
                         Details::Import => self.import_report(ui, ctx),
@@ -43,7 +47,7 @@ impl App {
                     row.response.rect.min,
                     egui::pos2(ui.min_rect().right(), row.response.rect.bottom()),
                 );
-                theme::tab_baseline(ui, row, selected);
+                tab_baseline(ui, row, selected);
             });
         self.details = if self.details.is_some() {
             open.then_some(page)
@@ -57,11 +61,11 @@ impl App {
             let mut changed = false;
             section_label(ui, "計算に使う条件");
             if self.project.issues.iter().any(|i| i.code == "coating") || self.project.scene.surfaces.iter().any(|s| s.coating.is_some()) {
-                changed |= ui.checkbox(&mut self.project.allow_uncoated, "未コートFresnelで計算").changed();
+                changed |= checkbox(ui, &mut self.project.allow_uncoated, "未コートFresnelで計算").changed();
                 ui.label(egui::RichText::new("元のコーティング名を保持し、界面の反射率は未コートとして計算します。").size(SIZE_CAPTION).color(TEXT_MUTED));
             }
             let mut mono = self.project.monochromatic_override_um.is_some();
-            if ui.checkbox(&mut mono, "全光源の計算波長を単色で指定").changed() {
+            if checkbox(ui, &mut mono, "全光源の計算波長を単色で指定").changed() {
                 self.project.monochromatic_override_um = mono.then_some(0.465);
                 changed = true;
             }
@@ -73,8 +77,8 @@ impl App {
                 }
             }
             if changed { self.changed(); }
-            if let Some(r) = &self.result {
-                if !r.calculation.pupils.is_empty() {
+            if let Some(r) = &self.result
+                && !r.calculation.pupils.is_empty() {
                     egui::CollapsingHeader::new(if self.stale { "前回の計算結果の入射瞳" } else { "この計算結果の入射瞳" }).show(ui, |ui| {
                         for pupil in &r.calculation.pupils {
                             ui.label(format!("光源 {}", pupil.source_index + 1));
@@ -89,7 +93,6 @@ impl App {
                         }
                     });
                 }
-            }
             section_label(ui, "読込の確認");
             let report = self.project.compatibility_report();
             ui.label(egui::RichText::new(if report.traceable { "指定した条件で計算できます" } else { "計算前に確認が必要な項目があります" })
@@ -113,22 +116,20 @@ impl App {
                         }
                     });
                 });
-                if !has_issues { ui.label(theme::muted("問題なし")); }
+                if !has_issues { ui.label(muted("問題なし")); }
                 });
             }
             section_label(ui, "材料・コーティングカタログ");
-            if ui.button("カタログフォルダーを追加…").clicked() {
-                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+            if ui.button("カタログフォルダーを追加…").clicked()
+                && let Some(dir) = rfd::FileDialog::new().pick_folder() {
                     self.catalogs.push(dir);
                     self.status = "材料カタログを追加しました。次のファイル読込から使います".into();
                 }
-            }
             for dir in &self.catalogs { ui.label(egui::RichText::new(dir.display().to_string()).size(SIZE_CAPTION).color(TEXT_MUTED)); }
-            if let Some(path) = self.path.clone() {
-                if ui.button("現在のファイルを読み直す").on_hover_text("配置・編集をファイルの内容へ戻し、追加した材料カタログを使って読み直します").clicked() {
+            if let Some(path) = self.path.clone()
+                && ui.button("現在のファイルを読み直す").on_hover_text("配置・編集をファイルの内容へ戻し、追加した材料カタログを使って読み直します").clicked() {
                     self.load(path, ctx);
                 }
-            }
         });
     }
 
@@ -352,7 +353,7 @@ impl App {
             .collect();
         if !entries.is_empty() {
             let error = entries.iter().any(|e| e.status.blocks());
-            if theme::notification(
+            if notification(
                 ui,
                 error,
                 &format!("読込で確認が必要な項目が {} 件あります", entries.len()),
@@ -368,7 +369,7 @@ impl App {
 mod tests {
     use super::*;
     use crate::gui::test_support::*;
-    use raytrace_core::trace::{trace, TraceOptions};
+    use raytrace_core::trace::{TraceOptions, trace};
     #[test]
     fn percentages_keep_small_positive_values_visible() {
         for (value, expected) in [
@@ -385,7 +386,7 @@ mod tests {
     #[test]
     fn tab_baseline_stays_inside_each_settings_page() {
         let ctx = egui::Context::default();
-        theme::install(&ctx);
+        install(&ctx);
         let mut app = App::demo();
         calculate_demo(&mut app);
         for page in [Details::Calculation, Details::Import, Details::Budget] {
@@ -395,14 +396,14 @@ mod tests {
             }
             let out = frame(&mut app, &ctx, vec![]);
             let window = ctx
-                .memory(|m| m.area_rect(egui::Id::new("設定とレポート")))
+                .memory(|m| m.area_rect(egui::Id::unique("settings_report")))
                 .unwrap();
             let tabs: Vec<_> = out
                 .shapes
                 .iter()
                 .filter_map(|s| match &s.shape {
                     egui::Shape::Rect(r)
-                        if r.rect.height() == theme::TAB_HEIGHT
+                        if r.rect.height() == TAB_HEIGHT
                             && r.rect.top() > TOOLBAR_HEIGHT
                             && r.fill == BG_RAISED =>
                     {
@@ -412,15 +413,13 @@ mod tests {
                 })
                 .collect();
             assert_eq!(tabs.len(), 3);
-            let y = tabs[0].bottom() - theme::TAB_LINE_WIDTH / 2.0;
+            let y = tabs[0].bottom() - TAB_LINE_WIDTH / 2.0;
             let right = out
                 .shapes
                 .iter()
                 .filter_map(|s| match &s.shape {
                     egui::Shape::LineSegment { points, stroke }
-                        if stroke.color == theme::TAB_BORDER
-                            && points[0].y == y
-                            && points[1].y == y =>
+                        if stroke.color == TAB_BORDER && points[0].y == y && points[1].y == y =>
                     {
                         Some(points[0].x.max(points[1].x))
                     }
@@ -428,16 +427,16 @@ mod tests {
                 })
                 .reduce(f32::max)
                 .unwrap();
-            assert!(right <= window.right() - SPACE_4 + theme::TAB_LINE_WIDTH);
-            assert!(right >= window.right() - SPACE_4 - theme::TAB_LINE_WIDTH);
+            assert!(right <= window.right() - SPACE_4 + TAB_LINE_WIDTH);
+            assert!(right >= window.right() - SPACE_4 - TAB_LINE_WIDTH);
         }
     }
 
     #[test]
     fn zero_budget_rows_are_collapsed_and_expand_to_the_full_list() {
         let ctx = egui::Context::default();
-        theme::install(&ctx);
-        ctx.style_mut(|s| s.animation_time = 0.0);
+        install(&ctx);
+        ctx.style_mut_of(egui::Theme::Light, |s| s.animation_time = 0.0);
         let mut app = App::demo();
         calculate_demo(&mut app);
         app.details = Some(Details::Budget);
@@ -452,13 +451,17 @@ mod tests {
         let pos = text_rect(&out, label).unwrap().center();
         click(&mut app, &ctx, pos);
         let out = frame(&mut app, &ctx, vec![]);
-        assert!(visible_text(&out).contains(&"媒質の不整合"));
+        assert!(
+            visible_text(&out).contains(&"媒質の不整合"),
+            "{:?}",
+            visible_text(&out)
+        );
     }
 
     #[test]
     fn import_notification_is_only_shown_for_issues_and_opens_the_report() {
         let ctx = egui::Context::default();
-        theme::install(&ctx);
+        install(&ctx);
         let mut app = App::demo();
         let out = frame(&mut app, &ctx, vec![]);
         assert!(!visible_text(&out).iter().any(|s| s.contains("読込で確認")));
@@ -483,17 +486,19 @@ mod tests {
             let out = frame(&mut app, &ctx, vec![]);
             assert!(text_rect(&out, "読込の確認が必要です").is_some());
             assert!(text_rect(&out, "問題なし").is_some());
-            assert!(!visible_text(&out)
-                .iter()
-                .any(|s| s.contains("計算対応 ·") || s.contains("unsupported_test")));
+            assert!(
+                !visible_text(&out)
+                    .iter()
+                    .any(|s| s.contains("計算対応 ·") || s.contains("unsupported_test"))
+            );
         }
     }
 
     #[test]
     fn diagnostic_navigation_selects_the_component_without_changing_the_model() {
         let ctx = egui::Context::default();
-        theme::install(&ctx);
-        ctx.style_mut(|s| s.animation_time = 0.0);
+        install(&ctx);
+        ctx.style_mut_of(egui::Theme::Light, |s| s.animation_time = 0.0);
         let mut app = App::demo();
         for source in &mut app.project.assembly.as_mut().unwrap().components[0]
             .project
@@ -543,6 +548,8 @@ mod tests {
                 vec![
                     egui::Event::PointerMoved(body),
                     egui::Event::MouseWheel {
+                        phase: egui::TouchPhase::Move,
+                        source: egui::MouseWheelSource::Unknown,
                         unit: egui::MouseWheelUnit::Point,
                         delta: Vec2::new(0.0, -400.0),
                         modifiers: egui::Modifiers::NONE,
@@ -563,6 +570,8 @@ mod tests {
                 vec![
                     egui::Event::PointerMoved(body),
                     egui::Event::MouseWheel {
+                        phase: egui::TouchPhase::Move,
+                        source: egui::MouseWheelSource::Unknown,
                         unit: egui::MouseWheelUnit::Point,
                         delta: Vec2::new(0.0, -600.0),
                         modifiers: egui::Modifiers::NONE,

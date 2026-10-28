@@ -1,7 +1,7 @@
 use super::{Aperture, PreparedScene, Sampling};
-use crate::math::{Frame, Pose, V3};
-use crate::sampling::{gaussian_quantile, uniform, Sobol, SuperGaussian};
 use crate::Result;
+use crate::math::{Frame, Pose, V3};
+use crate::sampling::{Sobol, SuperGaussian, gaussian_quantile, uniform};
 use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
@@ -387,37 +387,37 @@ impl<'a> PreparedSource<'a> {
             medium: source.medium,
             optical_path_mm: 0.0,
         };
-        if let Some((p, frame)) = source.pupil.as_ref().zip(pupil_frame.as_ref()) {
-            if p.optical.is_none() {
-                let xy = match p.aperture {
-                    Aperture::Circle { radius_mm } => {
-                        let r = radius_mm * sample[0].sqrt();
-                        [r * phi.cos(), r * phi.sin()]
-                    }
-                    Aperture::Rectangle {
-                        half_width_mm,
-                        half_height_mm,
-                    } => [
-                        (2. * sample[0] - 1.) * half_width_mm,
-                        (2. * sample[1] - 1.) * half_height_mm,
-                    ],
-                };
-                let (hx, hy) = p.aperture.bounds();
-                let xy = if p.vignetting.is_zero() {
-                    xy
-                } else {
-                    let normalized = p.vignetting.transform([xy[0] / hx, xy[1] / hy]);
-                    [normalized[0] * hx, normalized[1] * hy]
-                };
-                let target = frame.world_point(V3([xy[0], xy[1], 0.]));
-                if p.finite_object {
-                    ray.position_mm = source.origin_mm;
-                    ray.direction = (target - source.origin_mm).unit();
-                } else {
-                    let n = frame.world_vector(V3([0., 0., 1.]));
-                    ray.position_mm = target - w * ((target - source.origin_mm).dot(n) / w.dot(n));
-                    ray.direction = w;
+        if let Some((p, frame)) = source.pupil.as_ref().zip(pupil_frame.as_ref())
+            && p.optical.is_none()
+        {
+            let xy = match p.aperture {
+                Aperture::Circle { radius_mm } => {
+                    let r = radius_mm * sample[0].sqrt();
+                    [r * phi.cos(), r * phi.sin()]
                 }
+                Aperture::Rectangle {
+                    half_width_mm,
+                    half_height_mm,
+                } => [
+                    (2. * sample[0] - 1.) * half_width_mm,
+                    (2. * sample[1] - 1.) * half_height_mm,
+                ],
+            };
+            let (hx, hy) = p.aperture.bounds();
+            let xy = if p.vignetting.is_zero() {
+                xy
+            } else {
+                let normalized = p.vignetting.transform([xy[0] / hx, xy[1] / hy]);
+                [normalized[0] * hx, normalized[1] * hy]
+            };
+            let target = frame.world_point(V3([xy[0], xy[1], 0.]));
+            if p.finite_object {
+                ray.position_mm = source.origin_mm;
+                ray.direction = (target - source.origin_mm).unit();
+            } else {
+                let n = frame.world_vector(V3([0., 0., 1.]));
+                ray.position_mm = target - w * ((target - source.origin_mm).dot(n) / w.dot(n));
+                ray.direction = w;
             }
         }
         if let Some(diode) = &source.diode {
