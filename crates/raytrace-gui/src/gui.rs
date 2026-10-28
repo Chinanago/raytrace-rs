@@ -24,6 +24,7 @@ use std::{
 mod theme;
 use theme::{viz, *};
 
+mod automation;
 mod camera;
 mod components;
 mod controls;
@@ -114,12 +115,10 @@ struct ResultView {
 enum Job {
     Exported(Result<PathBuf, String>),
     Compared(Result<Vec<study::Comparison>, String>),
-    Cancelled,
     Scanned(Result<Box<raytrace_app::scan::ScanManifest>, String>),
     LoadedRun(Result<Box<raytrace_io::record::RunRecord>, String>),
     Added(ComponentKind, Result<Box<Project>, String>),
     Loaded(Result<Box<Project>, String>),
-    Traced(Result<Box<ResultView>, String>),
 }
 struct App {
     viewing_explicit_record: bool,
@@ -130,6 +129,11 @@ struct App {
     study: study::Study,
     camera: LayoutCamera,
     history: history::History,
+    engine: raytrace_engine::Session,
+    automation: Option<raytrace_engine::bridge::Bridge>,
+    automation_waits: Vec<automation::PendingWait>,
+    automation_job: Option<String>,
+    automation_prepare: Option<Receiver<automation::PreparedCall>>,
     project: Project,
     path: Option<PathBuf>,
     loading_path: Option<PathBuf>,
@@ -173,6 +177,21 @@ impl App {
         while i < args.len() {
             match args[i].as_str() {
                 "--assembly-demo" => (),
+                "--automation-session" => {
+                    i += 1;
+                    if let Some(path) = args.get(i) {
+                        let context = cc.egui_ctx.clone();
+                        match raytrace_engine::bridge::Bridge::listen(
+                            PathBuf::from(path),
+                            move || context.request_repaint(),
+                        ) {
+                            Ok(bridge) => app.automation = Some(bridge),
+                            Err(e) => app.error = Some(e.to_string()),
+                        }
+                    } else {
+                        app.error = Some("--automation-session の保存先を指定してください".into());
+                    }
+                }
                 "--study" | "--compare-study" => {
                     app.study.auto_compare = args[i] == "--compare-study";
                     i += 1;
@@ -238,6 +257,7 @@ impl App {
             }
             i += 1;
         }
+        app.reset_history(true);
         if let Some(dir) = study_input {
             app.study.open = true;
             app.open_study_path(dir, &cc.egui_ctx);
@@ -258,6 +278,12 @@ impl App {
             study: study::Study::default(),
             camera: LayoutCamera::default(),
             history: history::History::default(),
+            engine: raytrace_engine::Session::new(assembly::demo_project().expect("assembly demo"))
+                .expect("editor session"),
+            automation: None,
+            automation_waits: Vec::new(),
+            automation_job: None,
+            automation_prepare: None,
             project: assembly::demo_project().expect("assembly demo"),
             path: None,
             loading_path: None,
@@ -287,11 +313,24 @@ impl App {
             smoke_ready_at: None,
             screenshot_requested: false,
         };
-        app.reset_history(true);
+        app.reset_presentation_history(true);
         app
     }
     fn changed(&mut self) {
-        self.history.begin();
+        match self
+            .engine
+            .commit_project(self.project.clone(), "GUI編集", None, Some("gui"))
+        {
+            Ok(outcome) => {
+                self.project = self.engine.project().clone();
+                self.history.begin(outcome.revision);
+            }
+            Err(error) => {
+                self.project = self.engine.project().clone();
+                self.error = Some(error.to_string());
+                return;
+            }
+        }
         self.dirty = true;
         self.stale = self
             .result
@@ -299,6 +338,7 @@ impl App {
             .is_some_and(|r| r.revision != self.history.revision);
     }
     fn refresh_components(&mut self) {
+        self.engine.prepare_draft(&mut self.project);
         if let Err(e) = self.project.refresh_assembly() {
             self.error = Some(e.to_string());
         }
@@ -330,6 +370,7 @@ impl App {
         end + 10.0
     }
     fn append_component(&mut self, mut component: Component) {
+        self.engine.prepare_draft(&mut self.project);
         if component.kind != ComponentKind::Source {
             component.pose.translation_mm.0[2] = self.next_z();
         }
@@ -349,6 +390,7 @@ impl App {
         };
         self.smoke_frames += 1;
         if self.job.is_none()
+            && self.automation_job.is_none()
             && (self.result.is_some() || self.error.is_some() || self.smoke_frames > 60)
         {
             self.smoke_ready_at.get_or_insert_with(Instant::now);
@@ -356,6 +398,7 @@ impl App {
             self.smoke_ready_at = None;
         }
         if self.job.is_none()
+            && self.automation_job.is_none()
             && (self.result.is_some() || self.error.is_some() || self.smoke_frames > 60)
             && !self.screenshot_requested
             && self.smoke_frames > 5
@@ -412,7 +455,9 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = &ui.ctx().clone();
         self.poll(ctx);
+        self.poll_automation(ctx);
         if self.job.is_none()
+            && self.automation_job.is_none()
             && self.result.is_some()
             && self.error.is_none()
             && let Some(dir) = self.export_requested.take()
