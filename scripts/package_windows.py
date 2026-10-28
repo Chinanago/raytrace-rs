@@ -17,11 +17,14 @@ FILES = {
     "docs/FEATURES.md": "docs/FEATURES.md",
     "docs/GUIDE.md": "docs/GUIDE.md",
     "docs/DEVELOPMENT.md": "docs/DEVELOPMENT.md",
+    "docs/AUTOMATION.md": "docs/AUTOMATION.md",
     "LICENSE": "LICENSE",
     "examples/sequential_lens.json": "examples/sequential_lens.json",
     "examples/nonsequential_slab.json": "examples/nonsequential_slab.json",
     "examples/integrator_rod.json": "examples/integrator_rod.json",
     "examples/folded_mirror.json": "examples/folded_mirror.json",
+    "examples/source_disk.json": "examples/source_disk.json",
+    "examples/automation_assembly.json": "examples/automation_assembly.json",
 }
 
 

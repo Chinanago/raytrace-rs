@@ -44,6 +44,8 @@ v0.11.0では132テストが通過しています。STEPの従来版比較、解
 
 ## AIエージェントから使う
 
+現在のソース版では、JSONコマンドとMCPから部品の読込・配置・計算を実行できます。GUIを開いたまま同じ光学系を操作する接続にも対応します。[JSON操作とMCPの使い方](docs/AUTOMATION.md)
+
 [raytrace-rsのAgent Skill](https://github.com/Chinanago/raytrace-rs/tree/main/skills/raytrace-rs)を公開しています。raytrace-rsのCLI・GUIを操作するための手順で、ZMXの読込、材料、追跡、出力の読み方、走査・再計算を扱います。
 
 Codexでは、次のように依頼してインストールできます。
@@ -60,6 +62,7 @@ $skill-installer で Chinanago/raytrace-rs の skills/raytrace-rs をインス�
 |---|---|
 | 光学モデル、ZMX互換性、機能ごとの対応条件 | [機能と対応範囲](docs/FEATURES.md) |
 | 部品の配置、スクリーン、走査、保存、CLI | [操作ガイド](docs/GUIDE.md) |
+| JSONスクリプト、操作仕様、MCP、GUIへの接続 | [JSON操作とMCP](docs/AUTOMATION.md) |
 | ソースからのビルド、自動テスト、検証、配布物の作成 | [開発と検証](docs/DEVELOPMENT.md) |
 
 ## ライセンス

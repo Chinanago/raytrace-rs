@@ -194,6 +194,7 @@ impl App {
             changed = true;
         } else if duplicate {
             let mut copy = assembly.components[self.component].clone();
+            copy.id = Default::default();
             copy.name = format!("{} コピー", copy.name);
             assembly.components.insert(self.component + 1, copy);
             self.component += 1;

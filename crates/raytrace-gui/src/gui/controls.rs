@@ -470,6 +470,7 @@ mod tests {
         let mut project = assembly::demo_project().unwrap();
         let a = project.assembly.as_mut().unwrap();
         let mut disabled = a.components[0].clone();
+        disabled.id = Default::default();
         disabled.enabled = false;
         a.components.push(disabled);
         a.components[0].pose.translation_mm = V3([2.0, -3.0, 8.0]);

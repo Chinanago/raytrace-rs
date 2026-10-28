@@ -20,17 +20,28 @@ pub enum Parameter {
     RodSize { component: usize, axis: usize },
     SurfacePosition { surface: usize, axis: usize },
     SurfaceRotation { surface: usize, axis: usize },
+    ComponentPositionId { component: String, axis: usize },
+    ComponentRotationId { component: String, axis: usize },
+    RodSizeId { component: String, axis: usize },
+    SurfacePositionId { surface: String, axis: usize },
+    SurfaceRotationId { surface: String, axis: usize },
     Wavelength,
 }
 impl Parameter {
     pub fn unit(&self) -> &'static str {
         match self {
-            Self::ComponentRotation { .. } | Self::SurfaceRotation { .. } => "deg",
+            Self::ComponentRotation { .. }
+            | Self::SurfaceRotation { .. }
+            | Self::ComponentRotationId { .. }
+            | Self::SurfaceRotationId { .. } => "deg",
             Self::Wavelength => "um",
             _ => "mm",
         }
     }
     fn slot<'a>(&self, p: &'a mut Project) -> Result<&'a mut f64> {
+        if let Some(parameter) = self.resolve_id(p)? {
+            return parameter.slot(p);
+        }
         let bad = || crate::Error::Plan("走査対象の部品・面・軸が見つかりません".into());
         match *self {
             Self::ComponentPosition { component, axis }
@@ -82,10 +93,56 @@ impl Parameter {
                     .ok_or_else(|| crate::Error::Plan("光源がありません".into()))?;
                 Ok(p.monochromatic_override_um.get_or_insert(wave))
             }
+            _ => unreachable!("stable references resolved above"),
         }
     }
     pub fn value(&self, p: &Project) -> Result<f64> {
-        self.slot(&mut p.clone()).copied()
+        if let Some(parameter) = self.resolve_id(p)? {
+            return parameter.value(p);
+        }
+        let bad = || crate::Error::Plan("走査対象の部品・面・軸が見つかりません".into());
+        let values = match *self {
+            Self::ComponentPosition { component, axis }
+            | Self::ComponentRotation { component, axis } => {
+                let c = p
+                    .assembly
+                    .as_ref()
+                    .and_then(|a| a.components.get(component))
+                    .ok_or_else(bad)?;
+                if matches!(self, Self::ComponentPosition { .. }) {
+                    c.pose.translation_mm.0.get(axis).copied()
+                } else {
+                    c.pose.rotation_deg.0.get(axis).copied()
+                }
+            }
+            Self::RodSize { component, axis } => {
+                let r = p
+                    .assembly
+                    .as_ref()
+                    .and_then(|a| a.components.get(component))
+                    .and_then(|c| c.rod.as_ref())
+                    .ok_or_else(bad)?;
+                [r.width_mm, r.height_mm, r.length_mm].get(axis).copied()
+            }
+            Self::SurfacePosition { surface, axis } | Self::SurfaceRotation { surface, axis } => {
+                if p.assembly.is_some() {
+                    return Err(crate::Error::Plan(
+                        "組立光学系は部品の位置・角度を指定してください".into(),
+                    ));
+                }
+                let s = p.scene.surfaces.get(surface).ok_or_else(bad)?;
+                if matches!(self, Self::SurfacePosition { .. }) {
+                    s.pose.translation_mm.0.get(axis).copied()
+                } else {
+                    s.pose.rotation_deg.0.get(axis).copied()
+                }
+            }
+            Self::Wavelength => p
+                .monochromatic_override_um
+                .or_else(|| p.scene.sources.first().map(|s| s.wavelength_um)),
+            _ => unreachable!("stable references resolved above"),
+        };
+        values.ok_or_else(bad)
     }
     pub fn apply(&self, p: &mut Project, value: f64) -> Result<()> {
         self.validate_value(value)?;
@@ -95,7 +152,10 @@ impl Parameter {
     fn validate_value(&self, value: f64) -> Result<()> {
         if !value.is_finite()
             || value.abs() > 1e12
-            || (matches!(self, Self::RodSize { .. } | Self::Wavelength) && value <= 0.0)
+            || (matches!(
+                self,
+                Self::RodSize { .. } | Self::RodSizeId { .. } | Self::Wavelength
+            ) && value <= 0.0)
         {
             return Err(crate::Error::Plan(
                 "走査値の単位・範囲を確認してください".into(),
@@ -140,7 +200,106 @@ impl Parameter {
                 axis(a)
             ),
             Self::Wavelength => "全光源 · 計算波長".into(),
+            _ => self
+                .resolve_id(p)
+                .ok()
+                .flatten()
+                .map_or_else(|| "参照先がありません".into(), |v| v.label(p)),
         }
+    }
+    fn resolve_id(&self, p: &Project) -> Result<Option<Self>> {
+        let missing = || crate::Error::Plan("走査対象の固定IDが見つかりません".into());
+        let component = |id: &str| {
+            p.assembly
+                .as_ref()
+                .and_then(|a| a.components.iter().position(|c| c.id.0 == id))
+                .ok_or_else(missing)
+        };
+        let surface = |id: &str| {
+            if p.assembly.is_some() {
+                return Err(crate::Error::Plan(
+                    "組立光学系は部品の位置・角度を指定してください".into(),
+                ));
+            }
+            p.identity
+                .surfaces
+                .iter()
+                .position(|s| s.0 == id)
+                .ok_or_else(missing)
+        };
+        Ok(Some(match self {
+            Self::ComponentPositionId {
+                component: id,
+                axis,
+            } => Self::ComponentPosition {
+                component: component(id)?,
+                axis: *axis,
+            },
+            Self::ComponentRotationId {
+                component: id,
+                axis,
+            } => Self::ComponentRotation {
+                component: component(id)?,
+                axis: *axis,
+            },
+            Self::RodSizeId {
+                component: id,
+                axis,
+            } => Self::RodSize {
+                component: component(id)?,
+                axis: *axis,
+            },
+            Self::SurfacePositionId { surface: id, axis } => Self::SurfacePosition {
+                surface: surface(id)?,
+                axis: *axis,
+            },
+            Self::SurfaceRotationId { surface: id, axis } => Self::SurfaceRotation {
+                surface: surface(id)?,
+                axis: *axis,
+            },
+            _ => return Ok(None),
+        }))
+    }
+    /// Bind old array references once, against the saved base project.
+    pub fn bind(&self, p: &Project) -> Result<Self> {
+        self.value(p)?;
+        let component = |i: usize| {
+            p.assembly
+                .as_ref()
+                .and_then(|a| a.components.get(i))
+                .map(|c| c.id.to_string())
+                .ok_or_else(|| crate::Error::Plan("部品IDがありません".into()))
+        };
+        let surface = |i: usize| {
+            p.identity
+                .surfaces
+                .get(i)
+                .map(ToString::to_string)
+                .ok_or_else(|| crate::Error::Plan("面IDがありません".into()))
+        };
+        Ok(match *self {
+            Self::ComponentPosition { component: i, axis } => Self::ComponentPositionId {
+                component: component(i)?,
+                axis,
+            },
+            Self::ComponentRotation { component: i, axis } => Self::ComponentRotationId {
+                component: component(i)?,
+                axis,
+            },
+            Self::RodSize { component: i, axis } => Self::RodSizeId {
+                component: component(i)?,
+                axis,
+            },
+            Self::SurfacePosition { surface: i, axis } => Self::SurfacePositionId {
+                surface: surface(i)?,
+                axis,
+            },
+            Self::SurfaceRotation { surface: i, axis } => Self::SurfaceRotationId {
+                surface: surface(i)?,
+                axis,
+            },
+            _ => self.clone(),
+        })
     }
 }
 
@@ -205,6 +364,18 @@ pub struct ParameterLink {
     pub offset: f64,
 }
 impl ScanPlan {
+    pub fn bind(&self, base: &Project) -> Result<Self> {
+        let mut plan = self.clone();
+        plan.parameter = plan.parameter.bind(base)?;
+        if let Some(s) = &mut plan.secondary {
+            s.parameter = s.parameter.bind(base)?;
+        }
+        for link in &mut plan.links {
+            link.source = link.source.bind(base)?;
+            link.target = link.target.bind(base)?;
+        }
+        Ok(plan)
+    }
     fn link_order(&self, base: &Project) -> Result<Vec<usize>> {
         if self.links.len() > 64 {
             return Err(crate::Error::Plan("連動条件は64個までです".into()));
@@ -300,6 +471,10 @@ pub struct ScanManifest {
 }
 impl ScanManifest {
     pub fn new(base: &Project, plan: ScanPlan) -> Result<Self> {
+        let mut normalized = base.clone();
+        normalized.refresh_assembly()?;
+        let base = &normalized;
+        let plan = plan.bind(base)?;
         if plan.values.is_empty()
             || plan.values.len() > 256
             || !(1..=64).contains(&plan.threads)
@@ -360,7 +535,7 @@ impl ScanManifest {
         })
     }
     pub fn open(dir: &Path) -> Result<Self> {
-        let manifest: Self = serde_json::from_slice(
+        let mut manifest: Self = serde_json::from_slice(
             &fs::read(dir.join("scan.json"))
                 .map_err(|e| raytrace_io::Error::io(dir.join("scan.json"), e))?,
         )
@@ -393,6 +568,8 @@ impl ScanManifest {
                 return Err(crate::Error::Plan("走査結果のファイル名が不正です".into()));
             }
             let record = RunRecord::open(&dir.join(expected))?;
+            let mut recorded_project = record.calculation.project.clone();
+            recorded_project.refresh_assembly()?;
             let intended =
                 manifest
                     .plan
@@ -402,7 +579,7 @@ impl ScanManifest {
                 .chain(manifest.plan.links.iter().map(|l| &l.target));
             if record.calculation.software_version != manifest.software_version
                 || parameters
-                    .map(|p| Ok(p.value(&record.calculation.project)? != p.value(&intended)?))
+                    .map(|p| Ok(p.value(&recorded_project)? != p.value(&intended)?))
                     .collect::<Result<Vec<_>>>()?
                     .into_iter()
                     .any(|v| v)
@@ -412,6 +589,8 @@ impl ScanManifest {
                 ));
             }
         }
+        manifest.base.refresh_assembly()?;
+        manifest.plan = manifest.plan.bind(&manifest.base)?;
         Ok(manifest)
     }
     pub fn save(&self, dir: &Path) -> Result<()> {

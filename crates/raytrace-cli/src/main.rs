@@ -16,6 +16,11 @@ const HELP: &str = "raytrace-rs MODEL.json|MODEL.zmx [--output REPORT.json] [--r
     raytrace-rs --convergence MODEL [--plan PLAN.json] [--output DIRECTORY]\n\
     raytrace-rs --scan MODEL [--plan PLAN.json] [--output DIRECTORY]\n\
     raytrace-rs --resume-scan DIRECTORY\n\
+    raytrace-rs run SCRIPT.json [--output SCRIPT_REPORT.json]\n\
+    raytrace-rs commands\n\
+    raytrace-rs session\n\
+    raytrace-rs session --connect GUI_SESSION.json\n\
+    raytrace-rs mcp [--connect GUI_SESSION.json]\n\
 光線CSVヘッダー: id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium\n\
 単位: mm、um、任意の光量重み。発射光線の重み合計を100%の基準とします。\n\
 シーケンシャルは透過光と指定したミラーを追跡し、全反射で光線を終了します。非シーケンシャルは反射光と透過光に分岐します。\n\
@@ -94,6 +99,66 @@ struct Benchmark {
 
 fn run() -> Result<(), Box<dyn Error>> {
     let mut args: Vec<_> = env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "commands") {
+        if args.len() != 1 {
+            return Err("commands は追加引数を取りません".into());
+        }
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&raytrace_engine::schema())?
+        );
+        return Ok(());
+    }
+    if args.first().is_some_and(|a| a == "session" || a == "mcp") {
+        let endpoint = match args.len() {
+            1 => None,
+            3 if args[1] == "--connect" => Some(raytrace_engine::bridge::Endpoint::open(
+                std::path::Path::new(&args[2]),
+            )?),
+            _ => return Err("session|mcp [--connect GUI_SESSION.json] を指定してください".into()),
+        };
+        let mut session = raytrace_engine::Session::new(Project::new_assembly())?;
+        let apply = |request| match &endpoint {
+            Some(e) => e.apply(request),
+            None => session.apply(request),
+        };
+        if args[0] == "mcp" {
+            return raytrace_engine::mcp::serve(
+                std::io::stdin().lock(),
+                std::io::stdout().lock(),
+                apply,
+            )
+            .map_err(Into::into);
+        }
+        return raytrace_engine::script::serve_with(
+            std::io::stdin().lock(),
+            std::io::stdout().lock(),
+            apply,
+        )
+        .map_err(Into::into);
+    }
+    if args.first().is_some_and(|a| a == "run") {
+        let input = args.get(1).ok_or("JSONスクリプトを指定してください")?;
+        let output = match args.len() {
+            2 => None,
+            4 if args[2] == "--output" => Some(PathBuf::from(&args[3])),
+            _ => return Err("run SCRIPT.json [--output REPORT.json] を指定してください".into()),
+        };
+        let report = raytrace_engine::script::run_file(std::path::Path::new(input))?;
+        let bytes = serde_json::to_vec_pretty(&report)?;
+        if let Some(output) = output {
+            if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(output, bytes)?;
+        } else {
+            println!("{}", String::from_utf8(bytes)?);
+        }
+        if !report.success {
+            return Err(report.error.unwrap().into());
+        }
+        return Ok(());
+    }
     if args.first().is_some_and(|a| a == "--version" || a == "-V") {
         println!("raytrace-rs {}", env!("CARGO_PKG_VERSION"));
         return Ok(());

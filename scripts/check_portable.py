@@ -119,13 +119,26 @@ def check(archive, output):
             if run(binary, "--version").strip() != f"{binary} {version}":
                 raise ValueError("Executable version mismatch")
         checks.append("GUI/CLI version without development tools on PATH")
-        for sample in sorted((root / "examples").glob("*.json")):
+        for sample in (root / "examples" / name for name in ("sequential_lens.json", "nonsequential_slab.json", "integrator_rod.json", "folded_mirror.json")):
             name = sample.stem + ".run.json"
             run("raytrace-rs", sample, "--rays-per-source", 256, "--threads", 2, "--output", name)
             data = record(name)
             if abs(data["relative_budget_closure_error"]) > 1e-10:
                 raise ValueError("Sample power budget failed")
             checks.append("Trace owned sample: " + sample.stem)
+
+        schema=json.loads(run("raytrace-rs","commands"))
+        if schema.get("type")!="object" or not schema.get("$defs"):
+            raise ValueError("Command schema is unavailable")
+        run("raytrace-rs","run","examples/automation_assembly.json","--output","automation.script_report.json")
+        automation=record("automation.script_report.json")
+        if not automation["success"]:
+            raise ValueError("JSON assembly script failed")
+        generated=record("results/automation/run.json")
+        run("raytrace-rs","--replay","results/automation/run.json","--threads",4,"--output","automation.replay.json")
+        if record("automation.replay.json")["report"]!=generated["report"]:
+            raise ValueError("JSON assembly replay differs")
+        checks.append("JSON command schema, assembly script, saved project and exact replay without development tools")
 
         # A fresh native file verifies parsing and source-file-independent replay.
         native = root / "owned.zmx"

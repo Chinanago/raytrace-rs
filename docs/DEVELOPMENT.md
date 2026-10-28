@@ -26,6 +26,12 @@ cargo run --release --example assembly_demo -- results/assembly_demo.json
 
 ## GUI・Rustの基盤
 
+編集状態・履歴・JSONコマンド・計算ジョブは `raytrace-engine::Session` が管理します。GUIは表示用の編集値を共通の確定処理へ渡し、CLIのJSONスクリプトとMCPも同じSessionを操作します。依存方向は `GUI / CLI / MCP → engine → app / io → core`。固定IDは編集・保存のために持ち、追跡内部の配列番号へ対応付けます。
+
+操作仕様は `schemars` でRustの型から生成します。`scripts/check_command_schema.py` は独立したPythonの `jsonschema` で正しい操作・不正な操作を検査します。検証用の環境では `python -m pip install jsonschema==4.26.0` を実行します。詳細とサンプルは[JSON操作とMCP](AUTOMATION.md)を参照してください。
+
+GUIへの外部読込は別スレッドの編集Sessionで準備し、元のSessionで編集が進んでいないことを確認して反映します。途中にUndoが入った場合も変更世代を確認して競合を検出します。
+
 GUIは egui / eframe 0.37.0、ファイル選択は rfd 0.17.2 を使います。既定の描画は wgpu です。WindowsではDX12とVulkanを有効にし、ソフトウェアアダプター（WARP）も選択対象に含めます。wgpuの初期化に失敗した場合は、標準エラーに1行出力してglowで起動し直します。`--renderer wgpu` または `--renderer glow` で描画方式を固定できます。固定した場合は自動切替を行いません。`--smoke 出力先` はどちらでも画面と状態を保存します。
 
 全クレートはedition 2024です。`rust-version` は依存するegui / eframeの最低要件に合わせて1.95に設定し、CIも1.95.0で検証します。wgpu 30.0.1の要件は1.87、rfd 0.17.2には最低Rust版の指定がありません。

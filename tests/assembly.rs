@@ -137,7 +137,7 @@ fn composition_survives_source_file_removal_and_saves_latest_poses() {
     fs::remove_file(lens).unwrap();
     fs::remove_file(dir.join("TEST.AGF")).unwrap();
     let loaded = Project::open(&output, &[]).unwrap();
-    assert_eq!(loaded.format, "raytrace-project-v2");
+    assert_eq!(loaded.format, "raytrace-project-v4");
     assert_eq!(loaded.assembly.as_ref().unwrap().components.len(), 4);
     assert_eq!(
         loaded.scene.surfaces.last().unwrap().pose.translation_mm.0[2],
