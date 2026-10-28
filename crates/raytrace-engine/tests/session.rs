@@ -468,6 +468,33 @@ fn discarded_ids_stay_reserved_after_undo_save_and_reopen() {
     .created[0]
         .clone();
     assert_ne!(old, next);
+
+    let mut session = Session::new(assembly::demo_project().unwrap()).unwrap();
+    let old = apply(
+        &mut session,
+        json!({"command":"add_detector","size_mm":[2,2],"pixels":[4,4]}),
+    )
+    .created[0]
+        .clone();
+    apply(&mut session, json!({"command":"undo"}));
+    let path = folder().join("reserved_run.json");
+    apply(
+        &mut session,
+        json!({"command":"trace","rays_per_source":16,"threads":2,"output":path,"alias":"run"}),
+    );
+    assert_eq!(
+        apply(&mut session, json!({"command":"wait","job":"run"})).data["status"],
+        "completed"
+    );
+    let record = raytrace_io::record::RunRecord::open(&path).unwrap();
+    let mut reopened = Session::new(record.calculation.project).unwrap();
+    let next = apply(
+        &mut reopened,
+        json!({"command":"add_detector","size_mm":[2,2],"pixels":[4,4]}),
+    )
+    .created[0]
+        .clone();
+    assert_ne!(old, next);
 }
 
 #[test]

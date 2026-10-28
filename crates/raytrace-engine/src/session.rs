@@ -176,6 +176,11 @@ impl Session {
     pub fn prepare_draft(&self, project: &mut Project) {
         project.identity.next_id = project.identity.next_id.max(self.id_high_water);
     }
+    fn frozen_project(&self) -> Project {
+        let mut project = self.project.clone();
+        self.prepare_draft(&mut project);
+        project
+    }
     /// Replace a GUI model while keeping revisions unique within the live session.
     pub fn reset_project(&mut self, project: Project) -> Result<()> {
         self.replace(project)
@@ -649,9 +654,7 @@ impl Session {
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                let mut snapshot = self.project.clone();
-                self.prepare_draft(&mut snapshot);
-                snapshot.save(&path)?;
+                self.frozen_project().save(&path)?;
                 json!({"path":path})
             }
             Command::ExportZmx { path } => {
@@ -675,7 +678,8 @@ impl Session {
             } => {
                 self.check_job_alias(&alias)?;
                 let plan = serde_json::from_slice(&std::fs::read(self.path(&plan))?)?;
-                let mut manifest = raytrace_app::scan::ScanManifest::new(&self.project, plan)?;
+                let mut manifest =
+                    raytrace_app::scan::ScanManifest::new(&self.frozen_project(), plan)?;
                 let output = self.path(&output);
                 let id = self.start_study("scan", move |control| {
                     manifest.execute(&output, control, |_| {})?;
@@ -702,7 +706,7 @@ impl Session {
             } => {
                 self.check_job_alias(&alias)?;
                 let plan = serde_json::from_slice(&std::fs::read(self.path(&plan))?)?;
-                let project = self.project.clone();
+                let project = self.frozen_project();
                 let output = self.path(&output);
                 let id = self.start_study("convergence", move |control| {
                     let Some(summary) = raytrace_app::convergence::run_project_controlled(
@@ -813,7 +817,7 @@ impl Session {
                 "スレッド数1〜64、光線数1〜2,000,000で指定してください",
             ));
         }
-        let project = self.project.clone();
+        let project = self.frozen_project();
         let mut scene = project.trace_scene()?;
         if let Some(n) = rays {
             for s in &mut scene.sources {
