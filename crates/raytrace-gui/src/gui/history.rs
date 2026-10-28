@@ -4,7 +4,6 @@ use std::collections::VecDeque;
 #[derive(Clone)]
 pub(super) struct Snapshot {
     explicit_record: bool,
-    project: Project,
     preview: Option<usize>,
     component: usize,
     surface: usize,
@@ -19,103 +18,34 @@ pub(super) struct History {
     future: Vec<Snapshot>,
     pending: bool,
     pub revision: u64,
-    next: u64,
     saved: Option<u64>,
 }
 impl History {
-    pub fn begin(&mut self) {
+    pub fn begin(&mut self, revision: u64) {
+        self.revision = revision;
         if !self.pending {
             self.pending = true;
-            self.next += 1;
-            self.revision = self.next;
             self.future.clear();
         }
     }
+    #[cfg(test)]
     pub fn can_undo(&self) -> bool {
         self.pending || !self.past.is_empty()
     }
+    #[cfg(test)]
     pub fn can_redo(&self) -> bool {
         !self.future.is_empty()
     }
     fn trim(&mut self) {
-        let mut bytes: usize = self.past.iter().map(|s| project_bytes(&s.project)).sum();
-        while self.past.len() > 1 && (self.past.len() > 64 || bytes > 128 * 1024 * 1024) {
-            if let Some(s) = self.past.pop_front() {
-                bytes = bytes.saturating_sub(project_bytes(&s.project));
-            }
+        while self.past.len() > 64 {
+            self.past.pop_front();
         }
     }
-}
-// Geometry vectors dominate CAD snapshot size. No serialization or triangle walk is needed.
-fn coating_bytes(c: &raytrace_core::coating::Coating) -> usize {
-    let size = |m: &raytrace_core::coating::CoatingModel| match m {
-        raytrace_core::coating::CoatingModel::Table {
-            wavelengths_um,
-            angles_deg,
-            coefficients,
-            ..
-        } => (wavelengths_um.len() + angles_deg.len()) * 8 + coefficients.len() * 16,
-        _ => 0,
-    };
-    c.name.len()
-        + c.zemax_definition.as_ref().map_or(0, |s| s.len())
-        + size(&c.front)
-        + c.back.as_ref().map_or(0, size)
-}
-fn scene_bytes(scene: &Scene) -> usize {
-    scene.sources.len() * size_of::<Source>()
-        + scene
-            .sources
-            .iter()
-            .filter_map(|s| s.spectrum.as_ref())
-            .map(|s| s.samples.len() * 16)
-            .sum::<usize>()
-        + scene.materials.len() * 1024
-        + scene
-            .surfaces
-            .iter()
-            .map(|s| {
-                size_of::<Surface>()
-                    + s.name.len()
-                    + s.coating.as_ref().map_or(0, coating_bytes)
-                    + match &s.shape {
-                        Shape::TriangleMesh {
-                            vertices,
-                            triangles,
-                            normals,
-                        } => {
-                            (vertices.len() + normals.len()) * size_of::<V3>()
-                                + triangles.len() * 12
-                        }
-                        Shape::EvenAsphere { coefficients, .. }
-                        | Shape::FlatEvenAsphere { coefficients } => coefficients.len() * 8,
-                        _ => 0,
-                    }
-            })
-            .sum::<usize>()
-}
-fn project_bytes(p: &Project) -> usize {
-    scene_bytes(&p.scene)
-        + p.zemax
-            .as_ref()
-            .map_or(0, |z| z.text.len() + scene_bytes(&z.baseline_scene))
-        + p.assembly.as_ref().map_or(0, |a| {
-            a.components
-                .iter()
-                .map(|c| {
-                    project_bytes(&c.project)
-                        + c.rod
-                            .as_ref()
-                            .map_or(0, |r| r.coatings.values().map(coating_bytes).sum::<usize>())
-                })
-                .sum()
-        })
 }
 impl App {
     fn snapshot(&self) -> Snapshot {
         Snapshot {
             explicit_record: self.viewing_explicit_record,
-            project: self.project.clone(),
             preview: self.preview_limit,
             component: self.component,
             surface: self.selected,
@@ -125,11 +55,21 @@ impl App {
         }
     }
     pub(super) fn reset_history(&mut self, saved: bool) {
+        self.engine
+            .reset_project(self.project.clone())
+            .expect("valid editor project");
+        self.engine.set_catalogs(self.catalogs.clone());
+        self.project = self.engine.project().clone();
+        self.reset_presentation_history(saved);
+    }
+    pub(super) fn reset_presentation_history(&mut self, saved: bool) {
         self.history = History::default();
-        self.history.saved = saved.then_some(0);
+        self.history.revision = self.engine.revision();
+        self.history.saved = saved.then_some(self.engine.revision());
         self.history.baseline = Some(self.snapshot());
     }
     pub(super) fn commit_edit(&mut self) {
+        self.engine.end_gesture();
         if self.history.pending {
             if let Some(previous) = self.history.baseline.take() {
                 self.history.past.push_back(previous);
@@ -146,7 +86,7 @@ impl App {
     }
     fn restore_snapshot(&mut self, state: &Snapshot) {
         self.viewing_explicit_record = state.explicit_record;
-        self.project = state.project.clone();
+        self.project = self.engine.project().clone();
         self.preview_limit = state.preview;
         self.component = state.component;
         self.selected = state.surface;
@@ -168,6 +108,16 @@ impl App {
     }
     pub(super) fn undo(&mut self) {
         self.commit_edit();
+        if !self.engine.can_undo() {
+            return;
+        }
+        if let Err(e) = self.engine.apply(raytrace_engine::Request {
+            expected_revision: None,
+            command: raytrace_engine::Command::Undo {},
+        }) {
+            self.error = Some(e.to_string());
+            return;
+        }
         if let Some(previous) = self.history.past.pop_back() {
             if let Some(current) = self.history.baseline.take() {
                 self.history.future.push(current);
@@ -178,6 +128,16 @@ impl App {
     }
     pub(super) fn redo(&mut self) {
         self.commit_edit();
+        if !self.engine.can_redo() {
+            return;
+        }
+        if let Err(e) = self.engine.apply(raytrace_engine::Request {
+            expected_revision: None,
+            command: raytrace_engine::Command::Redo {},
+        }) {
+            self.error = Some(e.to_string());
+            return;
+        }
         if let Some(next) = self.history.future.pop() {
             if let Some(current) = self.history.baseline.take() {
                 self.history.past.push_back(current);

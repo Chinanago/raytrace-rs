@@ -1,0 +1,22 @@
+{
+  "format": "raytrace-script-v1",
+  "commands": [
+    { "command": "new_assembly", "name": "レンズとロッド" },
+    {
+      "command": "transaction", "label": "光学系の組立",
+      "edits": [
+        { "command": "add_component", "kind": "source", "path": "source_disk.json", "alias": "source" },
+        { "command": "add_component", "kind": "optic", "path": "sequential_lens.json", "alias": "lens" },
+        { "command": "set_property", "target": "lens", "change": { "property": "position_mm", "value": [0, 0, 10] } },
+        { "command": "add_rod", "material": { "type": "constant", "n": 1.5 }, "size_mm": [1, 1, 30], "alias": "rod" },
+        { "command": "set_property", "target": "rod", "change": { "property": "position_mm", "value": [0, 0, 68.5] } },
+        { "command": "add_detector", "size_mm": [20, 20], "pixels": [64, 64], "alias": "screen" },
+        { "command": "set_property", "target": "screen", "change": { "property": "position_mm", "value": [0, 0, 100.5] } }
+      ]
+    },
+    { "command": "query", "query": { "query": "components" } },
+    { "command": "save", "path": "../results/automation/project.json" },
+    { "command": "trace", "threads": 4, "paths": 64, "output": "../results/automation/run.json", "alias": "run" },
+    { "command": "wait", "job": "run" }
+  ]
+}

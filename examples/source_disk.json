@@ -1,0 +1,13 @@
+{
+  "name": "Disk source component",
+  "reference_plane": "Light launched by the disk source",
+  "mode": "non_sequential",
+  "materials": [{ "type": "constant", "n": 1.0 }],
+  "surfaces": [],
+  "sources": [{
+    "sampling": "sobol", "count": 1024,
+    "origin_mm": [0, 0, 0], "direction": [0, 0, 1],
+    "disk_radius_mm": 4, "wavelength_um": 0.55,
+    "medium": 0, "total_weight": 1, "seed": 42
+  }]
+}

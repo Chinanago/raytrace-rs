@@ -100,7 +100,7 @@ fn parameters(project: &Project) -> Vec<Parameter> {
         }
     }
     p.push(Parameter::Wavelength);
-    p
+    p.into_iter().filter_map(|v| v.bind(project).ok()).collect()
 }
 fn scale(parameter: &Parameter) -> f64 {
     if *parameter == Parameter::Wavelength {
@@ -169,10 +169,14 @@ impl App {
         self.study.rays = self.preview_limit.unwrap_or(256);
     }
     fn set_study_parameter(&mut self, parameter: Parameter) {
+        let parameter = parameter.bind(&self.project).unwrap_or(parameter);
         let value = parameter.value(&self.project).unwrap_or(0.55) * scale(&parameter);
         let spread = if parameter == Parameter::Wavelength {
             20.0
-        } else if matches!(parameter, Parameter::RodSize { .. }) {
+        } else if matches!(
+            parameter,
+            Parameter::RodSize { .. } | Parameter::RodSizeId { .. }
+        ) {
             value.abs() * 0.1
         } else {
             1.0
@@ -374,10 +378,11 @@ mod tests {
     use super::*;
     fn wait(app: &mut App, ctx: &egui::Context) {
         let deadline = Instant::now() + Duration::from_secs(15);
-        while app.job.is_some() {
+        while app.job.is_some() || app.automation_job.is_some() {
             assert!(Instant::now() < deadline, "background study timed out");
             std::thread::sleep(Duration::from_millis(5));
             app.poll(ctx);
+            app.poll_automation(ctx);
         }
         assert!(app.error.is_none(), "{:?}", app.error);
     }
@@ -393,7 +398,7 @@ mod tests {
         {
             s.count = 2_000_000;
         }
-        app.project.refresh_assembly().unwrap();
+        app.refresh_components();
         app.run(&ctx);
         let deadline = Instant::now() + Duration::from_secs(5);
         while app.job.is_some() {
@@ -414,7 +419,7 @@ mod tests {
         {
             s.count = 32;
         }
-        app.project.refresh_assembly().unwrap();
+        app.refresh_components();
         app.run(&ctx);
         app.control
             .as_ref()

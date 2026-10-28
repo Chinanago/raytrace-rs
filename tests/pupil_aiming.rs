@@ -396,7 +396,7 @@ fn optical_pupil_survives_composition_native_roundtrip_and_source_file_removal()
     p.save(&saved).unwrap();
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&fs::read(&saved).unwrap()).unwrap()["format"],
-        "raytrace-project-v3"
+        "raytrace-project-v4"
     );
     fs::remove_file(dir.join("owned.zmx")).unwrap();
     fs::remove_file(dir.join("own.AGF")).unwrap();

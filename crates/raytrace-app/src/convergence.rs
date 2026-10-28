@@ -3,7 +3,7 @@ use crate::Result;
 use raytrace_core::{
     model::{Interaction, Shape},
     screen::ScreenAnalysis,
-    trace::{DetectorMap, TraceOptions, trace_generated},
+    trace::{DetectorMap, TraceControl, TraceOptions, trace_generated_controlled},
 };
 use raytrace_io::{project::Project, record::RunContext};
 use serde::{Deserialize, Serialize};
@@ -185,10 +185,52 @@ fn axis_options<T: Copy>(values: &[T]) -> Vec<Option<T>> {
 }
 
 pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<ConvergenceReport> {
-    plan.validate()?;
+    run_controlled(model, plan, output, &TraceControl::default())?
+        .ok_or_else(|| crate::Error::Plan("収束確認を中止しました".into()))
+}
+
+pub fn run_controlled(
+    model: &Path,
+    plan: &ConvergencePlan,
+    output: &Path,
+    control: &TraceControl,
+) -> Result<Option<ConvergenceReport>> {
     let native = model
         .extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("zmx"));
+    run_loaded(
+        &model.display().to_string(),
+        native,
+        plan,
+        output,
+        control,
+        |cad| Project::open_with_cad_tolerance(model, &[], cad),
+    )
+}
+
+pub fn run_project_controlled(
+    project: &Project,
+    plan: &ConvergencePlan,
+    output: &Path,
+    control: &TraceControl,
+) -> Result<Option<ConvergenceReport>> {
+    run_loaded(&project.scene.name, false, plan, output, control, |_| {
+        Ok(project.clone())
+    })
+}
+
+fn run_loaded(
+    model_name: &str,
+    native: bool,
+    plan: &ConvergencePlan,
+    output: &Path,
+    control: &TraceControl,
+    mut load: impl FnMut(f64) -> raytrace_io::Result<Project>,
+) -> Result<Option<ConvergenceReport>> {
+    plan.validate()?;
+    if control.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+        return Ok(None);
+    }
     if !native && plan.cad_deflections_mm.len() > 1 {
         return Err(crate::Error::Plan("CAD分割精度の比較には、STEPを参照する元のZMXを指定してください。JSON内のメッシュは保存済みの分割を使います".into()));
     }
@@ -200,17 +242,20 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
         .map_err(|e| crate::Error::Plan(format!("スレッドプールを作成できません: {e}")))?;
     let mut summary = ConvergenceReport {
         format: "raytrace-convergence-v1".into(), software_version: env!("CARGO_PKG_VERSION").into(),
-        model: model.display().to_string(), plan: plan.clone(), cases: Vec::new(), comparisons: Vec::new(),
+        model: model_name.into(), plan: plan.clone(), cases: Vec::new(), comparisons: Vec::new(),
         distribution_definition: "L1 sum of differences in integrated pixel power / each launch reference. Area-overlap rebinning to a common grid of at most 64x64, assuming uniform power within original pixels. Reference is the largest ray/pixel count, smallest CAD deflection, or first seed, with other axes fixed. This is a sensitivity comparison, not an automatic convergence certificate.".into(),
         timing_definition: "One trace per case, including report accumulation; excludes model loading, tessellation, preparation, source generation and file output. No benchmark warmup or median is applied.".into(),
     };
     let mut maps: Vec<Vec<DetectorMap>> = Vec::new();
     let pixel_options = axis_options(&plan.pixels);
     for &cad in &plan.cad_deflections_mm {
-        let loaded = Project::open_with_cad_tolerance(model, &[], cad).map_err(|e| e.to_string());
+        let loaded = load(cad).map_err(|e| e.to_string());
         for count in axis_options(&plan.ray_counts) {
             for seed in axis_options(&plan.seeds) {
                 for &pixels in &pixel_options {
+                    if control.cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        return Ok(None);
+                    }
                     let index = summary.cases.len();
                     let settings = CaseSettings {
                         rays_per_source: count,
@@ -234,7 +279,7 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
                         detectors: Vec::new(),
                         run_file: None,
                     };
-                    let result = (|| -> Result<Vec<DetectorMap>> {
+                    let result = (|| -> Result<Option<Vec<DetectorMap>>> {
                         let mut project = loaded
                             .as_ref()
                             .map_err(|e| crate::Error::Plan(e.clone()))?
@@ -271,8 +316,12 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
                         }
                         let prepared = scene.clone().prepare()?;
                         let started = Instant::now();
-                        let report =
-                            pool.install(|| trace_generated(&prepared, TraceOptions::default()))?;
+                        let Some(report) = pool.install(|| {
+                            trace_generated_controlled(&prepared, TraceOptions::default(), control)
+                        })?
+                        else {
+                            return Ok(None);
+                        };
                         row.trace_seconds = started.elapsed().as_secs_f64();
                         row.rays = total as usize;
                         row.reference_weight = report.budget.launched;
@@ -345,10 +394,11 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
                             )?;
                             row.run_file = Some(name);
                         }
-                        Ok(coarse)
+                        Ok(Some(coarse))
                     })();
                     match result {
-                        Ok(m) => maps.push(m),
+                        Ok(Some(m)) => maps.push(m),
+                        Ok(None) => return Ok(None),
                         Err(e) => {
                             row.error = Some(e.to_string());
                             maps.push(Vec::new());
@@ -450,5 +500,5 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
             .map_err(|e| raytrace_io::Error::json(Some(output.join("convergence.json")), e))?,
     )
     .map_err(|e| crate::Error::from(raytrace_io::Error::io(output.join("convergence.json"), e)))?;
-    Ok(summary)
+    Ok(Some(summary))
 }

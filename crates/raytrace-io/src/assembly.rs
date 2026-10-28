@@ -44,6 +44,8 @@ pub struct RodSize {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Component {
+    #[serde(default)]
+    pub id: crate::identity::EntityId,
     pub name: String,
     pub enabled: bool,
     pub kind: ComponentKind,
@@ -166,6 +168,7 @@ impl Component {
             V3::default()
         };
         Ok(Self {
+            id: Default::default(),
             name: project.scene.name.clone(),
             enabled: true,
             kind,
@@ -192,6 +195,7 @@ impl Component {
         project.scene.materials.push(material);
         project.material_names = vec!["AIR".into(), name];
         Self {
+            id: Default::default(),
             name: "ロッド".into(),
             enabled: true,
             kind: ComponentKind::Rod,
@@ -221,6 +225,7 @@ impl Component {
             interaction: Interaction::Detector { pixels: [64, 64] },
         });
         Self {
+            id: Default::default(),
             name: "スクリーン".into(),
             enabled: true,
             kind: ComponentKind::Detector,
@@ -231,6 +236,13 @@ impl Component {
         }
     }
 
+    pub(crate) fn surface_count(&self) -> usize {
+        if self.rod.is_some() {
+            6
+        } else {
+            self.project.scene.surfaces.len()
+        }
+    }
     fn local_surfaces(&self) -> Result<Vec<Surface>> {
         let Some(r) = &self.rod else {
             return Ok(self.project.scene.surfaces.clone());

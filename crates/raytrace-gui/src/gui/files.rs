@@ -57,13 +57,13 @@ impl App {
                             self.details = Some(Details::Calculation);
                         }
                         ui.add_enabled_ui(self.job.is_none(), |ui| {
-                            if history_button(ui, self.history.can_redo(), "↷")
+                            if history_button(ui, self.engine.can_redo(), "↷")
                                 .on_hover_text("やり直す (Ctrl+Y)")
                                 .clicked()
                             {
                                 self.redo();
                             }
-                            if history_button(ui, self.history.can_undo(), "↶")
+                            if history_button(ui, self.engine.can_undo(), "↶")
                                 .on_hover_text("元に戻す (Ctrl+Z)")
                                 .clicked()
                             {
@@ -131,8 +131,12 @@ impl App {
                 .add_filter("Raytrace", &["json"])
                 .save_file()
             {
-                match self.project.save(&path) {
-                    Ok(()) => {
+                self.commit_edit();
+                match self.engine.apply(raytrace_engine::Request {
+                    expected_revision: None,
+                    command: raytrace_engine::Command::Save { path: path.clone() },
+                }) {
+                    Ok(_) => {
                         self.mark_saved();
                         self.path = Some(path);
                         self.remember_path();

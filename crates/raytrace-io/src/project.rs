@@ -19,6 +19,8 @@ pub struct Issue {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
+    #[serde(default)]
+    pub identity: crate::identity::Identity,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assembly: Option<Assembly>,
     pub format: String,
@@ -38,12 +40,7 @@ pub struct Project {
 
 impl Project {
     pub fn new(scene: Scene) -> Self {
-        let format = if scene.sources.iter().any(|s| s.extended_illumination()) {
-            "raytrace-project-v3"
-        } else {
-            "raytrace-project-v1"
-        }
-        .into();
+        let format = "raytrace-project-v4".into();
         let material_names = (0..scene.materials.len())
             .map(|i| {
                 if i == 0 {
@@ -53,7 +50,8 @@ impl Project {
                 }
             })
             .collect();
-        Self {
+        let mut project = Self {
+            identity: Default::default(),
             assembly: None,
             format,
             scene,
@@ -63,7 +61,11 @@ impl Project {
             allow_uncoated: false,
             monochromatic_override_um: None,
             cad_deflection_mm: None,
-        }
+        };
+        project
+            .ensure_identity()
+            .expect("in-memory scene ID capacity");
+        project
     }
     pub fn open(path: &Path, catalogs: &[PathBuf]) -> Result<Self> {
         Self::open_with_cad_tolerance(path, catalogs, 0.02)
@@ -97,13 +99,18 @@ impl Project {
                 "raytrace-project-v1",
                 "raytrace-project-v2",
                 "raytrace-project-v3",
+                "raytrace-project-v4",
             ]
             .contains(&project.format.as_str())
                 || project.format == "raytrace-project-v2" && project.assembly.is_none()
             {
                 return Err(crate::Error::Project("未対応のプロジェクト形式です".into()));
             }
+            if project.format == "raytrace-project-v4" {
+                project.validate_identity()?;
+            }
             project.refresh_assembly()?;
+            project.validate_identity()?;
             Ok(project)
         } else {
             Ok(Self::new(serde_json::from_value(value).map_err(|e| {
@@ -114,6 +121,7 @@ impl Project {
     pub fn save(&self, path: &Path) -> Result<()> {
         let mut snapshot = self.clone();
         snapshot.refresh_assembly()?;
+        snapshot.validate_identity()?;
         fs::write(
             path,
             serde_json::to_vec_pretty(&snapshot)
@@ -164,34 +172,19 @@ impl Project {
     }
     pub fn new_assembly() -> Self {
         let mut p = Self::new(empty_scene("組立光学系"));
-        p.format = "raytrace-project-v2".into();
         p.assembly = Some(Assembly::default());
         p
     }
     pub fn refresh_assembly(&mut self) -> Result<()> {
+        self.ensure_identity()?;
         if let Some(a) = &self.assembly {
             let (scene, names, issues) = a.compose(&self.scene)?;
             self.scene = scene;
             self.material_names = names;
             self.issues = issues;
         }
-        self.format = if self.requires_extended_illumination() {
-            "raytrace-project-v3"
-        } else if self.assembly.is_some() {
-            "raytrace-project-v2"
-        } else {
-            "raytrace-project-v1"
-        }
-        .into();
+        self.format = "raytrace-project-v4".into();
         Ok(())
-    }
-    fn requires_extended_illumination(&self) -> bool {
-        self.scene.sources.iter().any(|s| s.extended_illumination())
-            || self.assembly.as_ref().is_some_and(|a| {
-                a.components
-                    .iter()
-                    .any(|c| c.project.requires_extended_illumination())
-            })
     }
     pub fn add_component(&mut self, component: Component) -> Result<()> {
         let mut candidate = self.clone();

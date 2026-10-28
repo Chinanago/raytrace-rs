@@ -7,7 +7,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 FILES = {
     ".gitattributes", ".gitignore", "Cargo.toml", "Cargo.lock", "deny.toml", "README.md", "LICENSE",
-    "docs/FEATURES.md", "docs/GUIDE.md", "docs/DEVELOPMENT.md",
+    "docs/FEATURES.md", "docs/GUIDE.md", "docs/DEVELOPMENT.md", "docs/AUTOMATION.md",
     "Raytraceを起動.cmd", "examples/exchange_check.rs", "examples/assembly_demo.rs",
     "examples/validation_suite.rs",
     "examples/performance_check.rs",
@@ -19,6 +19,7 @@ FILES = {
     "scripts/package_windows.py",
     "scripts/third_party_notices.toml",
     "scripts/check_publish.py", "scripts/zemax_exchange_probe.py",
+    "scripts/check_command_schema.py",
     "scripts/opticstudio_nsc_probe.py", "examples/nsc_reference.rs",
     "scripts/benchmark_compare.py",
     "skills/raytrace-rs/SKILL.md", "skills/raytrace-rs/LICENSE",
@@ -27,13 +28,14 @@ FILES = {
 DEMOS = {
     "examples/sequential_lens.json", "examples/nonsequential_slab.json",
     "examples/integrator_rod.json", "examples/folded_mirror.json",
+    "examples/source_disk.json", "examples/automation_assembly.json",
 }
 FIXTURES = {"tests/fixtures/step_legacy_hits.json"}
 FONT_ASSETS = {"crates/raytrace-gui/assets/fonts/" + name for name in (
     "NotoSansJP-Regular.otf", "NotoSansJP-Bold.otf", "NotoSansMono-Regular.ttf",
     "OFL-NotoSansJP.txt", "OFL-NotoSansMono.txt",
 )}
-CRATES = {"raytrace-core", "raytrace-io", "raytrace-app", "raytrace-cli", "raytrace-gui"}
+CRATES = {"raytrace-core", "raytrace-io", "raytrace-app", "raytrace-engine", "raytrace-cli", "raytrace-gui"}
 
 
 def git(*args):
@@ -64,7 +66,8 @@ def main():
             and part.parts[0] == "crates"
             and part.parts[1] in CRATES
             and (part.parts[2:] == ("Cargo.toml",)
-                 or (part.parts[2] == "src" and part.suffix == ".rs"))
+                 or (part.parts[2] == "src" and part.suffix == ".rs")
+                 or (part.parts[1] == "raytrace-engine" and part.parts[2] == "tests" and part.suffix == ".rs"))
         )
         if mode != b"100644" or stage != b"0" or not (path in FILES | DEMOS | FIXTURES | FONT_ASSETS or source):
             failures.append(f"Unapproved publication path or mode: {path}")

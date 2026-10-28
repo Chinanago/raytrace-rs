@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/raytrace-core", "crates/raytrace-io", "crates/raytrace-app", "crates/raytrace-cli", "crates/raytrace-gui"]
+members = ["crates/raytrace-core", "crates/raytrace-io", "crates/raytrace-app", "crates/raytrace-engine", "crates/raytrace-cli", "crates/raytrace-gui"]
 resolver = "2"
 
 [workspace.package]
@@ -24,6 +24,8 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 raytrace-core = { path = "crates/raytrace-core", version = "0.11.0" }
 raytrace-io = { path = "crates/raytrace-io", version = "0.11.0" }
 raytrace-app = { path = "crates/raytrace-app", version = "0.11.0" }
+raytrace-engine = { path = "crates/raytrace-engine", version = "0.11.0" }
+schemars = "=1.2.3"
 
 [package]
 name = "raytrace-rs"

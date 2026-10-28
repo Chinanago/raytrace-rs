@@ -14,6 +14,7 @@ categories = ["science", "simulation"]
 raytrace-core = { workspace = true }
 raytrace-io = { workspace = true }
 raytrace-app = { workspace = true }
+raytrace-engine = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

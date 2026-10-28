@@ -15,6 +15,7 @@ serde = { workspace = true }
 raytrace-core = { workspace = true }
 raytrace-io = { workspace = true, features = ["png"] }
 raytrace-app = { workspace = true }
+raytrace-engine = { workspace = true }
 rayon = { workspace = true }
 serde_json = { workspace = true }
 eframe = { workspace = true }

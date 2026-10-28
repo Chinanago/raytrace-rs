@@ -1,123 +1,22 @@
 use super::*;
-use raytrace_core::trace::{TraceOptions, trace, trace_generated_controlled};
+use raytrace_core::trace::{TraceOptions, trace};
 
 impl App {
-    pub(super) fn run(&mut self, ctx: &egui::Context) {
+    pub(super) fn run(&mut self, _ctx: &egui::Context) {
         self.commit_edit();
-        let revision = self.history.revision;
-        let mut scene = match self.project.trace_scene() {
-            Ok(s) => s,
-            Err(e) => {
-                self.error = Some(e.to_string());
-                return;
-            }
+        let request = raytrace_engine::Request {
+            expected_revision: None,
+            command: raytrace_engine::Command::Trace {
+                options: raytrace_engine::TraceSettings {
+                    threads: self.threads,
+                    preview_limit: self.preview_limit,
+                    ..Default::default()
+                },
+            },
         };
-        if let Some(limit) = self.preview_limit {
-            for source in &mut scene.sources {
-                source.count = source.count.min(limit);
-            }
+        if let Err(error) = self.apply_automation(request) {
+            self.error = Some(error.to_string());
         }
-        let threads = self.threads;
-        let control = Arc::new(TraceControl::default());
-        self.control = Some(control.clone());
-        let project_snapshot = self.project.clone();
-        let (tx, rx) = mpsc::channel();
-        let context = ctx.clone();
-        self.job = Some(rx);
-        self.status = "光線を追跡中…".into();
-        std::thread::spawn(move || {
-            let result = (|| -> Result<Option<Box<ResultView>>, String> {
-                let total: u128 = scene.sources.iter().map(|s| s.count as u128).sum();
-                if total == 0 || total > 2_000_000 {
-                    return Err("光線数は合計1〜2,000,000本で指定してください".into());
-                }
-                if control.cancel.load(Ordering::Relaxed) {
-                    return Ok(None);
-                }
-                let pool = rayon::ThreadPoolBuilder::new()
-                    .num_threads(threads)
-                    .build()
-                    .map_err(|e| e.to_string())?;
-                let prepared = scene.clone().prepare().map_err(|e| e.to_string())?;
-                if control.cancel.load(Ordering::Relaxed) {
-                    return Ok(None);
-                }
-                let started = Instant::now();
-                let Some(mut report) = pool
-                    .install(|| {
-                        trace_generated_controlled(&prepared, TraceOptions::default(), &control)
-                    })
-                    .map_err(|e| e.to_string())?
-                else {
-                    return Ok(None);
-                };
-                let seconds = started.elapsed().as_secs_f64();
-                let power = report.budget.launched;
-                if !power.is_finite() || power <= 0.0 {
-                    return Err("発射基準光量は正の有限値で指定してください".into());
-                }
-                let generator = prepared.ray_generator().map_err(|e| e.to_string())?;
-                let n = generator.len().min(64);
-                // Each source contributes a prefix; striding a Sobol sequence destroys its balance.
-                let mut preview = Vec::with_capacity(n);
-                let mut layer = 0;
-                while preview.len() < n {
-                    let mut offset = 0;
-                    for source in &scene.sources {
-                        if layer < source.count {
-                            preview.push(Ray {
-                                id: preview.len() as u64,
-                                ..generator
-                                    .rays(offset + layer..offset + layer + 1)
-                                    .next()
-                                    .unwrap()
-                                    .map_err(|e| e.to_string())?
-                            });
-                        }
-                        offset += source.count;
-                        if preview.len() == n {
-                            break;
-                        }
-                    }
-                    layer += 1;
-                }
-                report.paths = pool
-                    .install(|| {
-                        trace(
-                            &prepared,
-                            &preview,
-                            TraceOptions {
-                                keep_terminals: false,
-                                path_launch_count: n as u64,
-                            },
-                        )
-                    })
-                    .paths;
-                Ok(Some(Box::new(ResultView {
-                    revision,
-                    calculation: RunContext::capture(
-                        &project_snapshot,
-                        &scene,
-                        None,
-                        threads,
-                        TraceOptions::default(),
-                    ),
-                    scene,
-                    report,
-                    seconds,
-                    texture: None,
-                    screen: None,
-                    roi_cache: None,
-                })))
-            })();
-            let message = match result {
-                Ok(Some(result)) => Job::Traced(Ok(result)),
-                Ok(None) => Job::Cancelled,
-                Err(error) => Job::Traced(Err(error)),
-            };
-            let _ = tx.send(message);
-            context.request_repaint();
-        });
     }
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
         self.poll_study();
@@ -143,9 +42,6 @@ impl App {
                     self.study.comparisons = images;
                     self.study.comparison_open = true;
                     self.study.open = false;
-                }
-                Job::Cancelled => {
-                    self.status = "計算を中止しました。完了済みの結果を保持しています".into()
                 }
                 Job::Scanned(Ok(manifest)) => {
                     self.study.manifest = Some(*manifest);
@@ -192,13 +88,7 @@ impl App {
                         self.status = "読込レポートで計算条件を確認してください".into();
                     }
                 }
-                Job::Traced(Ok(r)) => {
-                    self.status = "計算完了".into();
-                    self.result = Some(*r);
-                    self.stale = false;
-                }
                 Job::Loaded(Err(e))
-                | Job::Traced(Err(e))
                 | Job::Scanned(Err(e))
                 | Job::LoadedRun(Err(e))
                 | Job::Compared(Err(e)) => {
@@ -226,30 +116,25 @@ pub(super) fn record_viewer_paths(
             })
             .collect::<Vec<_>>(),
         raytrace_io::record::LaunchInput::Generated { .. } => {
-            let mut preview = scene.clone();
-            for s in &mut preview.sources {
-                s.count = s.count.min(64);
-            }
-            let generated = preview
-                .clone()
-                .prepare()
-                .map_err(|e| e.to_string())?
-                .generate_rays()
-                .map_err(|e| e.to_string())?;
-            let total = generated.len().min(64);
+            let prepared = scene.clone().prepare().map_err(|e| e.to_string())?;
+            let generator = prepared.ray_generator().map_err(|e| e.to_string())?;
+            let total = generator.len().min(64);
             let mut rays = Vec::with_capacity(total);
             let mut layer = 0;
             while rays.len() < total {
                 let mut offset = 0;
-                for (i, s) in preview.sources.iter().enumerate() {
-                    if layer < s.count && rays.len() < total {
+                for source in &scene.sources {
+                    if layer < source.count && rays.len() < total {
                         rays.push(Ray {
                             id: rays.len() as u64,
-                            weight: scene.sources[i].total_weight / scene.sources[i].count as f64,
-                            ..generated[offset + layer]
+                            ..generator
+                                .rays(offset + layer..offset + layer + 1)
+                                .next()
+                                .unwrap()
+                                .map_err(|e| e.to_string())?
                         });
                     }
-                    offset += s.count;
+                    offset += source.count;
                 }
                 layer += 1;
             }
