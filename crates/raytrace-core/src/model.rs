@@ -220,34 +220,30 @@ impl Scene {
                     coefficients,
                     valid_range_um,
                     ..
-                } => {
-                    if crate::dispersion::coefficient_count(*formula)
-                        .is_none_or(|n| coefficients.len() < n)
-                        || !coefficients.iter().all(|v| v.is_finite())
-                        || !positive(valid_range_um[0])
-                        || !positive(valid_range_um[1])
-                        || valid_range_um[0] >= valid_range_um[1]
-                    {
-                        return Err(crate::Error::InvalidScene(
-                            "AGFの分散係数・有効波長範囲が不正です".into(),
-                        ));
-                    }
+                } if crate::dispersion::coefficient_count(*formula)
+                    .is_none_or(|n| coefficients.len() < n)
+                    || !coefficients.iter().all(|v| v.is_finite())
+                    || !positive(valid_range_um[0])
+                    || !positive(valid_range_um[1])
+                    || valid_range_um[0] >= valid_range_um[1] =>
+                {
+                    return Err(crate::Error::InvalidScene(
+                        "AGFの分散係数・有効波長範囲が不正です".into(),
+                    ));
                 }
                 Material::WithAbsorption {
                     dispersion,
                     samples,
-                } => {
-                    if samples.is_empty()
-                        || !samples
-                            .iter()
-                            .all(|s| positive(s[0]) && s[1].is_finite() && s[1] >= 0.0)
-                        || !samples.windows(2).all(|w| w[0][0] < w[1][0])
-                        || !samples.iter().any(|s| dispersion.index(s[0]).is_some())
-                    {
-                        return Err(crate::Error::InvalidScene(
-                            "カタログの吸収・分散データが不正です".into(),
-                        ));
-                    }
+                } if samples.is_empty()
+                    || !samples
+                        .iter()
+                        .all(|s| positive(s[0]) && s[1].is_finite() && s[1] >= 0.0)
+                    || !samples.windows(2).all(|w| w[0][0] < w[1][0])
+                    || !samples.iter().any(|s| dispersion.index(s[0]).is_some()) =>
+                {
+                    return Err(crate::Error::InvalidScene(
+                        "カタログの吸収・分散データが不正です".into(),
+                    ));
                 }
                 Material::Constant { n, .. } if !positive(*n) => {
                     return Err(crate::Error::InvalidScene("屈折率が不正です".into()));
@@ -257,31 +253,27 @@ impl Scene {
                     c_um2,
                     valid_range_um,
                     ..
-                } => {
-                    if !b.iter().chain(c_um2).all(|v| v.is_finite())
-                        || !positive(valid_range_um[0])
-                        || !positive(valid_range_um[1])
-                        || valid_range_um[0] >= valid_range_um[1]
-                    {
-                        return Err(crate::Error::InvalidScene(
-                            "Sellmeierの係数・有効波長範囲が不正です".into(),
-                        ));
-                    }
+                } if !b.iter().chain(c_um2).all(|v| v.is_finite())
+                    || !positive(valid_range_um[0])
+                    || !positive(valid_range_um[1])
+                    || valid_range_um[0] >= valid_range_um[1] =>
+                {
+                    return Err(crate::Error::InvalidScene(
+                        "Sellmeierの係数・有効波長範囲が不正です".into(),
+                    ));
                 }
                 Material::Schott {
                     coefficients,
                     valid_range_um,
                     ..
-                } => {
-                    if !coefficients.iter().all(|v| v.is_finite())
-                        || !positive(valid_range_um[0])
-                        || !positive(valid_range_um[1])
-                        || valid_range_um[0] >= valid_range_um[1]
-                    {
-                        return Err(crate::Error::InvalidScene(
-                            "Schottの係数・有効波長範囲が不正です".into(),
-                        ));
-                    }
+                } if !coefficients.iter().all(|v| v.is_finite())
+                    || !positive(valid_range_um[0])
+                    || !positive(valid_range_um[1])
+                    || valid_range_um[0] >= valid_range_um[1] =>
+                {
+                    return Err(crate::Error::InvalidScene(
+                        "Schottの係数・有効波長範囲が不正です".into(),
+                    ));
                 }
                 Material::Tabulated { samples, .. }
                     if samples.len() < 2
@@ -347,22 +339,20 @@ impl Scene {
                     vertices,
                     triangles,
                     normals,
-                } => {
-                    if vertices.is_empty()
-                        || triangles.is_empty()
-                        || triangles.len() > 1_000_000
-                        || normals.len() != vertices.len()
-                        || !vertices.iter().all(|p| p.finite())
-                        || !normals.iter().all(|n| n.finite() && n.norm() > 1e-12)
-                        || triangles
-                            .iter()
-                            .flatten()
-                            .any(|&i| i as usize >= vertices.len())
-                    {
-                        return Err(crate::Error::InvalidScene(
-                            "三角形メッシュが不正です".into(),
-                        ));
-                    }
+                } if vertices.is_empty()
+                    || triangles.is_empty()
+                    || triangles.len() > 1_000_000
+                    || normals.len() != vertices.len()
+                    || !vertices.iter().all(|p| p.finite())
+                    || !normals.iter().all(|n| n.finite() && n.norm() > 1e-12)
+                    || triangles
+                        .iter()
+                        .flatten()
+                        .any(|&i| i as usize >= vertices.len()) =>
+                {
+                    return Err(crate::Error::InvalidScene(
+                        "三角形メッシュが不正です".into(),
+                    ));
                 }
                 Shape::Sphere { radius_mm }
                     if !positive(radius_mm.abs())
