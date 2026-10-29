@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/raytrace-core", "crates/raytrace-io", "crates/raytrace-app", "crates/raytrace-cli", "crates/raytrace-gui"]
+members = ["crates/raytrace-core", "crates/raytrace-formats", "crates/raytrace-io", "crates/raytrace-app", "crates/raytrace-cli", "crates/raytrace-gui"]
 resolver = "2"
 
 [workspace.package]
@@ -22,6 +22,7 @@ egui = { version = "0.37", default-features = false }
 rfd = { version = "0.17", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
 raytrace-core = { path = "crates/raytrace-core", version = "0.11.0" }
+raytrace-formats = { path = "crates/raytrace-formats", version = "0.11.0" }
 raytrace-io = { path = "crates/raytrace-io", version = "0.11.0" }
 raytrace-app = { path = "crates/raytrace-app", version = "0.11.0" }
 
@@ -43,6 +44,7 @@ png = ["raytrace-io/png"]
 
 [dependencies]
 raytrace-core = { workspace = true }
+raytrace-formats = { workspace = true }
 raytrace-io = { workspace = true }
 raytrace-app = { workspace = true }
 
@@ -61,6 +63,9 @@ codegen-units = 1
 opt-level = 1
 
 [profile.test.package.raytrace-core]
+opt-level = 1
+
+[profile.test.package.raytrace-formats]
 opt-level = 1
 
 [profile.test.package.raytrace-io]

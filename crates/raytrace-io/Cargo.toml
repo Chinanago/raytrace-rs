@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-description = "Optical file formats, persistence and project data"
+description = "Optical projects, persistence and result exports"
 readme = "../../README.md"
 keywords = ["optics", "raytracing"]
 categories = ["science", "simulation"]
@@ -18,10 +18,9 @@ png = ["dep:image"]
 thiserror = { workspace = true }
 rayon = { workspace = true }
 raytrace-core = { workspace = true }
+raytrace-formats = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-encoding_rs = { workspace = true }
-spade = { workspace = true }
 image = { workspace = true, optional = true }
 
 [lints]

@@ -1,4 +1,4 @@
-//! Optical file formats, persistence and project data.
+//! Optical projects, persistence and result exports.
 pub mod assembly;
 pub mod cad;
 pub mod compatibility;

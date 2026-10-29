@@ -191,7 +191,7 @@ pub(super) fn material_record(name: &str, m: &Material) -> Result<String> {
 }
 
 /// Recover supported text dependencies from an embedded original after source files moved.
-pub(super) fn recover(project: &Project, output: &Path) -> Result<Sidecars> {
+pub(super) fn recover(project: &ZmxView<'_>, output: &Path) -> Result<Sidecars> {
     let mut files = Sidecars::new();
     let Some(doc) = &project.zemax else {
         return Ok(files);

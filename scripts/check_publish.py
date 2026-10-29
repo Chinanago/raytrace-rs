@@ -33,7 +33,7 @@ FONT_ASSETS = {"crates/raytrace-gui/assets/fonts/" + name for name in (
     "NotoSansJP-Regular.otf", "NotoSansJP-Bold.otf", "NotoSansMono-Regular.ttf",
     "OFL-NotoSansJP.txt", "OFL-NotoSansMono.txt",
 )}
-CRATES = {"raytrace-core", "raytrace-io", "raytrace-app", "raytrace-cli", "raytrace-gui"}
+CRATES = {"raytrace-core", "raytrace-formats", "raytrace-io", "raytrace-app", "raytrace-cli", "raytrace-gui"}
 
 
 def git(*args):

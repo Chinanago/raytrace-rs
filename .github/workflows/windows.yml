@@ -82,6 +82,6 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all --check
       - name: Check code
-        run: cargo clippy --locked -p raytrace-core -p raytrace-io -p raytrace-app -p raytrace-cli -p raytrace-rs --all-features --all-targets -- -D warnings
+        run: cargo clippy --locked -p raytrace-core -p raytrace-formats -p raytrace-io -p raytrace-app -p raytrace-cli -p raytrace-rs --all-features --all-targets -- -D warnings
       - name: Run tests
-        run: cargo test --locked -p raytrace-core -p raytrace-io -p raytrace-app -p raytrace-cli -p raytrace-rs --all-features
+        run: cargo test --locked -p raytrace-core -p raytrace-formats -p raytrace-io -p raytrace-app -p raytrace-cli -p raytrace-rs --all-features

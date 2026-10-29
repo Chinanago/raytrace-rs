@@ -2,7 +2,7 @@
 
 ソースリポジトリでのビルド・検証・配布物の作成方法です。通常の操作は[操作ガイド](GUIDE.md)、機能ごとの対応条件は[機能と対応範囲](FEATURES.md)を参照してください。
 
-ライブラリの失敗は `raytrace-core`・`raytrace-io`・`raytrace-app` の各 `Error` 列挙型と `Result<T>` で返します。`Error` は `#[non_exhaustive]` のため、呼出側のパターンマッチには残りのケースを扱う分岐が必要です。材料番号・波長・光線ID・ファイルパスなどはフィールドで取得でき、表示文は日本語です。ルートクレートからは `raytrace_rs::error::{CoreError, IoError, AppError}` として参照できます。GUIやレポート内のエラー文字列には `error.to_string()` を使います。光源番号の `source_index` は既存の表示に合わせて1から数えます。
+ライブラリの失敗は `raytrace-core`・`raytrace-formats`・`raytrace-io`・`raytrace-app` の各 `Error` 列挙型と `Result<T>` で返します。`Error` は `#[non_exhaustive]` のため、呼出側のパターンマッチには残りのケースを扱う分岐が必要です。材料番号・波長・光線ID・ファイルパスなどはフィールドで取得でき、表示文は日本語です。ルートクレートからは `raytrace_rs::error::{CoreError, FormatError, IoError, AppError}` として参照できます。GUIやレポート内のエラー文字列には `error.to_string()` を使います。光源番号の `source_index` は既存の表示に合わせて1から数えます。
 
 ## ソースからビルドして起動
 
@@ -204,15 +204,18 @@ Rustは各界面でS/P反射率を独立に平均します。OpticStudioは偏�
 
 ## リポジトリ構成
 
-Cargo workspaceとして、`crates/` 以下の5クレートに分けています。
+Cargo workspaceとして、`crates/` 以下の6クレートに分けています。
 
 - `raytrace-core`: 数学・形状・光源生成・光線追跡・コーティング・分散・スクリーン解析の計算核です。ファイル形式やGUIには依存しません。
-- `raytrace-io`: ZMX／AGF／SPCD・STEP・保存・出力を扱います。ZMX入出力と相互に参照する `project`、`assembly`、`record`、`compatibility` もここに置いています。
+- `raytrace-formats`: ZMX／AGF／SPCD・STEPの入出力とCADキャッシュの保存先を扱います。
+- `raytrace-io`: `project`、`assembly`、`record`、`compatibility` と、設定の保存・スクリーン出力を扱います。従来のZMX・CAD入出力のパスもここから使えます。
 - `raytrace-app`: パラメーター走査・収束確認・検証ケースのワークフローを扱います。
 - `raytrace-cli`: コマンドライン用の `raytrace-rs` 実行ファイルです。
 - `raytrace-gui`: デスクトップ用の `raytrace-gui` 実行ファイルです。PNG出力も有効にします。
 
-依存方向は `core ← io ← app ← {cli, gui}` で、各層は必要な下位層を参照します。リポジトリ直下の `raytrace-rs` はcore・io・appのモジュールを再公開する窓口で、既存の `raytrace_rs::model` などのパスを使えます。`tests/` と `examples/` も直下に残しています。
+依存方向は `core ← formats ← io ← app ← {cli, gui}` で、各層は必要な下位層を参照します。リポジトリ直下の `raytrace-rs` はcore・io・appのモジュールを再公開する窓口で、既存の `raytrace_rs::model` などのパスを使えます。`tests/` と `examples/` も直下に残しています。
+
+`raytrace-formats` はプロジェクトモデルに依存せず、ZMXの読込結果と書出し用の参照を形式側の型で受け渡します。`raytrace-io` がこれを `Project` に接続することで、ファイル形式とプロジェクトの相互参照を避けています。公開順もcore・formats・io・appの順です。
 
 ライブラリのPNG出力には `--features png` を指定します。SPCDの文字列解析は `Spectrum::parse_spcd`、ファイルの読込・文字コード判定は `raytrace_rs::zemax::read_spcd` を使います。
 

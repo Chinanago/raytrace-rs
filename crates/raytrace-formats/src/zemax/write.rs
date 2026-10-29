@@ -3,15 +3,10 @@ use crate::Result;
 
 /// Preserve the complete source text on an unchanged document. Geometry edits
 /// are patched only for supported coaxial sequential surfaces.
-pub fn export(project: &Project, path: &Path) -> Result<()> {
-    if project.assembly.is_some() {
-        return Err(crate::Error::zmx(
-            "組立光学系はJSONプロジェクトで保存できます。部品を含むZMX書出しは追加予定です".into(),
-        ));
-    }
+pub fn export(project: &ZmxView<'_>, path: &Path) -> Result<()> {
     let mut sidecars = exchange::recover(project, path)?;
     if let Some(original) = &project.zemax
-        && serde_json::to_value(&project.scene).map_err(|e| crate::Error::json(None, e))?
+        && serde_json::to_value(project.scene).map_err(|e| crate::Error::json(None, e))?
             == serde_json::to_value(&original.baseline_scene)
                 .map_err(|e| crate::Error::json(None, e))?
     {
@@ -20,7 +15,7 @@ pub fn export(project: &Project, path: &Path) -> Result<()> {
         return fs::write(path, encode(&original.text, &original.encoding)?)
             .map_err(|e| crate::Error::io(path, e));
     }
-    let scene = &project.scene;
+    let scene = project.scene;
     scene.clone().prepare()?;
     if project
         .issues
@@ -531,7 +526,7 @@ fn copy_dependencies(original: &ZmxDocument, output: &Path) -> Result<()> {
 }
 
 fn patch_nsc(
-    project: &Project,
+    project: &ZmxView<'_>,
     original: &ZmxDocument,
     output: &Path,
     sidecars: &mut exchange::Sidecars,

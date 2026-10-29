@@ -154,7 +154,7 @@ pub(super) fn read_nsc(
     all: &[String],
     path: &Path,
     wavelength: f64,
-    project: &mut Project,
+    project: &mut ZmxModel,
     glasses: &BTreeMap<String, Glass>,
     records: &mut BTreeMap<String, String>,
     deflection_mm: f64,

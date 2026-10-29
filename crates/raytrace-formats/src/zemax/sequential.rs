@@ -46,7 +46,7 @@ pub(super) fn read_sequential(
     all: &[String],
     location: (&Path, &[PathBuf]),
     wavelength: f64,
-    project: &mut Project,
+    project: &mut ZmxModel,
     glasses: &BTreeMap<String, Glass>,
     records: &mut BTreeMap<String, String>,
     bindings: &mut Vec<usize>,

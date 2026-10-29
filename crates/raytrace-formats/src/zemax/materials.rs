@@ -194,7 +194,7 @@ pub(super) fn catalogs(
     result
 }
 pub(super) fn material_id(
-    project: &mut Project,
+    project: &mut ZmxModel,
     glasses: &BTreeMap<String, Glass>,
     name: &str,
     records: &mut BTreeMap<String, String>,

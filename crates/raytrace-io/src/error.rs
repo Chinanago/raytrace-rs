@@ -4,6 +4,8 @@ use std::path::PathBuf;
 #[non_exhaustive]
 pub enum Error {
     #[error(transparent)]
+    Format(raytrace_formats::Error),
+    #[error(transparent)]
     Core(#[from] raytrace_core::Error),
     #[error("{path} の入出力に失敗しました: {source}", path = .path.display())]
     Io {
@@ -34,9 +36,6 @@ pub enum Error {
 }
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 impl Error {
-    pub(crate) fn step(detail: String) -> Self {
-        Self::Step { detail }
-    }
     pub(crate) fn zmx(detail: String) -> Self {
         Self::Zmx { line: None, detail }
     }
@@ -48,5 +47,21 @@ impl Error {
     }
     pub fn json(path: Option<PathBuf>, source: serde_json::Error) -> Self {
         Self::Json { path, source }
+    }
+}
+
+impl From<raytrace_formats::Error> for Error {
+    fn from(error: raytrace_formats::Error) -> Self {
+        match error {
+            raytrace_formats::Error::Core(source) => Self::Core(source),
+            raytrace_formats::Error::Io { path, source } => Self::Io { path, source },
+            raytrace_formats::Error::Json { path, source } => Self::Json { path, source },
+            raytrace_formats::Error::Zmx { line, detail } => Self::Zmx { line, detail },
+            raytrace_formats::Error::Agf(detail) => Self::Agf(detail),
+            raytrace_formats::Error::Spcd(detail) => Self::Spcd(detail),
+            raytrace_formats::Error::Step { detail } => Self::Step { detail },
+            raytrace_formats::Error::Cad(detail) => Self::Project(detail),
+            error => Self::Format(error),
+        }
     }
 }

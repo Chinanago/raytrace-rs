@@ -62,6 +62,8 @@ $skill-installer で Chinanago/raytrace-rs の skills/raytrace-rs をインス�
 | 部品の配置、スクリーン、走査、保存、CLI | [操作ガイド](docs/GUIDE.md) |
 | ソースからのビルド、自動テスト、検証、配布物の作成 | [開発と検証](docs/DEVELOPMENT.md) |
 
+ソースは `raytrace-core`、`raytrace-formats`、`raytrace-io`、`raytrace-app`、`raytrace-cli`、`raytrace-gui` の6クレートに分かれています。依存方向は `core ← formats ← io ← app ← {cli, gui}` です。ZMX／AGF／SPCD・STEPを扱う `raytrace-formats` はプロジェクトモデルに依存せず、`raytrace-io` が読込結果を `Project` に接続します。[構成の詳細](docs/DEVELOPMENT.md#リポジトリ構成)
+
 ## ライセンス
 
 [MIT License](LICENSE)。依存ライブラリとフォントには、それぞれのライセンスが適用されます。Windows版ZIPには、その著作権表示と利用条件を `THIRD_PARTY_LICENSES.txt` に同梱しています。

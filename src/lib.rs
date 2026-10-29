@@ -9,5 +9,6 @@ pub use raytrace_io::{assembly, cad, compatibility, export, project, record, sto
 pub mod error {
     pub use raytrace_app::Error as AppError;
     pub use raytrace_core::Error as CoreError;
+    pub use raytrace_formats::Error as FormatError;
     pub use raytrace_io::Error as IoError;
 }

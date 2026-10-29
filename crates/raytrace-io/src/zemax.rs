@@ -1,55 +1,19 @@
 //! Native ZMX/AGF parsing. Unknown data stays in the original document.
 use crate::Result;
-mod exchange;
-mod illumination;
 use crate::project::Project;
-use raytrace_core::{
-    math::{Pose, V3},
-    model::*,
-};
-use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    fs,
-    path::{Path, PathBuf},
-};
-
-mod materials;
-mod nsc;
-mod sequential;
-mod text;
-mod write;
-
-use materials::{Glass, catalogs, material_id};
-use nsc::read_nsc;
-use sequential::read_sequential;
-pub use text::{TextEncoding, decode, read_spcd};
-use text::{checked_parameters, encode, field, number, parameters, pose_from, scalar, words};
-pub use write::export;
+use raytrace_core::model::Material;
+pub use raytrace_formats::zemax::{TextEncoding, ZmxDocument, decode};
+use std::path::{Path, PathBuf};
 
 /// Read one glass through the native AGF parser without importing geometry.
 pub fn read_catalog_material(directory: &Path, catalog: &str, name: &str) -> Result<Material> {
-    let glasses = catalogs(
-        &directory.join("reference.zmx"),
-        &[directory.to_path_buf()],
-        &[catalog.into()],
-    );
-    glasses
-        .get(&name.to_uppercase())
-        .ok_or_else(|| crate::Error::Agf(format!("Glass {name} absent from {catalog}")))?
-        .material()
+    raytrace_formats::zemax::read_catalog_material(directory, catalog, name).map_err(Into::into)
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct ZmxDocument {
-    pub text: String,
-    pub encoding: TextEncoding,
-    pub source_path: PathBuf,
-    pub baseline_scene: Scene,
-    /// One source-document surface number per editable sequential surface.
-    pub surface_numbers: Vec<usize>,
-    pub glass_records: BTreeMap<String, String>,
+pub fn read_spcd(path: &Path) -> Result<raytrace_core::spectrum::Spectrum> {
+    raytrace_formats::zemax::read_spcd(path).map_err(Into::into)
 }
+
 pub fn read_zmx(path: &Path, extra: &[PathBuf]) -> Result<Project> {
     read_zmx_with_cad_tolerance(path, extra, 0.02)
 }
@@ -58,126 +22,32 @@ pub fn read_zmx_with_cad_tolerance(
     extra: &[PathBuf],
     deflection_mm: f64,
 ) -> Result<Project> {
-    if !deflection_mm.is_finite() || deflection_mm <= 0.0 {
-        return Err(crate::Error::zmx("CAD分割精度が不正です".into()));
-    }
-    let (text, encoding) = decode(&fs::read(path).map_err(|e| crate::Error::io(path, e))?);
-    let all: Vec<String> = text.lines().map(str::to_owned).collect();
-    if field(&all, "UNIT").is_some_and(|s| s.split_whitespace().next() != Some("MM")) {
-        return Err(crate::Error::zmx(
-            "現在はmm単位のZMXに対応しています".into(),
-        ));
-    }
-    let mode = field(&all, "MODE").unwrap_or("SEQ");
-    if !["SEQ", "NSC"].contains(&mode) {
-        return Err(crate::Error::zmx(format!(
-            "未対応のZMX追跡方式です: {mode}"
-        )));
-    }
-    let wavelengths = checked_parameters(&all, "WAVM")?;
-    for line in &all {
-        let w = words(line);
-        if w.first() == Some(&"WAVM")
-            && (w.len() < 3
-                || w[1].parse::<usize>().ok().is_none_or(|i| i == 0)
-                || number(w[2]).ok().is_none_or(|v| !v.is_finite() || v <= 0.0))
-        {
-            return Err(crate::Error::zmx(format!(
-                "ZMXの波長定義が不正です: {}",
-                line.trim()
-            )));
-        }
-    }
-    let primary_value = scalar(&all, "PWAV", 1.0)?;
-    if !primary_value.is_finite() || primary_value < 1.0 || primary_value.fract() != 0.0 {
-        return Err(crate::Error::zmx("ZMXの主波長番号が不正です".into()));
-    }
-    let primary = primary_value as usize;
-    let wavelength = *wavelengths
-        .get(&primary)
-        .or_else(|| wavelengths.values().next())
-        .unwrap_or(&0.55);
-    let mut project = Project::new(Scene {
-        name: field(&all, "NAME")
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| path.file_stem().and_then(|s| s.to_str()).unwrap_or("Zemax"))
-            .into(),
-        reference_plane: "発射面の光線重み合計".into(),
-        mode: if mode.starts_with("NSC") {
-            Mode::NonSequential
-        } else {
-            Mode::Sequential
-        },
-        materials: vec![Material::Constant {
-            n: 1.0,
-            absorption_per_mm: 0.0,
-        }],
-        surfaces: Vec::new(),
-        sources: Vec::new(),
-        settings: Settings::default(),
-    });
-    let declared: Vec<String> = field(&all, "GCAT")
-        .unwrap_or("")
-        .split_whitespace()
-        .map(str::to_owned)
-        .collect();
-    if !wavelengths.contains_key(&primary) {
-        project.issue(
-            "spectrum",
-            "主波長が波長表にありません。計算波長を明示してください",
-            true,
-        );
-    }
-    if let Some(environment) = field(&all, "ENVD") {
-        let values: Vec<_> = environment
-            .split_whitespace()
-            .map(number)
-            .collect::<Result<_, _>>()?;
-        if values.len() < 2
-            || (values[0] - 20.0).abs() > 1e-12
-            || (values[1] - 1.0).abs() > 1e-12
-            || values.iter().any(|v| !v.is_finite())
-            || values.iter().skip(2).any(|v| *v != 0.0)
-        {
-            project.issue(
-                "environment",
-                format!("環境条件ENVD {environment}の温度・圧力による屈折率補正は未対応です"),
-                true,
-            );
-        }
-    }
-    let glasses = catalogs(path, extra, &declared);
-    let mut records = BTreeMap::new();
-    let mut bindings = Vec::new();
-    if mode.starts_with("NSC") {
-        read_nsc(
-            &all,
-            path,
-            wavelength,
-            &mut project,
-            &glasses,
-            &mut records,
-            deflection_mm,
-        )?;
-    } else {
-        read_sequential(
-            &all,
-            (path, extra),
-            wavelength,
-            &mut project,
-            &glasses,
-            &mut records,
-            &mut bindings,
-        )?;
-    }
-    project.zemax = Some(ZmxDocument {
-        text,
-        encoding,
-        source_path: path.into(),
-        baseline_scene: project.scene.clone(),
-        surface_numbers: bindings,
-        glass_records: records,
-    });
+    let model = raytrace_formats::zemax::read_zmx_with_cad_tolerance(path, extra, deflection_mm)?;
+    let mut project = Project::new(model.scene);
+    project.material_names = model.material_names;
+    project.issues = model.issues;
+    project.zemax = model.zemax;
+    project.cad_deflection_mm = model.cad_deflection_mm;
     project.refresh_assembly()?;
     Ok(project)
+}
+
+/// Preserve the complete source text on an unchanged document. Geometry edits
+/// are patched only for supported coaxial sequential surfaces.
+pub fn export(project: &Project, path: &Path) -> Result<()> {
+    if project.assembly.is_some() {
+        return Err(crate::Error::zmx(
+            "組立光学系はJSONプロジェクトで保存できます。部品を含むZMX書出しは追加予定です".into(),
+        ));
+    }
+    raytrace_formats::zemax::export(
+        &raytrace_formats::zemax::ZmxView {
+            scene: &project.scene,
+            material_names: &project.material_names,
+            issues: &project.issues,
+            zemax: project.zemax.as_ref(),
+        },
+        path,
+    )
+    .map_err(Into::into)
 }
