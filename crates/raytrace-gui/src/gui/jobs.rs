@@ -11,10 +11,29 @@ impl ResultView {
         Self {
             design,
             preview_limit,
-            calculation: record.calculation,
             scene: record.scene,
-            report: record.report,
-            seconds: record.trace_seconds,
+            record: Arc::new(RunRecord {
+                format: RUN_FORMAT.into(),
+                calculation: record.calculation,
+                trace_seconds: record.trace_seconds,
+                report: record.report,
+            }),
+            texture: None,
+            screen: None,
+            roi_cache: None,
+        }
+    }
+    /// A result that shows `record`.
+    pub(super) fn of_record(
+        design: Arc<Design>,
+        preview_limit: Option<usize>,
+        record: RunRecord,
+    ) -> Self {
+        Self {
+            design,
+            preview_limit,
+            scene: record.calculation.scene.clone(),
+            record: Arc::new(record),
             texture: None,
             screen: None,
             roi_cache: None,
@@ -22,17 +41,12 @@ impl ResultView {
     }
     /// The calculation record for saving or export; `paths` are the viewer samples.
     pub(super) fn record(&self, keep_paths: bool) -> RunRecord {
-        let mut report = self.report.clone();
+        let mut record = RunRecord::clone(&self.record);
         if !keep_paths {
             // Viewer paths use reindexed sample IDs; archive the actual calculation.
-            report.paths.clear();
+            record.report.paths.clear();
         }
-        RunRecord {
-            format: RUN_FORMAT.into(),
-            calculation: self.calculation.clone(),
-            trace_seconds: self.seconds,
-            report,
-        }
+        record
     }
 }
 

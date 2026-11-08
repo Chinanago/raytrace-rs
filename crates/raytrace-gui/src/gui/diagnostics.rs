@@ -82,9 +82,9 @@ impl App {
                 }
             }
             if let Some(r) = &self.result
-                && !r.calculation.pupils.is_empty() {
+                && !r.record.calculation.pupils.is_empty() {
                     egui::CollapsingHeader::new(if self.is_stale() { "前回の計算結果の入射瞳" } else { "この計算結果の入射瞳" }).show(ui, |ui| {
-                        for pupil in &r.calculation.pupils {
+                        for pupil in &r.record.calculation.pupils {
                             ui.label(format!("光源 {}", pupil.source_index + 1));
                             if let Some(g) = &pupil.geometry {
                                 let p = g.entrance_pose.translation_mm.0;
@@ -145,7 +145,7 @@ impl App {
         if self.is_stale() {
             ui.colored_label(WARNING, "前回の計算結果");
         }
-        let b = &r.report.budget;
+        let b = &r.record.report.budget;
         let reference = b.launched.max(1e-300);
         ui.add_space(8.0);
         ui.label(format!("基準面：{} = 100%", r.scene.reference_plane));
@@ -191,6 +191,7 @@ impl App {
             });
         section_label(ui, "追跡の診断");
         let fallbacks = r
+            .record
             .report
             .surfaces
             .iter()
@@ -199,10 +200,10 @@ impl App {
         if fallbacks > 0 {
             egui::CollapsingHeader::new(format!("CAD法線の補正：{fallbacks}回")).show(ui,|ui|{
                 ui.label("補間法線の反射・屈折が三角形の境界と食い違う場合、三角形の幾何法線を使用します。CADの分割精度を変えた収束確認の対象です。");
-                for s in r.report.surfaces.iter().filter(|s|s.normal_fallbacks>0) {ui.label(format!("{}：{}回",s.name,s.normal_fallbacks));}
+                for s in r.record.report.surfaces.iter().filter(|s|s.normal_fallbacks>0) {ui.label(format!("{}：{}回",s.name,s.normal_fallbacks));}
             });
         }
-        if r.report.diagnostics.is_empty() {
+        if r.record.report.diagnostics.is_empty() {
             ui.label(
                 egui::RichText::new("未解決の光線・打切りはありません")
                     .size(SIZE_CAPTION)
@@ -210,7 +211,7 @@ impl App {
             );
         }
         let mut locate = None;
-        for (i, d) in r.report.diagnostics.iter().enumerate() {
+        for (i, d) in r.record.report.diagnostics.iter().enumerate() {
             let name = d
                 .surface
                 .and_then(|s| r.scene.surfaces.get(s))
@@ -278,15 +279,15 @@ impl App {
             .header_response
             .on_hover_text(format!("{percent:.6}%"));
         }
-        if r.report.diagnostic_overflow.branch_count > 0 {
+        if r.record.report.diagnostic_overflow.branch_count > 0 {
             ui.label(format!(
                 "代表例の保存上限を超えた診断：{} 分岐 · {}",
-                r.report.diagnostic_overflow.branch_count,
-                display_percent(r.report.diagnostic_overflow.weight * 100.0 / reference)
+                r.record.report.diagnostic_overflow.branch_count,
+                display_percent(r.record.report.diagnostic_overflow.weight * 100.0 / reference)
             ))
             .on_hover_text(format!(
                 "{:.6}%",
-                r.report.diagnostic_overflow.weight * 100.0 / reference
+                r.record.report.diagnostic_overflow.weight * 100.0 / reference
             ));
         }
         if let Some(surface) = locate {
@@ -376,6 +377,7 @@ mod tests {
     use super::*;
     use crate::gui::test_support::*;
     use raytrace_core::trace::{TraceOptions, trace};
+    use raytrace_io::record::{RUN_FORMAT, RunContext};
     #[test]
     fn percentages_keep_small_positive_values_visible() {
         for (value, expected) in [
@@ -523,23 +525,22 @@ mod tests {
             scene.surfaces[report.diagnostics[0].surface.unwrap()].name
         );
         let before = serde_json::to_value(app.design()).unwrap();
-        app.result = Some(ResultView {
-            design: app.session.design().unwrap().clone(),
-            preview_limit: app.preview_limit,
-            calculation: RunContext::capture(
-                app.design(),
-                &scene,
-                None,
-                1,
-                TraceOptions::default(),
-            ),
-            scene,
-            report,
-            seconds: 0.1,
-            texture: None,
-            screen: None,
-            roi_cache: None,
-        });
+        app.result = Some(ResultView::of_record(
+            app.session.design().unwrap().clone(),
+            app.preview_limit,
+            RunRecord {
+                format: RUN_FORMAT.into(),
+                calculation: RunContext::capture(
+                    app.design(),
+                    &scene,
+                    None,
+                    1,
+                    TraceOptions::default(),
+                ),
+                trace_seconds: 0.1,
+                report,
+            },
+        ));
         app.details = Some(Details::Budget);
         frame(&mut app, &ctx, vec![]);
         let mut out = frame(&mut app, &ctx, vec![]);

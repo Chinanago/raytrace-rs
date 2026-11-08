@@ -498,7 +498,7 @@ fn visible_paths(
         &[]
     } else {
         result
-            .map(|r| r.report.paths.as_slice())
+            .map(|r| r.record.report.paths.as_slice())
             .unwrap_or_default()
     }
 }

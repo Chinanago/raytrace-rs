@@ -177,7 +177,7 @@ impl App {
             .add_enabled(
                 self.result
                     .as_ref()
-                    .is_some_and(|r| !r.report.detectors.is_empty()),
+                    .is_some_and(|r| !r.record.report.detectors.is_empty()),
                 egui::Button::new("スクリーンを書き出す…"),
             )
             .clicked()

@@ -1,4 +1,5 @@
 use super::*;
+use raytrace_engine::analysis::ScreenOutput;
 use raytrace_engine::scan::{
     Parameter, ParameterLink, ScanAxis, ScanCase, ScanManifest, ScanPlan, linear_values,
 };
@@ -79,7 +80,7 @@ pub(super) struct Comparison {
     reference_plane: String,
     map: raytrace_core::trace::DetectorMap,
     pub reference: f64,
-    pub analysis: ScreenAnalysis,
+    pub analysis: ScreenOutput,
     texture: Option<egui::TextureHandle>,
 }
 
@@ -395,17 +396,7 @@ impl App {
         let Some(design) = self.session.design().cloned() else {
             return;
         };
-        self.result = Some(ResultView {
-            design,
-            preview_limit: None,
-            scene: record.calculation.scene.clone(),
-            calculation: record.calculation,
-            report: record.report,
-            seconds: record.trace_seconds,
-            texture: None,
-            screen: None,
-            roi_cache: None,
-        });
+        self.result = Some(ResultView::of_record(design, None, record));
         self.view = View::Screen;
         self.status = "保存された計算結果を表示しています".into();
         self.remember_path();
@@ -502,11 +493,11 @@ mod tests {
         wait(&mut app, &ctx);
         let r = app.result.as_ref().unwrap();
         assert_eq!(
-            serde_json::to_value(&r.report.budget).unwrap(),
+            serde_json::to_value(&r.record.report.budget).unwrap(),
             stored_budget
         );
-        assert!(!r.report.paths.is_empty());
-        assert_eq!(r.calculation.input_count(), 64);
+        assert!(!r.record.report.paths.is_empty());
+        assert_eq!(r.record.calculation.input_count(), 64);
         assert_eq!(app.design().occurrences[2].pose.translation_mm.0[2], 68.0);
         assert!(!app.is_stale());
         assert_eq!(app.view, View::Screen);

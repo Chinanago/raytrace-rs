@@ -1,4 +1,5 @@
 use super::*;
+use raytrace_io::record::{RUN_FORMAT, RunContext};
 
 pub(super) fn run_ui(
     ctx: &egui::Context,
@@ -90,17 +91,22 @@ pub(super) fn calculate_demo(app: &mut App) {
     }
     let prepared = scene.clone().prepare().unwrap();
     let rays = prepared.generate_rays().unwrap();
-    app.result = Some(ResultView {
-        design: app.session.design().unwrap().clone(),
-        preview_limit: app.preview_limit,
-        calculation: RunContext::capture(app.design(), &scene, None, 1, TraceOptions::default()),
-        scene,
-        report: trace(&prepared, &rays, TraceOptions::default()),
-        seconds: 0.0,
-        texture: None,
-        screen: None,
-        roi_cache: None,
-    });
+    app.result = Some(ResultView::of_record(
+        app.session.design().unwrap().clone(),
+        app.preview_limit,
+        RunRecord {
+            format: RUN_FORMAT.into(),
+            calculation: RunContext::capture(
+                app.design(),
+                &scene,
+                None,
+                1,
+                TraceOptions::default(),
+            ),
+            trace_seconds: 0.0,
+            report: trace(&prepared, &rays, TraceOptions::default()),
+        },
+    ));
 }
 
 pub(super) fn visible_text(output: &egui::FullOutput) -> Vec<&str> {

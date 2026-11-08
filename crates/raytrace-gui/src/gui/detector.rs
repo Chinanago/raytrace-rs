@@ -2,18 +2,44 @@ use super::components::short_name;
 
 const FWHM_HELP: &str = "赤破線：各断面の最大値の50%とその交点。画素中心の値を線形補間。複数の山がある場合は主ピーク周囲の幅です。";
 use super::*;
-use raytrace_core::screen::Profile;
 use raytrace_engine::{
+    analysis::{
+        ANALYSIS_SCREEN, AnalysisRequest, DetectorRef, ScreenOutput, ScreenSettings, ScreenSlice,
+    },
     commands,
     engine::{ExportScreenRequest, RecordInput},
 };
+
+/// The `analysis.screen` result for one screen of the record that `result` shows. The record
+/// is passed as `run`: the session's latest run is another one (or none).
+fn analyse_screen(
+    session: &mut Session,
+    result: &ResultView,
+    detector: usize,
+    cursor_mm: Option<[f64; 2]>,
+    roi: Option<raytrace_core::screen::ScreenRoi>,
+) -> Result<ScreenOutput, String> {
+    let settings = ScreenSettings {
+        detector: Some(DetectorRef::Index(detector)),
+        cursor_mm,
+        roi,
+        include_profiles: true,
+    };
+    session
+        .run(
+            ANALYSIS_SCREEN,
+            AnalysisRequest::on(RecordInput::Shared(result.record.clone()), settings),
+        )
+        .map(|response| response.result)
+        .map_err(|e| e.message)
+}
 
 impl App {
     pub(super) fn export_current_screen(&mut self, dir: &std::path::Path, ctx: &egui::Context) {
         let Some(r) = &self.result else {
             return;
         };
-        if r.report.detectors.get(self.detector).is_none() {
+        if r.record.report.detectors.get(self.detector).is_none() {
             self.error = Some("出力するスクリーンがありません".into());
             return;
         }
@@ -54,21 +80,21 @@ impl App {
             });
             return;
         };
-        if r.report.detectors.is_empty() {
+        if r.record.report.detectors.is_empty() {
             ui.label("光学系にスクリーンを追加して計算してください。");
             return;
         }
         ui.horizontal(|ui| {
             let old = self.detector;
-            self.detector = self.detector.min(r.report.detectors.len() - 1);
+            self.detector = self.detector.min(r.record.report.detectors.len() - 1);
             egui::ComboBox::from_id_salt("detector")
                 .width(230.0)
                 .selected_text(short_name(
-                    &detector_label(&r.scene, &r.report.detectors[self.detector]),
+                    &detector_label(&r.scene, &r.record.report.detectors[self.detector]),
                     26,
                 ))
                 .show_ui(ui, |ui| {
-                    for (i, d) in r.report.detectors.iter().enumerate() {
+                    for (i, d) in r.record.report.detectors.iter().enumerate() {
                         ui.selectable_value(&mut self.detector, i, detector_label(&r.scene, d));
                     }
                 });
@@ -90,7 +116,15 @@ impl App {
         egui::ScrollArea::vertical()
             .id_salt("screen_workspace")
             .show(ui, |ui| {
-                draw_detector(ui, ctx, r, self.detector, height, &mut self.screen_display);
+                draw_detector(
+                    ui,
+                    ctx,
+                    r,
+                    &mut self.session,
+                    self.detector,
+                    height,
+                    &mut self.screen_display,
+                );
                 ui.add_space(8.0);
                 if stale {
                     ui.label(egui::RichText::new("前回の計算結果を表示中").color(TEXT_MUTED));
@@ -103,6 +137,7 @@ fn draw_detector(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
     result: &mut ResultView,
+    session: &mut Session,
     index: usize,
     height: f32,
     display: &mut ScreenDisplay,
@@ -116,8 +151,8 @@ fn draw_detector(
     if let Some(c) = &mut display.cursor_mm {
         for (a, v) in c.iter_mut().enumerate() {
             *v = v.clamp(
-                -result.report.detectors[index].half_extent_mm[a],
-                result.report.detectors[index].half_extent_mm[a],
+                -result.record.report.detectors[index].half_extent_mm[a],
+                result.record.report.detectors[index].half_extent_mm[a],
             );
         }
     }
@@ -168,7 +203,7 @@ fn draw_detector(
             }
         });
         ui.menu_button("断面位置・ROI", |ui| {
-            let map = &result.report.detectors[index];
+            let map = &result.record.report.detectors[index];
             let [hx, hy] = map.half_extent_mm;
             let mut cursor = display.cursor_mm.is_some();
             if checkbox(ui, &mut cursor, "断面位置を指定").changed() {
@@ -233,19 +268,19 @@ fn draw_detector(
     {
         result.texture = None;
     }
-    let map = &result.report.detectors[index];
     if result.screen.is_none() {
-        match ScreenAnalysis::at(map, display.cursor_mm) {
+        match analyse_screen(session, result, index, display.cursor_mm, None) {
             Ok(analysis) => result.screen = Some(analysis),
             Err(error) => {
-                ui.label(error.to_string());
+                ui.label(error);
                 return;
             }
         }
     }
+    let map = &result.record.report.detectors[index];
     let analysis = result.screen.as_ref().unwrap();
     let peak = analysis.peak_weight;
-    let reference = result.report.budget.launched.max(1e-300);
+    let reference = result.record.report.budget.launched.max(1e-300);
     let maximum = display.maximum_weight(peak, reference);
     if result.texture.is_none() {
         let pixels = map
@@ -277,8 +312,8 @@ fn draw_detector(
             if let Some([x, y]) = analysis.slice_position_mm {
                 ui.label(format!("断面位置 X={x:.4}, Y={y:.4} mm"));
                 for (axis, profile, half) in [
-                    ("X", analysis.x_profile.as_ref(), map.half_extent_mm[0]),
-                    ("Y", analysis.y_profile.as_ref(), map.half_extent_mm[1]),
+                    ("X", analysis.x_slice.as_ref(), map.half_extent_mm[0]),
+                    ("Y", analysis.y_slice.as_ref(), map.half_extent_mm[1]),
                 ] {
                     if let Some(profile) = profile {
                         draw_profile(ui, profile, axis, half, peak, display, reference);
@@ -296,10 +331,9 @@ fn draw_detector(
     }
     if let Some(roi) = display.roi {
         if result.roi_cache.as_ref().is_none_or(|(r, _)| *r != roi) {
-            result.roi_cache = Some((
-                roi,
-                roi.integrate(map, reference).map_err(|e| e.to_string()),
-            ));
+            let integral = analyse_screen(session, result, index, None, Some(roi))
+                .and_then(|analysis| analysis.roi.ok_or_else(|| "ROIの積分がありません".into()));
+            result.roi_cache = Some((roi, integral));
         }
         match &result.roi_cache.as_ref().unwrap().1 {
             Ok(r) => {
@@ -321,7 +355,7 @@ fn draw_detector(
 pub(super) fn draw_detector_map(
     ui: &mut egui::Ui,
     map: &raytrace_core::trace::DetectorMap,
-    analysis: &ScreenAnalysis,
+    analysis: &ScreenOutput,
     texture: &egui::TextureHandle,
     reference: f64,
     height: f32,
@@ -440,21 +474,19 @@ pub(super) fn draw_detector_map(
     ui.label(
         egui::RichText::new(format!(
             "受光 {:.2}%  ·  最大画素 {:.2}%",
-            100.0 * map.weights.iter().sum::<f64>() / reference,
-            100.0 * peak / reference,
+            analysis.received_percent_of_reference, analysis.peak_percent_of_reference,
         ))
         .size(SIZE_CAPTION)
         .color(TEXT_MUTED),
     )
     .on_hover_text(format!(
         "基準光量比：受光 {}% · 最大画素 {}%",
-        100.0 * map.weights.iter().sum::<f64>() / reference,
-        100.0 * peak / reference,
+        analysis.received_percent_of_reference, analysis.peak_percent_of_reference,
     ));
     if display.half_maximum {
-        let width = |axis: &str, p: &Option<Profile>| match p {
+        let width = |axis: &str, p: &Option<ScreenSlice>| match p {
             None => format!("{axis}: 受光なし"),
-            Some(p) => match p.half_maximum.width_mm() {
+            Some(p) => match p.fwhm_mm {
                 Some(v) => format!("{axis}: {v:.4} mm"),
                 None => format!("{axis}: 半値交点不足"),
             },
@@ -462,16 +494,16 @@ pub(super) fn draw_detector_map(
         ui.label(
             egui::RichText::new(format!(
                 "FWHM  {}  /  {}",
-                width("X", &analysis.x_profile),
-                width("Y", &analysis.y_profile)
+                width("X", &analysis.x_slice),
+                width("Y", &analysis.y_slice)
             ))
             .size(SIZE_CAPTION)
             .color(viz::HALF_COLOR),
         )
         .on_hover_text(FWHM_HELP);
-        if [&analysis.x_profile, &analysis.y_profile]
+        if [&analysis.x_slice, &analysis.y_slice]
             .iter()
-            .any(|p| p.as_ref().is_some_and(|p| p.half_maximum.multiple_lobes))
+            .any(|p| p.as_ref().is_some_and(|p| p.multiple_lobes))
         {
             ui.label(
                 egui::RichText::new("複数の山：主ピーク周囲の半値幅")
@@ -507,14 +539,11 @@ fn dashed_line(painter: &egui::Painter, a: Pos2, b: Pos2) {
 fn draw_half_width_guides(
     painter: &egui::Painter,
     rect: egui::Rect,
-    a: &ScreenAnalysis,
+    a: &ScreenOutput,
     half: [f64; 2],
 ) {
-    if let Some(p) = &a.x_profile {
-        for value in [p.half_maximum.lower_mm, p.half_maximum.upper_mm]
-            .into_iter()
-            .flatten()
-        {
+    if let Some(p) = &a.x_slice {
+        for value in [p.lower_mm, p.upper_mm].into_iter().flatten() {
             let x = rect.left() + ((value + half[0]) / (2.0 * half[0])) as f32 * rect.width();
             dashed_line(
                 painter,
@@ -523,11 +552,8 @@ fn draw_half_width_guides(
             );
         }
     }
-    if let Some(p) = &a.y_profile {
-        for value in [p.half_maximum.lower_mm, p.half_maximum.upper_mm]
-            .into_iter()
-            .flatten()
-        {
+    if let Some(p) = &a.y_slice {
+        for value in [p.lower_mm, p.upper_mm].into_iter().flatten() {
             let y = rect.bottom() - ((value + half[1]) / (2.0 * half[1])) as f32 * rect.height();
             dashed_line(
                 painter,
@@ -554,7 +580,7 @@ fn draw_half_width_guides(
 
 pub(super) fn draw_profile(
     ui: &mut egui::Ui,
-    profile: &Profile,
+    profile: &ScreenSlice,
     axis: &str,
     half_extent: f64,
     peak: f64,
@@ -588,6 +614,7 @@ pub(super) fn draw_profile(
         profile
             .weights
             .iter()
+            .flatten()
             .enumerate()
             .map(|(i, w)| Pos2::new(x(profile.coordinate_mm(i)), y(*w)))
             .collect(),
@@ -596,13 +623,10 @@ pub(super) fn draw_profile(
     if display.half_maximum {
         dashed_line(
             &painter,
-            Pos2::new(inner.left(), y(profile.peak_weight() * 0.5)),
-            Pos2::new(inner.right(), y(profile.peak_weight() * 0.5)),
+            Pos2::new(inner.left(), y(profile.peak_weight * 0.5)),
+            Pos2::new(inner.right(), y(profile.peak_weight * 0.5)),
         );
-        for value in [profile.half_maximum.lower_mm, profile.half_maximum.upper_mm]
-            .into_iter()
-            .flatten()
-        {
+        for value in [profile.lower_mm, profile.upper_mm].into_iter().flatten() {
             dashed_line(
                 &painter,
                 Pos2::new(x(value), inner.top()),
@@ -676,7 +700,7 @@ mod tests {
         let mut app = App::demo();
         calculate_demo(&mut app);
         let result = app.result.as_mut().unwrap();
-        let map = &mut result.report.detectors[0];
+        let map = &mut Arc::make_mut(&mut result.record).report.detectors[0];
         map.name = "4:スクリーン / 検出面".into();
         let mut surface = result
             .scene

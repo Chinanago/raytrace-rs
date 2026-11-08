@@ -1,6 +1,11 @@
 use super::*;
 use crate::gui::detector::{draw_detector_map, draw_profile, screen_color};
-use raytrace_engine::{Session, commands, engine::RunOpenRequest};
+use raytrace_engine::{
+    Session,
+    analysis::{ANALYSIS_SCREEN, AnalysisRequest, DetectorRef, ScreenSettings},
+    commands,
+    engine::RunOpenRequest,
+};
 
 impl App {
     pub(in crate::gui) fn load_comparison(&mut self, ctx: &egui::Context) {
@@ -43,7 +48,9 @@ impl App {
                         path,
                         viewer_paths: false,
                     };
-                    let r = Session::new()
+                    // The record that run.open reads is the latest run of this session.
+                    let mut session = Session::new();
+                    let r = session
                         .run(commands::RUN_OPEN, request)
                         .map_err(|e| e.message)?
                         .record;
@@ -53,12 +60,23 @@ impl App {
                         .get(detector)
                         .cloned()
                         .ok_or("スクリーンが見つかりません")?;
+                    let analysis = session
+                        .run(
+                            ANALYSIS_SCREEN,
+                            AnalysisRequest::new(ScreenSettings {
+                                detector: Some(DetectorRef::Index(detector)),
+                                include_profiles: true,
+                                ..ScreenSettings::default()
+                            }),
+                        )
+                        .map_err(|e| e.message)?
+                        .result;
                     images.push(Comparison {
                         label,
                         reference_plane: r.calculation.scene.reference_plane,
                         map: map.clone(),
                         reference: r.report.budget.launched,
-                        analysis: ScreenAnalysis::from_detector(&map).map_err(|e| e.to_string())?,
+                        analysis,
                         texture: None,
                     });
                 }
@@ -142,8 +160,8 @@ impl App {
                                     &display,
                                 );
                                 for (axis, profile, extent) in [
-                                    ("X", c.analysis.x_profile.as_ref(), c.map.half_extent_mm[0]),
-                                    ("Y", c.analysis.y_profile.as_ref(), c.map.half_extent_mm[1]),
+                                    ("X", c.analysis.x_slice.as_ref(), c.map.half_extent_mm[0]),
+                                    ("Y", c.analysis.y_slice.as_ref(), c.map.half_extent_mm[1]),
                                 ] {
                                     if let Some(p) = profile {
                                         draw_profile(

@@ -3,16 +3,17 @@ use eframe::egui::{self, Color32, Pos2, Stroke, Vec2};
 use raytrace_core::{
     math::{Frame, V3},
     model::*,
-    screen::ScreenAnalysis,
-    trace::{Report, TraceControl},
+    trace::TraceControl,
 };
 use raytrace_engine::{
-    Session, commands,
+    Session,
+    analysis::ScreenOutput,
+    commands,
     engine::{ComponentAddRequest, DocSetRequest},
 };
 use raytrace_io::{
     design::{self, Compiled, Design, PartKind},
-    record::RunContext,
+    record::RunRecord,
 };
 use std::{
     path::PathBuf,
@@ -106,12 +107,14 @@ struct ResultView {
     design: Arc<Design>,
     /// The ray limit the calculation used.
     preview_limit: Option<usize>,
-    calculation: RunContext,
+    /// The calculation record: frozen calculation, trace time and report. It is shared with
+    /// the analyses, which take it as their `run`.
+    record: Arc<RunRecord>,
+    /// The effective scene of `record`.
     scene: Scene,
-    report: Report,
-    seconds: f64,
     texture: Option<egui::TextureHandle>,
-    screen: Option<ScreenAnalysis>,
+    /// The `analysis.screen` result for the displayed screen and cursor.
+    screen: Option<ScreenOutput>,
     roi_cache: Option<(
         raytrace_core::screen::ScreenRoi,
         Result<raytrace_core::screen::RoiIntegral, String>,
@@ -122,7 +125,7 @@ enum Job {
     Compared(Result<Vec<study::Comparison>, String>),
     Cancelled,
     Scanned(Result<Box<raytrace_engine::scan::ScanManifest>, String>),
-    LoadedRun(Result<Box<raytrace_io::record::RunRecord>, String>),
+    LoadedRun(Result<Box<RunRecord>, String>),
     /// A copy of the session with the part added, and the group of the edit that adds it.
     Added(PartKind, String, Result<Box<Session>, String>),
     /// A session that opened the file.
@@ -404,7 +407,7 @@ impl App {
                 .is_some_and(|at| at.elapsed() >= Duration::from_millis(350))
         {
             let _ = std::fs::create_dir_all(dir);
-            let screen = self.result.as_ref().and_then(|r| r.screen.as_ref()).map(|a| serde_json::json!({"peak_weight":a.peak_weight,"peak_position_mm":a.peak_position_mm,"pixel_pitch_mm":a.pixel_pitch_mm,"fwhm_x_mm":a.x_profile.as_ref().and_then(|p|p.half_maximum.width_mm()),"fwhm_y_mm":a.y_profile.as_ref().and_then(|p|p.half_maximum.width_mm())}));
+            let screen = self.result.as_ref().and_then(|r| r.screen.as_ref()).map(|a| serde_json::json!({"peak_weight":a.peak_weight,"peak_position_mm":a.peak_position_mm,"pixel_pitch_mm":a.pixel_pitch_mm,"fwhm_x_mm":a.x_slice.as_ref().and_then(|p|p.fwhm_mm),"fwhm_y_mm":a.y_slice.as_ref().and_then(|p|p.fwhm_mm)}));
             let status = serde_json::json!({
                 "scene": self.design().display_name(),
                 "view": format!("{:?}", self.view),
@@ -415,11 +418,11 @@ impl App {
                 "issues": self.compiled.issues,
                 "compatibility": self.design().compatibility_report(),
                 "error": self.error,
-                "trace_seconds": self.result.as_ref().map(|r| r.seconds),
-                "budget": self.result.as_ref().map(|r| &r.report.budget),
-                "diagnostics": self.result.as_ref().map(|r| &r.report.diagnostics),
-                "calculation_version": self.result.as_ref().map(|r| &r.calculation.software_version),
-                "launch_wavelengths_um": self.result.as_ref().map(|r| &r.calculation.launch_wavelengths_um),
+                "trace_seconds": self.result.as_ref().map(|r| r.record.trace_seconds),
+                "budget": self.result.as_ref().map(|r| &r.record.report.budget),
+                "diagnostics": self.result.as_ref().map(|r| &r.record.report.diagnostics),
+                "calculation_version": self.result.as_ref().map(|r| &r.record.calculation.software_version),
+                "launch_wavelengths_um": self.result.as_ref().map(|r| &r.record.calculation.launch_wavelengths_um),
                 "screen": screen,
                 "camera": &self.camera,
                 "scan_cases":self.study.manifest.as_ref().map(|m|&m.cases),
@@ -489,9 +492,9 @@ impl eframe::App for App {
                             ui.label(
                                 egui::RichText::new(format!(
                                     "{} 本 · {} 面 · {:.2} ms",
-                                    r.calculation.input_count(),
+                                    r.record.calculation.input_count(),
                                     r.scene.surfaces.len(),
-                                    r.seconds * 1000.0
+                                    r.record.trace_seconds * 1000.0
                                 ))
                                 .size(SIZE_CAPTION)
                                 .color(TEXT_MUTED),
