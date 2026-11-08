@@ -67,6 +67,8 @@ $skill-installer で Chinanago/raytrace-rs の skills/raytrace-rs をインス�
 
 古い版のClaude Codeでは `/plugin marketplace add Chinanago/raytrace-rs` の後に `/plugin install raytrace-rs@raytrace-rs` を実行します。
 
+**MCPサーバー**：`raytrace-rs mcp` が、セッションを保ったままコマンドを呼べるMCPサーバーを標準入出力で起動します（ツールは `list_commands`・`describe_command`・`execute`・`batch`）。`claude mcp add raytrace-rs -- raytrace-rs mcp` で登録でき、Claude Codeのプラグインはリポジトリ直下の `.mcp.json` で同じサーバーを起動します。どちらも `raytrace-rs` がPATHにあることが前提です。Codexの設定例は [操作ガイド](docs/GUIDE.md#aiエージェントmcp) にあります。
+
 エージェントはCLIのJSON出力と [schemas/](https://github.com/Chinanago/raytrace-rs/tree/main/schemas) を読んで、モデルの作成から結果の解釈まで行えます。このリポジトリを開発するエージェント向けの手順は [AGENTS.md](https://github.com/Chinanago/raytrace-rs/blob/main/AGENTS.md) にあります。
 
 ## できないこと

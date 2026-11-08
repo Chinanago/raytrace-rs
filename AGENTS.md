@@ -9,8 +9,8 @@ Codex・Claude CodeなどのAIエージェント向けの作業ガイドです�
 Rust製の幾何光学レイトレーサーです。ZMX・JSONの光学系を読み込み、シーケンシャル／非シーケンシャルで光線を追跡し、スクリーンの光量分布と光量収支を出力します。
 
 - 長さはmm、CLIとJSONの波長はμm、GUIの波長入力はnmです。
-- Cargo workspaceの7クレートで、依存方向は `core ← {formats, doc} ← io ← engine ← {cli, gui}` です。
-- **計算と読込・保存はすべて `raytrace_engine` のコマンドを通します。** コマンドは `<領域>.<動作>` のIDを持つ関数で、セッション（`Session`：開いた文書・版番号・取り消し履歴）に対して `Session::execute(id, params)`（JSON）または `Session::call(ハンドル, 入力)`（型付き）で呼びます。CLIは `COMMAND a.b=文字列 a.b:=JSON` の引数を汎用的にコマンドのパラメーターへ組み立てるだけで、オプションごとの処理を持ちません。GUIも同じコマンドを呼ぶだけです。**新しい操作は、入出力の型（`Deserialize`/`Serialize` + `JsonSchema`、入力は `deny_unknown_fields`）と関数を書き、`crates/raytrace-engine/src/commands.rs` の `all()` に登録します。** CLIの引数・`--help`・`command.list`・`command.describe`・スキーマには自動で現れます。変更コマンドは `Session::edit` を通し（成功するまで文書を変えない）、`expected_revision` を受け付けます。CLIに専用のオプションを足さないでください。
+- Cargo workspaceの8クレートで、依存方向は `core ← {formats, doc} ← io ← engine ← {mcp, cli, gui}` です（`cli` は `mcp` も使います）。
+- **計算と読込・保存はすべて `raytrace_engine` のコマンドを通します。** コマンドは `<領域>.<動作>` のIDを持つ関数で、セッション（`Session`：開いた文書・版番号・取り消し履歴）に対して `Session::execute(id, params)`（JSON）または `Session::call(ハンドル, 入力)`（型付き）で呼びます。CLIは `COMMAND a.b=文字列 a.b:=JSON` の引数を汎用的にコマンドのパラメーターへ組み立てるだけで、オプションごとの処理を持ちません。GUIも同じコマンドを呼ぶだけです。**新しい操作は、入出力の型（`Deserialize`/`Serialize` + `JsonSchema`、入力は `deny_unknown_fields`）と関数を書き、`crates/raytrace-engine/src/commands.rs` の `all()` に登録します。** CLIの引数・`--help`・`command.list`・`command.describe`・スキーマ・**MCPの `execute`**（`raytrace-rs mcp`。コマンドごとのツールは作りません）には自動で現れます。変更コマンドは `Session::edit` を通し（成功するまで文書を変えない）、`expected_revision` を受け付けます。CLIに専用のオプションを足さないでください。MCPにも専用のツールを足さず、4つのツールのまま `execute` で呼びます。
 | クレート | 役割 |
 |---|---|
 | `crates/raytrace-core` | 形状・光源・追跡・コーティング・分散・スクリーン解析の計算核 |
@@ -18,6 +18,7 @@ Rust製の幾何光学レイトレーサーです。ZMX・JSONの光学系を読
 | `crates/raytrace-doc` | 設計文書（L2）。部品（`Part`）と配置（`Occurrence`）、安定したID、展開（`Design::compile`）、組立の編集補助、互換性レポート。外部形式を知らない |
 | `crates/raytrace-io` | 設計文書のファイル形式（`design::open`・`save`、旧プロジェクト形式の移行）・計算記録・ZMX書出し・出力 |
 | `crates/raytrace-engine` | JSONエンジン（`src/engine.rs`・`src/engine/run.rs`）、計算パイプラインの各段（`src/pipeline.rs`。追跡ループはここだけ）、パラメーター走査・収束確認・検証ケース |
+| `crates/raytrace-mcp` | MCPサーバー（L5）。標準入出力のJSON-RPC。ツールは `list_commands`・`describe_command`・`execute`・`batch` の4つで、登録表のコマンドが自動で現れる。`raytrace-rs mcp` で起動 |
 | `crates/raytrace-cli` | CLI `raytrace-rs`。独自のオプションはなく、引数をコマンドのパラメーターに組み立てて応答を出力するだけ（`src/main.rs`） |
 | `crates/raytrace-gui` | egui製GUI `raytrace-gui`。文書は持たず、UIスレッドの `Session` に対するコマンドで編集する（`gui/edit.rs`）。描画・表示の後処理とコマンドの呼び出し |
 | `schemas/` | `schema.get output=schemas` が生成するJSONスキーマ（コミット対象） |
@@ -30,8 +31,8 @@ LinuxのクラウドサンドボックスではGUIを除く次のセットを使
 ```bash
 cargo build --locked -p raytrace-cli
 cargo fmt --all --check
-cargo clippy --locked -p raytrace-core -p raytrace-formats -p raytrace-doc -p raytrace-io -p raytrace-engine -p raytrace-cli -p raytrace-rs -p xtask --all-features --all-targets -- -D warnings
-cargo test --locked -p raytrace-core -p raytrace-formats -p raytrace-doc -p raytrace-io -p raytrace-engine -p raytrace-cli -p raytrace-rs -p xtask --all-features
+cargo clippy --locked -p raytrace-core -p raytrace-formats -p raytrace-doc -p raytrace-io -p raytrace-engine -p raytrace-mcp -p raytrace-cli -p raytrace-rs -p xtask --all-features --all-targets -- -D warnings
+cargo test --locked -p raytrace-core -p raytrace-formats -p raytrace-doc -p raytrace-io -p raytrace-engine -p raytrace-mcp -p raytrace-cli -p raytrace-rs -p xtask --all-features
 cargo xtask layers   # 層の順序、GUI依存の隔離、計算核の純粋さ（docs/DESIGN.md 4章）
 cargo xtask wasm     # L0〜L4のWASMビルド（要 rustup target add wasm32-unknown-unknown）
 ```

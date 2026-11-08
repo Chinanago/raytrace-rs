@@ -215,17 +215,18 @@ Rustは各界面でS/P反射率を独立に平均します。OpticStudioは偏�
 
 ## リポジトリ構成
 
-Cargo workspaceとして、`crates/` 以下の7クレートに分けています。
+Cargo workspaceとして、`crates/` 以下の8クレートに分けています。
 
 - `raytrace-core`: 数学・形状・光源生成・光線追跡・コーティング・分散・スクリーン解析の計算核です。ファイル形式やGUIには依存しません。
 - `raytrace-formats`: ZMX／AGF／SPCD・STEPの入出力とCADキャッシュの保存先を扱います。
 - `raytrace-doc`: 設計文書（L2）です。部品（`Part`）と配置（`Occurrence`）の木、安定したID、展開（`Design::compile`）、組立の編集補助、互換性レポートを持ちます。ファイル・時刻・環境に触れず、外部形式を知りません（元のZMXなどは `Provenance` に不透明なJSONとして保管します）。
 - `raytrace-io`: 設計文書のファイル形式（`design`：開く・保存・旧プロジェクト形式からの移行）、`record`、ZMX書出し、設定の保存・スクリーン出力を扱います。従来のZMX・CAD入出力のパスもここから使えます。
 - `raytrace-engine`: セッション（`session`）、コマンド登録（`command`・`commands`）、計算パイプライン（`pipeline`）、パラメーター走査・収束確認・検証ケースのワークフローを扱います。旧 `raytrace-app` です。
+- `raytrace-mcp`: MCPサーバー（L5）です。標準入出力のJSON-RPC 2.0（1行1メッセージ）を外部ライブラリなしで処理し、`list_commands`・`describe_command`・`execute`・`batch` の4つのツールでセッションのコマンドを呼びます。呼び出しは作業スレッドが順に実行し、`notifications/cancelled` で `TraceControl` を止め、`progressToken` があれば進捗を通知します。`raytrace-rs mcp` から起動します。
 - `raytrace-cli`: コマンドライン用の `raytrace-rs` 実行ファイルです。引数をコマンドのパラメーターへ変換し、応答をJSONで出力します。PNG出力も有効にします。
 - `raytrace-gui`: デスクトップ用の `raytrace-gui` 実行ファイルです。PNG出力も有効にします。
 
-依存方向は `core ← {formats, doc} ← io ← engine ← {cli, gui}` で、各層は必要な下位層を参照します。リポジトリ直下の `raytrace-rs` はcore・doc・io・engineのモジュールを再公開する窓口で、既存の `raytrace_rs::model` などのパスを使えます。`tests/` と `examples/` も直下に残しています。
+依存方向は `core ← {formats, doc} ← io ← engine ← {mcp, cli, gui}` で、各層は必要な下位層を参照します。リポジトリ直下の `raytrace-rs` はcore・doc・io・engineのモジュールを再公開する窓口で、既存の `raytrace_rs::model` などのパスを使えます。`tests/` と `examples/` も直下に残しています。
 
 `raytrace-formats` と `raytrace-doc` は互いを知りません。formatsはZMXの読込結果と書出し用の参照を形式側の型で受け渡し、docは元のZMXを不透明な `Provenance` として持ちます。`raytrace-io` がこの2つを接続し（ZMXを1部品の設計に変換し、書出しで型に戻す）、ファイル形式と設計文書の相互参照を避けています。公開順もcore・formats・doc・io・engineの順です。
 

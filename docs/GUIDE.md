@@ -11,6 +11,7 @@
 | 保存・再計算する | [保存先](#保存先)、[計算記録と再計算](#計算記録と再計算) |
 | 光線数・画素数・CAD精度を比較する | [収束確認](#収束確認) |
 | カタログ・STEPを読み込む | [カタログとSTEPの読込](#カタログとstepの読込) |
+| AIエージェントから操作する | [AIエージェント（MCP）](#aiエージェントmcp) |
 
 以下のCLI例は、Windows版ZIPの展開先で実行します。ソースからビルドした場合は、実行ファイルのパスを `./target/release/raytrace-rs.exe` に読み替えてください。
 
@@ -294,6 +295,46 @@ EOF
 | `convergence_plan` / `convergence` | 収束確認の計画と `convergence.json` |
 
 処理時間は、モデルの光源を使う場合は光線生成・追跡・集計を含みます。CSVや明示入力光線を保存した記録を使う場合は、追跡・集計を含みます。モデルの読込・準備、ファイル入出力、描画は計測から除きます。`warmup:=true` で計測前にウォームアップを1回行います。結果の `benchmark.timed_scope` に実際の計測範囲を保存します。
+
+## AIエージェント（MCP）
+
+`raytrace-rs mcp` は、AIエージェント向けのMCP（Model Context Protocol）サーバーを標準入出力で起動します。CLIの `run -` と同じコマンドを、セッションを保ったまま呼べます。エージェントは、文書を開き、`doc.set` や `component.*` で編集し、`analysis.trace` で追跡し、`session.undo` で戻す、という作業を続けて行えます。GUIと同じコマンドなので、できることも同じです。
+
+```bash
+claude mcp add raytrace-rs -- raytrace-rs mcp
+```
+
+Codexは `~/.codex/config.toml` に次を書きます。
+
+```toml
+[mcp_servers.raytrace-rs]
+command = "raytrace-rs"
+args = ["mcp"]
+```
+
+どちらも `raytrace-rs` がPATHにあることが前提です。Claude Codeのプラグイン（[README](../README.md#aiエージェントで使う)）はリポジトリ直下の `.mcp.json` で同じサーバーを起動します。標準出力にはプロトコルのメッセージだけを書き、ログは標準エラーに出します。対応するプロトコルの版は `2025-06-18`・`2025-03-26`・`2024-11-05` で、クライアントの版が対応していればそれを、そうでなければ最新を返します。`initialize` の前のリクエストも受け付けます。
+
+**ツール**は次の4つです。コマンドごとのツールにしないのは、設計文書のスキーマが大きく、多数のツール定義に埋め込むとエージェントの文脈を圧迫するためです。コマンドを足すと、MCPの側を変えずに `execute` から使えるようになります。
+
+| ツール | 引数 | 内容 |
+|---|---|---|
+| `list_commands` | なし | コマンドのID・種類（`query`・`mutation`・`job`）・要約・旧名の一覧 |
+| `describe_command` | `command` | そのコマンドの入力（`input_schema`）と結果（`output_schema`）のJSONスキーマ |
+| `execute` | `command`、`params`（省略可） | 1つのコマンドを実行する。応答はCLIと同じ `{ok, command, revision, result | error}` |
+| `batch` | `requests`（`[{command, params}]`）、`stop_on_error`（既定 `true`） | 複数のコマンドを順に実行し、応答の一覧 `{ok, executed, requested, responses}` を返す |
+
+エージェントは `list_commands` で一覧を見て、使い慣れないコマンドの前に `describe_command` でスキーマを確認します。結果は `structuredContent` とJSONのテキストの両方で返ります。コマンドの失敗（`ok: false`）は、ツールの結果として `isError: true` で返り、`error.code` と `error.message`（日本語）を含みます。JSON-RPCのエラーはプロトコルの誤り（不正なJSON `-32700`、未対応のメソッド `-32601`、不正な引数 `-32602`）だけに使います。
+
+サーバーはプロセスごとにセッションを1つ持ちます。`doc.open` で開いた文書は、`model` を省略したコマンドの対象になり、版番号・取り消し履歴・`session.log` も `run -` と同じです。`execute` と `batch` の呼び出しは、受け取った順に1つずつ実行します。ZMXを開いたら、追跡の前に `doc.inspect` で `traceable` と互換性レポートを確認してください。ファイルの読み書きは、サーバーを起動した利用者の権限で行います。
+
+```text
+execute  {"command": "doc.open", "params": {"path": "examples/integrator_rod.json"}}
+execute  {"command": "doc.set", "params": {"path": "/parts/0/scene/sources/0/count", "value": 256}}
+execute  {"command": "analysis.trace", "params": {"output": "results/rod.json"}}
+execute  {"command": "session.undo"}
+```
+
+長い計算（種類が `job` のコマンド）は作業スレッドで実行するため、実行中も `ping`、`list_commands`、`describe_command` と中止の通知に応答します。依頼の `_meta.progressToken` を指定すると、走査は終えたケース数、単独の追跡は処理した光線数を `notifications/progress` で通知します（光線数は約250 msごと）。`notifications/cancelled` で `requestId` を指定すると、実行中の計算を止め、その呼び出しの結果は `error.code` が `cancelled` の失敗になります。まだ始まっていない呼び出しは実行しません。`batch` の途中で中止すると、残りは実行せず `cancelled` の応答になります。標準入力が閉じると、受け取った呼び出しを終えてから終了コード0で終了します。
 
 ## カタログとSTEPの読込
 

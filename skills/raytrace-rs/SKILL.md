@@ -14,6 +14,10 @@ Read [workflows](references/workflows.md) for executable discovery, commands and
 
 The CLI runs models and writes calculation records. The GUI provides component placement, light-path viewing, screen displays and project editing. The Rust library exposes the calculation and export functions.
 
+## Choose the interface
+
+When the MCP tools of raytrace-rs are available (`list_commands`, `describe_command`, `execute`, `batch`; the server is started by `raytrace-rs mcp`, and the Claude Code plugin registers it), prefer them to the CLI: the server keeps one session, so `execute doc.open`, edits with `doc.set`/`component.*`, `analysis.trace` without `model` and `session.undo` work on the same open design without reloading it. Call `list_commands` once, call `describe_command` before using a command you do not know, and send long calculations with `execute` (they can be cancelled and report progress). Otherwise use the CLI (`raytrace-rs COMMAND ...`, or `raytrace-rs run -` for a session). Both run the same commands, so the field names below apply to either.
+
 ## Load and calculate
 
 - Check `--help`. v0.11.0 takes options such as `--inspect` and `--replay`. Newer builds take command parameters instead (`raytrace-rs analysis.trace model.path=lens.zmx overrides.rays_per_source:=1024`; the older short name `trace` still works), print one JSON response per request on stdout, accept JSON with `raytrace-rs run -` (one session per stream: `doc.open`, `doc.set`, `analysis.trace`, `session.undo` without `model`), and describe every command and field with `raytrace-rs --help`, `raytrace-rs COMMAND --help` and `raytrace-rs schema.get name=NAME`. The workflow reference maps the old options to fields.

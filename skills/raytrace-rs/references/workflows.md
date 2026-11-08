@@ -19,6 +19,22 @@ The baseline below is **v0.11.0**. For another installed version, use its matchi
 
 The Windows ZIP runs without Rust or OpticStudio installed. If a source build is needed, run `cargo build --release --locked -p raytrace-cli` from the checkout for the CLI, or `cargo build --release --locked --workspace --bins` for CLI and GUI together. Windows is the verified distribution platform for v0.11.0.
 
+## MCP server
+
+`raytrace-rs mcp` (builds with the session; check `raytrace-rs --help` for `mcp`) is an MCP server on stdio. It needs `raytrace-rs` on PATH to be registered: `claude mcp add raytrace-rs -- raytrace-rs mcp`, or `[mcp_servers.raytrace-rs] command = "raytrace-rs"` and `args = ["mcp"]` in `~/.codex/config.toml`; the Claude Code plugin ships the same registration in `.mcp.json`. When its tools are available, prefer them to the CLI:
+
+- `list_commands` returns `{commands: [{id, kind, summary, aliases}]}`; `describe_command {command}` returns `input_schema` and `output_schema` for one command. Describe before using an unfamiliar command; the fields are exactly the CLI fields below.
+- `execute {command, params}` runs one command and returns the CLI response `{ok, command, revision, result | error}` as structured content; a failed command sets `isError`. `batch {requests: [{command, params}], stop_on_error}` runs several in order in the same session and returns `{ok, executed, requested, responses}`; it stops at the first failure by default.
+- The server has one session. `doc.open {path}`, then `doc.set`/`component.*`, `analysis.trace` without `model`, `session.undo`/`session.redo`, `session.log`. Calls run one at a time in order; a client can cancel one (the result has `error.code` `cancelled`) and may pass a progress token for progress. For a ZMX, run `doc.inspect` and check `traceable` before tracing.
+
+```text
+execute {"command": "doc.open", "params": {"path": "examples/integrator_rod.json"}}
+execute {"command": "doc.set", "params": {"path": "/parts/0/scene/sources/0/count", "value": 256}}
+execute {"command": "analysis.trace", "params": {"output": "results/rod.json"}}
+```
+
+Without MCP tools, use the CLI forms below.
+
 ## Command forms by version
 
 Check `--help` first. v0.11.0 uses the options shown in the PowerShell examples below. Newer builds (`--help` lists commands such as `trace` and `run`) have no options of their own: every argument sets a field of a command's parameters, and the GUI calls the same commands. Builds with the session (`--help` lists ids such as `analysis.trace`) name commands `<area>.<action>`; the short names `trace`, `inspect`, `replay`, `scan`, `resume_scan`, `convergence`, `open`, `save_design`, `save_run`, `export_zmx`, `export_screen`, `schema` and `version` remain as deprecated aliases (`open` opens designs only: records are `run.open`, scan directories `study.open`). Prefer the dotted ids.
