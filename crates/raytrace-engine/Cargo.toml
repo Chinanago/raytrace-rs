@@ -1,11 +1,11 @@
 [package]
-name = "raytrace-app"
+name = "raytrace-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 repository.workspace = true
-description = "Optical project workflows, parameter studies and validation"
+description = "Optical design session, command registry, parameter studies and validation"
 readme = "../../README.md"
 keywords = ["optics", "raytracing"]
 categories = ["science", "simulation"]

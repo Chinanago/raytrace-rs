@@ -84,7 +84,7 @@ L0  基礎             数学・幾何・サンプリング
 | L0〜L1 | `raytrace-core` | 現状のまま。将来、解析を `raytrace-analysis` に分けることがある |
 | L2 | `raytrace-doc` | 段階2で新設済み。`Project`・`Assembly` に代わる部品（`Part`）と配置（`Occurrence`）の文書（`Design`）と展開（`Design::compile`）。ファイル・外部形式を知らない |
 | L3 | `raytrace-formats`、`raytrace-io` | formats は外部形式の読み書き（文書を知らない）。io は文書形式・計算記録・書出しと、外部形式から文書への変換 |
-| L4 | `raytrace-engine`（`raytrace-app` を改名・再編） | セッション、コマンド、計算パイプライン、走査・収束確認 |
+| L4 | `raytrace-engine`（旧 `raytrace-app`。段階3で改名・再編済み） | セッション、コマンド、計算パイプライン、走査・収束確認 |
 | L5 | `raytrace-gui`、`raytrace-mcp`（新設）、`raytrace-cli`、Web版のフロントエンド（新設） | 薄いフロントエンド |
 | 道具 | `xtask` | 層とWASMの検査など、開発用の作業。製品には含めない |
 
@@ -144,7 +144,7 @@ Design（文書）
 | 安定したID | 段階2で実現済み。部品・配置は文書内で一意のID、走査の対象は配置IDと面の名前で参照する（単体系は配置IDを省略できる）。残る差：GUIの選択状態は配置の添字で持つ |
 | すべての操作はコマンド（P2） | 計算と読込・保存は `engine::Request` に統一済み。編集はGUIが `Project` を直接書き換え、エージェントはJSONを手で編集する |
 | セッション | エンジンは一回限りの呼び出しだけで、文書を開いたまま操作できない。取り消しはGUIの中だけにある |
-| 計算は1本のパイプライン（P3） | 段階1で実現済み。上書き・上限・発射の確定・追跡・記録・解析の各段が `raytrace_app::pipeline`（`crates/raytrace-app/src/pipeline.rs`）にあり、`engine/run.rs`・`scan.rs`・`convergence.rs` が共有する。`record.rs` から追跡を除いた |
+| 計算は1本のパイプライン（P3） | 段階1で実現済み。上書き・上限・発射の確定・追跡・記録・解析の各段が `raytrace_engine::pipeline`（`crates/raytrace-engine/src/pipeline.rs`）にあり、`engine/run.rs`・`scan.rs`・`convergence.rs` が共有する。`record.rs` から追跡を除いた |
 | 解析は登録制（P9） | 光量比・半値幅・ROIが、エンジン・出力処理・GUIに散在している |
 | 外部形式は境界で変換（P6） | 元のZMXは部品の出所として不透明なJSONで保管し、L2はその中身を解釈しない。取り込みの問題点は部品が持つ。残る差：計算記録が文書全体を含む（含めるかの選択式は未実装） |
 | 層の自動検査（P4） | 実現済み。`cargo xtask layers` が層の順序・GUI依存の隔離・計算核の純粋さを、`cargo xtask wasm` がL0〜L4のWASMビルドをCIで検査する |

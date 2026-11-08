@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/raytrace-core", "crates/raytrace-formats", "crates/raytrace-doc", "crates/raytrace-io", "crates/raytrace-app", "crates/raytrace-cli", "crates/raytrace-gui", "xtask"]
+members = ["crates/raytrace-core", "crates/raytrace-formats", "crates/raytrace-doc", "crates/raytrace-io", "crates/raytrace-engine", "crates/raytrace-cli", "crates/raytrace-gui", "xtask"]
 resolver = "2"
 
 [workspace.package]
@@ -26,7 +26,7 @@ raytrace-core = { path = "crates/raytrace-core", version = "0.11.0" }
 raytrace-formats = { path = "crates/raytrace-formats", version = "0.11.0" }
 raytrace-doc = { path = "crates/raytrace-doc", version = "0.11.0" }
 raytrace-io = { path = "crates/raytrace-io", version = "0.11.0" }
-raytrace-app = { path = "crates/raytrace-app", version = "0.11.0" }
+raytrace-engine = { path = "crates/raytrace-engine", version = "0.11.0" }
 
 [package]
 name = "raytrace-rs"
@@ -49,7 +49,7 @@ raytrace-core = { workspace = true }
 raytrace-formats = { workspace = true }
 raytrace-doc = { workspace = true }
 raytrace-io = { workspace = true }
-raytrace-app = { workspace = true }
+raytrace-engine = { workspace = true }
 
 [dev-dependencies]
 image = { workspace = true }
@@ -77,7 +77,7 @@ opt-level = 1
 [profile.test.package.raytrace-io]
 opt-level = 1
 
-[profile.test.package.raytrace-app]
+[profile.test.package.raytrace-engine]
 opt-level = 1
 
 [profile.test.package.raytrace-gui]

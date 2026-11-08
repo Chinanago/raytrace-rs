@@ -1,5 +1,5 @@
 use super::*;
-use raytrace_app::{
+use raytrace_engine::{
     engine::{self, EngineError, ModelInput, Outcome, Overrides, Progress, Request, TraceRequest},
     scan::ScanManifest,
 };

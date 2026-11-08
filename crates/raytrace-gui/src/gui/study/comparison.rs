@@ -1,6 +1,6 @@
 use super::*;
 use crate::gui::detector::{draw_detector_map, draw_profile, screen_color};
-use raytrace_app::engine;
+use raytrace_engine::engine;
 
 impl App {
     pub(in crate::gui) fn load_comparison(&mut self, ctx: &egui::Context) {

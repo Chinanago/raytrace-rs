@@ -1,5 +1,5 @@
-use raytrace_app::nsc_reference::*;
 use raytrace_core::trace::DetectorMap;
+use raytrace_engine::nsc_reference::*;
 use serde_json::{Value, json};
 use std::{error::Error, fs, path::Path};
 fn write(path: &Path, v: &impl serde::Serialize) -> Result<(), Box<dyn Error>> {

@@ -2,7 +2,7 @@
 
 ソースリポジトリでのビルド・検証・配布物の作成方法です。目指す構成と設計指針は[グランドデザイン](DESIGN.md)にあります。通常の操作は[操作ガイド](GUIDE.md)、機能ごとの対応条件は[機能と対応範囲](FEATURES.md)を参照してください。
 
-ライブラリの失敗は `raytrace-core`・`raytrace-formats`・`raytrace-io`・`raytrace-app` の各 `Error` 列挙型と `Result<T>` で返します。`Error` は `#[non_exhaustive]` のため、呼出側のパターンマッチには残りのケースを扱う分岐が必要です。材料番号・波長・光線ID・ファイルパスなどはフィールドで取得でき、表示文は日本語です。ルートクレートからは `raytrace_rs::error::{CoreError, FormatError, IoError, AppError}` として参照できます。GUIやレポート内のエラー文字列には `error.to_string()` を使います。光源番号の `source_index` は既存の表示に合わせて1から数えます。
+ライブラリの失敗は `raytrace-core`・`raytrace-formats`・`raytrace-io`・`raytrace-engine` の各 `Error` 列挙型と `Result<T>` で返します。`Error` は `#[non_exhaustive]` のため、呼出側のパターンマッチには残りのケースを扱う分岐が必要です。材料番号・波長・光線ID・ファイルパスなどはフィールドで取得でき、表示文は日本語です。ルートクレートからは `raytrace_rs::error::{CoreError, FormatError, IoError, AppError}` として参照できます。GUIやレポート内のエラー文字列には `error.to_string()` を使います。光源番号の `source_index` は既存の表示に合わせて1から数えます。
 
 ## ソースからビルドして起動
 
@@ -221,7 +221,7 @@ Cargo workspaceとして、`crates/` 以下の7クレートに分けています
 - `raytrace-formats`: ZMX／AGF／SPCD・STEPの入出力とCADキャッシュの保存先を扱います。
 - `raytrace-doc`: 設計文書（L2）です。部品（`Part`）と配置（`Occurrence`）の木、安定したID、展開（`Design::compile`）、組立の編集補助、互換性レポートを持ちます。ファイル・時刻・環境に触れず、外部形式を知りません（元のZMXなどは `Provenance` に不透明なJSONとして保管します）。
 - `raytrace-io`: 設計文書のファイル形式（`design`：開く・保存・旧プロジェクト形式からの移行）、`record`、ZMX書出し、設定の保存・スクリーン出力を扱います。従来のZMX・CAD入出力のパスもここから使えます。
-- `raytrace-app`: JSONエンジン（`engine`）と、パラメーター走査・収束確認・検証ケースのワークフローを扱います。
+- `raytrace-engine`: JSONエンジン（`engine`）と、パラメーター走査・収束確認・検証ケースのワークフローを扱います。
 - `raytrace-cli`: コマンドライン用の `raytrace-rs` 実行ファイルです。引数をエンジンのリクエストへ変換し、応答をJSONで出力します。PNG出力も有効にします。
 - `raytrace-gui`: デスクトップ用の `raytrace-gui` 実行ファイルです。PNG出力も有効にします。
 
@@ -231,11 +231,11 @@ Cargo workspaceとして、`crates/` 以下の7クレートに分けています
 
 ### JSONエンジン
 
-計算とファイル操作の入口は `raytrace_app::engine` です。`Request` は `command` で操作を選ぶJSONで、`trace`・`replay`・`inspect`・`open`・`scan`・`resume_scan`・`convergence`・`save_design`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version` を持ちます。`engine::execute_with` が `Outcome` または `EngineError`（固定の `code` と日本語の `message`）を返し、`engine::respond` がCLIの応答 `{ok, command, result, error}` にまとめます。
+計算とファイル操作の入口は `raytrace_engine::engine` です。`Request` は `command` で操作を選ぶJSONで、`trace`・`replay`・`inspect`・`open`・`scan`・`resume_scan`・`convergence`・`save_design`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version` を持ちます。`engine::execute_with` が `Outcome` または `EngineError`（固定の `code` と日本語の `message`）を返し、`engine::respond` がCLIの応答 `{ok, command, result, error}` にまとめます。
 
 CLIに独自のオプションはありません。`raytrace-rs COMMAND a.b=文字列 a.b:=JSON` の引数をリクエストのフィールドとして組み立て、`raytrace-rs run` はリクエストJSONを直接実行します。どちらも同じ検証を通り、`COMMAND --help` はスキーマから生成します。そのため、CLIで使える操作とフィールドは `Request` の定義だけで決まり、引数の処理を個別に保守する必要がありません。GUIは同じリクエストを作り、作業スレッドで `execute_with` に渡します。中止は `TraceControl`、走査の進捗は `Progress` のコールバックで受け取ります。GUIはモデルの編集・光路図の描画・スクリーン表示の後処理を担い、追跡・読込・保存・書出しは直接呼びません。GUIのプレビュー光路（各光源の先頭から64本）、合計200万光線の上限、計算記録を開いたときの表示用光路もエンジンのオプションです。
 
-モデル・計算記録・計画・応答の型は `schemars` でJSON Schemaを導出します。下位クレートでは `schema` 機能で有効にし、`raytrace-app` は常に有効です。スキーマは `schemas/` にコミットし、型を変えたら次のコマンドで更新します。`tests/engine.rs` が古いスキーマを検出します。各クレートの `Error::code()` は応答の `error.code` に使う固定の識別子です。
+モデル・計算記録・計画・応答の型は `schemars` でJSON Schemaを導出します。下位クレートでは `schema` 機能で有効にし、`raytrace-engine` は常に有効です。スキーマは `schemas/` にコミットし、型を変えたら次のコマンドで更新します。`tests/engine.rs` が古いスキーマを検出します。各クレートの `Error::code()` は応答の `error.code` に使う固定の識別子です。
 
 ```powershell
 cargo run -q --locked -p raytrace-cli -- schema output=schemas

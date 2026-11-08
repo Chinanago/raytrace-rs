@@ -100,7 +100,7 @@ fn library_errors_are_thread_safe_standard_errors() {
     fn check<T: std::error::Error + Send + Sync + 'static>() {}
     check::<Error>();
     check::<raytrace_io::Error>();
-    check::<raytrace_app::Error>();
+    check::<raytrace_engine::Error>();
     check::<raytrace_rs::error::CoreError>();
     check::<raytrace_rs::error::IoError>();
     check::<raytrace_rs::error::AppError>();

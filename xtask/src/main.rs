@@ -17,7 +17,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("raytrace-doc", 2),
     ("raytrace-formats", 3),
     ("raytrace-io", 3),
-    ("raytrace-app", 4),
+    ("raytrace-engine", 4),
     // Library facade that re-exports L1-L4.
     ("raytrace-rs", 4),
     ("raytrace-cli", 5),

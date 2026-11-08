@@ -1,4 +1,4 @@
-//! Optical project workflows, parameter studies and validation.
+//! Session, command registry, calculation pipeline, parameter studies and validation.
 pub mod convergence;
 pub mod engine;
 pub mod nsc_reference;

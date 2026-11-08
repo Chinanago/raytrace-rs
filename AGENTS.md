@@ -10,7 +10,7 @@ Rust製の幾何光学レイトレーサーです。ZMX・JSONの光学系を読
 
 - 長さはmm、CLIとJSONの波長はμm、GUIの波長入力はnmです。
 - Cargo workspaceの7クレートで、依存方向は `core ← {formats, doc} ← io ← app ← {cli, gui}` です。
-- **計算と読込・保存はすべて `raytrace_app::engine` のJSONリクエストを通します。** CLIは `COMMAND a.b=文字列 a.b:=JSON` の引数を汎用的に `engine::Request` へ組み立てるだけで、オプションごとの処理を持ちません。GUIもリクエストを作って `engine::execute_with` に渡すだけです。新しい操作やフィールドは `Request` に足せば、CLIの引数と `--help` には自動で現れます。CLIに専用のオプションを足さないでください。
+- **計算と読込・保存はすべて `raytrace_engine::engine` のJSONリクエストを通します。** CLIは `COMMAND a.b=文字列 a.b:=JSON` の引数を汎用的に `engine::Request` へ組み立てるだけで、オプションごとの処理を持ちません。GUIもリクエストを作って `engine::execute_with` に渡すだけです。新しい操作やフィールドは `Request` に足せば、CLIの引数と `--help` には自動で現れます。CLIに専用のオプションを足さないでください。
 
 | クレート | 役割 |
 |---|---|
@@ -18,7 +18,7 @@ Rust製の幾何光学レイトレーサーです。ZMX・JSONの光学系を読
 | `crates/raytrace-formats` | ZMX／AGF／SPCD・STEPの入出力（設計文書に依存しない） |
 | `crates/raytrace-doc` | 設計文書（L2）。部品（`Part`）と配置（`Occurrence`）、安定したID、展開（`Design::compile`）、組立の編集補助、互換性レポート。外部形式を知らない |
 | `crates/raytrace-io` | 設計文書のファイル形式（`design::open`・`save`、旧プロジェクト形式の移行）・計算記録・ZMX書出し・出力 |
-| `crates/raytrace-app` | JSONエンジン（`src/engine.rs`・`src/engine/run.rs`）、計算パイプラインの各段（`src/pipeline.rs`。追跡ループはここだけ）、パラメーター走査・収束確認・検証ケース |
+| `crates/raytrace-engine` | JSONエンジン（`src/engine.rs`・`src/engine/run.rs`）、計算パイプラインの各段（`src/pipeline.rs`。追跡ループはここだけ）、パラメーター走査・収束確認・検証ケース |
 | `crates/raytrace-cli` | CLI `raytrace-rs`。独自のオプションはなく、引数をリクエストのフィールドに組み立てて応答を出力するだけ（`src/main.rs`） |
 | `crates/raytrace-gui` | egui製GUI `raytrace-gui`。編集・描画・表示の後処理とリクエストの作成 |
 | `schemas/` | `schema output=schemas` が生成するJSONスキーマ（コミット対象） |
@@ -31,8 +31,8 @@ LinuxのクラウドサンドボックスではGUIを除く次のセットを使
 ```bash
 cargo build --locked -p raytrace-cli
 cargo fmt --all --check
-cargo clippy --locked -p raytrace-core -p raytrace-formats -p raytrace-doc -p raytrace-io -p raytrace-app -p raytrace-cli -p raytrace-rs -p xtask --all-features --all-targets -- -D warnings
-cargo test --locked -p raytrace-core -p raytrace-formats -p raytrace-doc -p raytrace-io -p raytrace-app -p raytrace-cli -p raytrace-rs -p xtask --all-features
+cargo clippy --locked -p raytrace-core -p raytrace-formats -p raytrace-doc -p raytrace-io -p raytrace-engine -p raytrace-cli -p raytrace-rs -p xtask --all-features --all-targets -- -D warnings
+cargo test --locked -p raytrace-core -p raytrace-formats -p raytrace-doc -p raytrace-io -p raytrace-engine -p raytrace-cli -p raytrace-rs -p xtask --all-features
 cargo xtask layers   # 層の順序、GUI依存の隔離、計算核の純粋さ（docs/DESIGN.md 4章）
 cargo xtask wasm     # L0〜L4のWASMビルド（要 rustup target add wasm32-unknown-unknown）
 ```

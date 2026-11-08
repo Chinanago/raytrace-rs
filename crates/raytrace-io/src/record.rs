@@ -1,5 +1,5 @@
 //! Self-contained calculation conditions and their validation, separate from the editable design.
-//! Tracing a record is a pipeline stage in `raytrace_app::pipeline`.
+//! Tracing a record is a pipeline stage in `raytrace_engine::pipeline`.
 use crate::Result;
 use crate::{compatibility::CompatibilityReport, design::Design, legacy};
 use raytrace_core::{

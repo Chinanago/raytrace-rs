@@ -1,8 +1,8 @@
 use super::*;
-use raytrace_app::engine::{
+use raytrace_engine::engine::{
     Document, ModelInput, OpenRequest, Outcome, Request, ResumeScanRequest, ScanRequest,
 };
-use raytrace_app::scan::{
+use raytrace_engine::scan::{
     Parameter, ParameterLink, ScanAxis, ScanCase, ScanManifest, ScanPlan, linear_values,
 };
 use raytrace_io::record::RunRecord;

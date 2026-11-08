@@ -113,7 +113,7 @@ enum Job {
     Exported(Result<PathBuf, String>),
     Compared(Result<Vec<study::Comparison>, String>),
     Cancelled,
-    Scanned(Result<Box<raytrace_app::scan::ScanManifest>, String>),
+    Scanned(Result<Box<raytrace_engine::scan::ScanManifest>, String>),
     LoadedRun(Result<Box<raytrace_io::record::RunRecord>, String>),
     Added(PartKind, Result<Box<Design>, String>),
     Loaded(Result<Box<Design>, String>),

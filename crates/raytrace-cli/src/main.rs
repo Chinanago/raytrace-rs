@@ -10,10 +10,10 @@
 //! ```
 //!
 //! stdout carries one JSON response per request; people read stderr.
-use raytrace_app::engine::{
+use raytrace_core::trace::TraceControl;
+use raytrace_engine::engine::{
     self, EngineError, Outcome, Progress, Request, SchemaName, SchemaRequest,
 };
-use raytrace_core::trace::TraceControl;
 use serde_json::{Map, Value};
 use std::{
     env, fs,
