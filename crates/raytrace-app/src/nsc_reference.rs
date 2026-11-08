@@ -4,7 +4,7 @@ use raytrace_core::{
     model::*,
     trace::{self, Budget, DetectorMap, TraceOptions},
 };
-use raytrace_io::assembly::{self, Assembly, Component, RodSize};
+use raytrace_io::design::{Component, Design, RodSize, empty_scene};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -114,7 +114,7 @@ impl NscFixture {
         if self.source.diode.is_none() {
             return Err("NSC reference requires a diode source".into());
         }
-        let mut scene = assembly::empty_scene(&self.name);
+        let mut scene = empty_scene(&self.name);
         scene.settings = self.settings.clone();
         // OpticStudio applies no bulk absorption with polarization off, so the
         // geometric mode is lossless on both sides; absorption is compared in fresnel.
@@ -131,18 +131,19 @@ impl NscFixture {
                     length_mm,
                 } => {
                     let mut rod = Component::rod(glass, "N-BK7".into());
-                    rod.pose = Frame::from_intrinsic_xyz(pose).pose();
-                    rod.rod = Some(RodSize {
+                    rod.occurrence.pose = Frame::from_intrinsic_xyz(pose).pose();
+                    rod.part.rod = Some(RodSize {
                         width_mm: 2. * x,
                         height_mm: 2. * y,
                         length_mm: *length_mm,
                         coatings: Default::default(),
                     });
-                    scene = Assembly {
-                        components: vec![rod],
-                    }
-                    .compose(&scene)?
-                    .0;
+                    let mut design = Design::empty();
+                    design.name = scene.name.clone();
+                    design.reference_plane = scene.reference_plane.clone();
+                    design.settings = scene.settings.clone();
+                    design.push_component(rod);
+                    scene = design.compile()?.scene;
                 }
                 Optic::Lens {
                     pose,

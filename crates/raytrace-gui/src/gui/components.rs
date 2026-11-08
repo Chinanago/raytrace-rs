@@ -27,7 +27,7 @@ impl App {
                 });
                 ui.add_space(8.0);
                 ui.add_enabled_ui(self.job.is_none(), |ui| {
-                    if self.project.assembly.is_some() {
+                    if self.design.is_assembly() {
                         self.components(ui);
                     } else {
                         self.surfaces(ui);
@@ -38,16 +38,16 @@ impl App {
 
     fn components(&mut self, ui: &mut egui::Ui) {
         let materials: Vec<_> = self
-            .project
+            .compiled
             .material_names
             .iter()
             .cloned()
-            .zip(self.project.scene.materials.iter().cloned())
+            .zip(self.compiled.scene.materials.iter().cloned())
             .collect();
         let wavelength = self.wavelength();
-        let mono = self.project.monochromatic_override_um;
-        let assembly = self.project.assembly.as_mut().unwrap();
-        if assembly.components.is_empty() {
+        let mono = self.design.conditions.monochromatic_override_um;
+        let design = &mut self.design;
+        if design.occurrences.is_empty() {
             ui.add_space(16.0);
             ui.label(
                 egui::RichText::new("光源と光学部品を追加すると、ここに一覧が表示されます。")
@@ -55,13 +55,24 @@ impl App {
             );
             return;
         }
-        self.component = self.component.min(assembly.components.len() - 1);
+        self.component = self.component.min(design.occurrences.len() - 1);
+        let kinds: Vec<_> = design
+            .occurrences
+            .iter()
+            .map(|o| {
+                design
+                    .parts
+                    .iter()
+                    .find(|p| p.id == o.part)
+                    .map_or(PartKind::Optic, |p| p.kind)
+            })
+            .collect();
         let mut changed = false;
         egui::ScrollArea::vertical()
             .id_salt("part_list")
             .max_height((ui.available_height() * 0.32).clamp(100.0, 240.0))
             .show(ui, |ui| {
-                for (i, c) in assembly.components.iter_mut().enumerate() {
+                for (i, c) in design.occurrences.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
                         changed |= checkbox(ui, &mut c.enabled, "")
                             .on_hover_text("この部品を使用")
@@ -71,7 +82,7 @@ impl App {
                             .on_hover_text(format!(
                                 "{}\n{} · Z = {:.3} mm",
                                 c.name,
-                                kind_label(c.kind),
+                                kind_label(kinds[i]),
                                 c.pose.translation_mm.0[2]
                             ))
                             .clicked()
@@ -91,7 +102,10 @@ impl App {
         egui::ScrollArea::vertical()
             .id_salt("part_inspector")
             .show(ui, |ui| {
-                let c = &mut assembly.components[self.component];
+                let c = &mut design.occurrences[self.component];
+                let Some(part) = design.parts.iter_mut().find(|p| p.id == c.part) else {
+                    return;
+                };
                 ui.horizontal(|ui| {
                     changed |=
                         name_edit(ui, &mut c.name, ui.available_width() - SPACE_8 * 2.0).changed();
@@ -115,16 +129,16 @@ impl App {
                 ui.add_space(8.0);
                 changed |= pose_controls(ui, &mut c.pose);
                 ui.label(
-                    egui::RichText::new(match c.kind {
-                        ComponentKind::Source => "基準：発光配列の中心・最初の発射面",
-                        ComponentKind::Optic => "基準：最初の光学面の頂点",
-                        ComponentKind::Rod => "基準：ロッド入口の中心",
+                    egui::RichText::new(match part.kind {
+                        PartKind::Source => "基準：発光配列の中心・最初の発射面",
+                        PartKind::Optic => "基準：最初の光学面の頂点",
+                        PartKind::Rod => "基準：ロッド入口の中心",
                         _ => "部品全体の位置と傾き",
                     })
                     .size(SIZE_CAPTION)
                     .color(TEXT_MUTED),
                 );
-                if let Some(r) = &mut c.rod {
+                if let Some(r) = &mut part.rod {
                     section_label(ui, "寸法");
                     for (name, value) in [
                         ("幅 X", &mut r.width_mm),
@@ -137,8 +151,7 @@ impl App {
                     egui::ComboBox::from_id_salt("rod_material")
                         .width(ui.available_width() - 8.0)
                         .selected_text(short_name(
-                            c.project
-                                .material_names
+                            part.material_names
                                 .get(1)
                                 .map(String::as_str)
                                 .unwrap_or("材料"),
@@ -147,37 +160,36 @@ impl App {
                         .show_ui(ui, |ui| {
                             for (name, material) in &materials {
                                 if ui.selectable_label(false, name).clicked() {
-                                    c.project.scene.materials[1] = material.clone();
-                                    c.project.material_names[1] =
+                                    part.scene.materials[1] = material.clone();
+                                    part.material_names[1] =
                                         name.rsplit(" / ").next().unwrap_or(name).into();
                                     changed = true;
                                 }
                             }
                         });
-                    index_label(ui, &c.project.scene.materials[1], wavelength);
-                } else if c.kind == ComponentKind::Detector {
-                    if let Some(s) = c.project.scene.surfaces.first_mut() {
+                    index_label(ui, &part.scene.materials[1], wavelength);
+                } else if part.kind == PartKind::Detector {
+                    if let Some(s) = part.scene.surfaces.first_mut() {
                         section_label(ui, "観測面");
                         changed |= detector_controls(ui, s);
                     }
                 } else {
-                    if !c.project.scene.sources.is_empty() {
+                    if !part.scene.sources.is_empty() {
                         section_label(ui, "発光条件");
                         changed |= source_controls(
                             ui,
-                            &mut c.project.scene.sources,
+                            &mut part.scene.sources,
                             &mut self.source,
                             true,
                             mono,
                         );
                     }
-                    if !c.project.scene.surfaces.is_empty() {
+                    if !part.scene.surfaces.is_empty() {
                         egui::CollapsingHeader::new("読込部品の材料").show(ui, |ui| {
-                            for (name, material) in c
-                                .project
+                            for (name, material) in part
                                 .material_names
                                 .iter()
-                                .zip(&c.project.scene.materials)
+                                .zip(&part.scene.materials)
                                 .skip(1)
                             {
                                 ui.label(egui::RichText::new(name).size(SIZE_CAPTION));
@@ -188,17 +200,19 @@ impl App {
                 }
             });
         if remove {
-            assembly.components.remove(self.component);
+            design.remove_occurrence(self.component);
             self.component = self.component.saturating_sub(1);
             self.source = 0;
             changed = true;
         } else if duplicate {
-            let mut copy = assembly.components[self.component].clone();
-            copy.name = format!("{} コピー", copy.name);
-            assembly.components.insert(self.component + 1, copy);
-            self.component += 1;
-            self.source = 0;
-            changed = true;
+            match design.duplicate_occurrence(self.component) {
+                Ok(_) => {
+                    self.component += 1;
+                    self.source = 0;
+                    changed = true;
+                }
+                Err(e) => self.error = Some(e.to_string()),
+            }
         }
         if changed {
             self.refresh_components();
@@ -214,7 +228,7 @@ impl App {
             .id_salt("surface_list")
             .max_height((ui.available_height() * 0.36).clamp(100.0, 260.0))
             .show(ui, |ui| {
-                for (i, s) in self.project.scene.sources.iter().enumerate() {
+                for (i, s) in self.compiled.scene.sources.iter().enumerate() {
                     if ui
                         .add(
                             egui::Button::new(s.spectrum.as_ref().map_or_else(
@@ -231,7 +245,7 @@ impl App {
                         self.source_selected = true;
                     }
                 }
-                for (i, s) in self.project.scene.surfaces.iter().enumerate() {
+                for (i, s) in self.compiled.scene.surfaces.iter().enumerate() {
                     if ui
                         .add(
                             egui::Button::new(short_name(&s.name, 20))
@@ -255,22 +269,23 @@ impl App {
         egui::ScrollArea::vertical()
             .id_salt("surface_inspector")
             .show(ui, |ui| {
+                let mono = self.design.conditions.monochromatic_override_um;
+                let Some(part) = self.design.lone_system_mut() else {
+                    return;
+                };
                 if self.source_selected {
-                    changed |= source_controls(
-                        ui,
-                        &mut self.project.scene.sources,
-                        &mut self.source,
-                        false,
-                        self.project.monochromatic_override_um,
-                    );
+                    changed |=
+                        source_controls(ui, &mut part.scene.sources, &mut self.source, false, mono);
                     return;
                 }
-                if self.project.scene.surfaces.is_empty() {
+                if part.scene.surfaces.is_empty() {
                     ui.label("光学面がありません。読込レポートを確認してください。");
                     return;
                 }
-                self.selected = self.selected.min(self.project.scene.surfaces.len() - 1);
-                let s = &mut self.project.scene.surfaces[self.selected];
+                self.selected = self.selected.min(part.scene.surfaces.len() - 1);
+                let material_names = &part.material_names;
+                let materials = &part.scene.materials;
+                let s = &mut part.scene.surfaces[self.selected];
                 ui.label(
                     egui::RichText::new(shape_name(&s.shape))
                         .size(SIZE_CAPTION)
@@ -314,33 +329,33 @@ impl App {
                         egui::ComboBox::from_id_salt(label)
                             .width(ui.available_width() - 8.0)
                             .selected_text(short_name(
-                                self.project
-                                    .material_names
+                                material_names
                                     .get(*value)
                                     .map(String::as_str)
                                     .unwrap_or("?"),
                                 20,
                             ))
                             .show_ui(ui, |ui| {
-                                for (i, name) in self.project.material_names.iter().enumerate() {
+                                for (i, name) in material_names.iter().enumerate() {
                                     changed |= ui.selectable_value(value, i, name).changed();
                                 }
                             });
-                        if let Some(m) = self.project.scene.materials.get(*value) {
+                        if let Some(m) = materials.get(*value) {
                             index_label(ui, m, wavelength);
                         }
                     }
                 }
             });
         if changed {
-            self.changed();
+            self.refresh_components();
         }
     }
 
     pub(super) fn wavelength(&self) -> f64 {
-        self.project
+        self.design
+            .conditions
             .monochromatic_override_um
-            .or_else(|| self.project.scene.sources.first().map(|s| s.wavelength_um))
+            .or_else(|| self.compiled.scene.sources.first().map(|s| s.wavelength_um))
             .unwrap_or(0.55)
     }
 }
@@ -355,8 +370,8 @@ fn shape_name(s: &Shape) -> &'static str {
     }
 }
 
-pub(super) fn kind_label(kind: ComponentKind) -> &'static str {
-    if kind == ComponentKind::Detector {
+pub(super) fn kind_label(kind: PartKind) -> &'static str {
+    if kind == PartKind::Detector {
         "スクリーン"
     } else {
         kind.label()
@@ -454,17 +469,19 @@ mod tests {
         let ctx = egui::Context::default();
         install(&ctx);
         let mut app = App::demo();
-        app.project.assembly = None;
-        app.project.scene.sources.clear();
-        app.project.scene.surfaces.truncate(1);
-        let surface = &mut app.project.scene.surfaces[0];
+        let mut scene = app.compiled.scene.clone();
+        scene.sources.clear();
+        scene.surfaces.truncate(1);
+        let surface = &mut scene.surfaces[0];
         surface.name = "S1 EVENASPH".into();
         surface.shape = Shape::EvenAsphere {
             radius_mm: 100.0,
             conic: 0.0,
             coefficients: vec![],
         };
-        let before = serde_json::to_value(&app.project).unwrap();
+        app.design = Design::from_scene(scene);
+        app.recompile();
+        let before = serde_json::to_value(&app.design).unwrap();
         for _ in 0..3 {
             frame(&mut app, &ctx, vec![]);
         }
@@ -476,7 +493,7 @@ mod tests {
         let position = text_rect(&out, "位置").unwrap();
         assert!(shape.top() > name.bottom());
         assert!(position.top() > shape.bottom());
-        assert_eq!(before, serde_json::to_value(&app.project).unwrap());
+        assert_eq!(before, serde_json::to_value(&app.design).unwrap());
         assert!(!app.dirty);
     }
 
@@ -486,7 +503,7 @@ mod tests {
         install(&ctx);
         let mut app = App::demo();
         app.component = 2;
-        app.project.assembly.as_mut().unwrap().components[2].name = "ロッド".into();
+        app.design.occurrences[2].name = "ロッド".into();
         for _ in 0..3 {
             frame(&mut app, &ctx, vec![]);
         }
@@ -508,15 +525,14 @@ mod tests {
         let ctx = egui::Context::default();
         install(&ctx);
         let mut app = App::demo();
-        let a = app.project.assembly.as_mut().unwrap();
-        a.components[0].project.scene.sources[0].count = 3_000_000;
+        app.design.occurrence_part_mut(0).unwrap().scene.sources[0].count = 3_000_000;
         if let Interaction::Detector { pixels } =
-            &mut a.components[3].project.scene.surfaces[0].interaction
+            &mut app.design.occurrence_part_mut(3).unwrap().scene.surfaces[0].interaction
         {
             *pixels = [4096, 2048];
         }
-        app.project.refresh_assembly().unwrap();
-        let before = serde_json::to_value(&app.project).unwrap();
+        app.recompile();
+        let before = serde_json::to_value(&app.design).unwrap();
         frame(&mut app, &ctx, vec![]);
         let layout = frame(&mut app, &ctx, vec![]);
         assert!(text_rect(&layout, "寸法").is_some());
@@ -535,7 +551,7 @@ mod tests {
         let detector = text_rect(&selected, "04  スクリーン").unwrap().center();
         let detector = click(&mut app, &ctx, detector);
         assert!(text_rect(&detector, "観測面").is_some());
-        assert_eq!(before, serde_json::to_value(&app.project).unwrap());
+        assert_eq!(before, serde_json::to_value(&app.design).unwrap());
         assert!(!app.dirty);
     }
 }

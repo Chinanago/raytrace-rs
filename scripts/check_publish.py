@@ -33,7 +33,7 @@ DEMOS = {
 }
 FIXTURES = {"tests/fixtures/step_legacy_hits.json"}
 SCHEMAS = {f"schemas/{name}.schema.json" for name in (
-    "request", "response", "scene", "project", "run", "scan_plan", "scan", "convergence_plan", "convergence",
+    "request", "response", "scene", "design", "run", "scan_plan", "scan", "convergence_plan", "convergence",
 )}
 FONT_ASSETS = {"crates/raytrace-gui/assets/fonts/" + name for name in (
     "NotoSansJP-Regular.otf", "NotoSansJP-Bold.otf", "NotoSansMono-Regular.ttf",
@@ -48,7 +48,7 @@ def git(*args):
 
 def embedded_document(value):
     if isinstance(value, dict):
-        if str(value.get("format", "")).startswith("raytrace-project-") or value.get("zemax") is not None or value.get("zemax_definition") is not None:
+        if str(value.get("format", "")).startswith(("raytrace-project-", "raytrace-design-")) or value.get("zemax") is not None or value.get("zemax_definition") is not None or value.get("provenance") is not None:
             return True
         return any(embedded_document(v) for v in value.values())
     if isinstance(value, list):

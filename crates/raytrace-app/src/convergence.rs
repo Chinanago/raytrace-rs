@@ -2,7 +2,7 @@
 use crate::{
     Result,
     pipeline::{
-        self, LaunchRequest, Limits, MAX_CASE_RAYS, MAX_SCREEN_PIXELS, ProjectOverrides,
+        self, DesignOverrides, LaunchRequest, Limits, MAX_CASE_RAYS, MAX_SCREEN_PIXELS,
         SceneOverrides, Schedule,
     },
 };
@@ -11,7 +11,7 @@ use raytrace_core::{
     screen::ScreenAnalysis,
     trace::{DetectorMap, TraceControl, TraceOptions},
 };
-use raytrace_io::project::Project;
+use raytrace_io::design;
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path};
 
@@ -221,7 +221,7 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
     let mut maps: Vec<Vec<DetectorMap>> = Vec::new();
     let pixel_options = axis_options(&plan.pixels);
     for &cad in &plan.cad_deflections_mm {
-        let loaded = Project::open_with_cad_tolerance(model, &[], cad).map_err(|e| e.to_string());
+        let loaded = design::open_with_cad_tolerance(model, &[], cad).map_err(|e| e.to_string());
         for count in axis_options(&plan.ray_counts) {
             for seed in axis_options(&plan.seeds) {
                 for &pixels in &pixel_options {
@@ -249,18 +249,18 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
                         run_file: None,
                     };
                     let result = (|| -> Result<Vec<DetectorMap>> {
-                        let mut project = loaded
+                        let mut design = loaded
                             .as_ref()
                             .map_err(|e| crate::Error::Plan(e.clone()))?
                             .clone();
-                        pipeline::configure_project(
-                            &mut project,
-                            ProjectOverrides {
+                        pipeline::configure_design(
+                            &mut design,
+                            DesignOverrides {
                                 allow_uncoated: plan.allow_uncoated,
                                 wavelength_um: plan.wavelength_um,
                             },
                         );
-                        let mut scene = project.trace_scene()?;
+                        let mut scene = design.trace_scene()?;
                         pipeline::configure_scene(
                             &mut scene,
                             &SceneOverrides {
@@ -278,7 +278,10 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
                                 _ => 0,
                             })
                             .sum();
-                        row.cad_applied = native && project.cad_deflection_mm.is_some();
+                        row.cad_applied = native
+                            && design
+                                .lone_system()
+                                .is_some_and(|p| p.cad_deflection_mm.is_some());
                         pipeline::check_limits(
                             &scene,
                             Limits {
@@ -346,7 +349,7 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
                         }
                         if plan.save_runs {
                             let name = format!("case_{index:04}.raytrace-run.json");
-                            pipeline::capture(&project, &scene, &launch, plan.threads, options)
+                            pipeline::capture(&design, &scene, &launch, plan.threads, options)
                                 .save(&report, row.trace_seconds, &output.join(&name))?;
                             row.run_file = Some(name);
                         }

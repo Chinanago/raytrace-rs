@@ -15,8 +15,8 @@ use raytrace_core::{
 };
 use raytrace_io::{
     compatibility::CompatibilityReport,
+    design::{self, Design},
     export::DisplaySettings,
-    project::Project,
     record::{RUN_FORMAT, RunRecord},
     zemax,
 };
@@ -32,9 +32,9 @@ pub enum Request {
     Version,
     /// Return one JSON Schema, or write schemas to files.
     Schema(SchemaRequest),
-    /// Load a project, ZMX, calculation record or scan directory and return it.
+    /// Load a design, ZMX, calculation record or scan directory and return it.
     Open(OpenRequest),
-    /// Load a model, report its compatibility and optionally save it as project JSON.
+    /// Load a model, report its compatibility and optionally save it as a design file.
     Inspect(InspectRequest),
     /// Trace a model and return (and optionally save) the calculation record.
     Trace(TraceRequest),
@@ -46,8 +46,8 @@ pub enum Request {
     ResumeScan(ResumeScanRequest),
     /// Trace the model with varied ray counts, seeds, pixels and CAD deflections.
     Convergence(ConvergenceRequest),
-    /// Save a project as JSON.
-    SaveProject(SaveProjectRequest),
+    /// Save a design as JSON.
+    SaveDesign(SaveDesignRequest),
     /// Save a calculation record as JSON.
     SaveRun(SaveRunRequest),
     /// Export a standalone model as ZMX.
@@ -69,7 +69,7 @@ impl Request {
             Self::Scan(_) => "scan",
             Self::ResumeScan(_) => "resume_scan",
             Self::Convergence(_) => "convergence",
-            Self::SaveProject(_) => "save_project",
+            Self::SaveDesign(_) => "save_design",
             Self::SaveRun(_) => "save_run",
             Self::ExportZmx(_) => "export_zmx",
             Self::ExportScreen(_) => "export_screen",
@@ -81,10 +81,10 @@ impl Request {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelInput {
-    /// `.zmx`, project JSON or scene JSON file.
+    /// `.zmx`, design JSON, legacy project JSON or scene JSON file.
     Path(PathBuf),
-    /// Inline project JSON (the `schema name=project` format).
-    Project(Box<Project>),
+    /// Inline design JSON (the `schema name=design` format).
+    Design(Box<Design>),
     /// Inline scene JSON (the `schema name=scene` format, as in `examples/*.json`).
     Scene(Box<Scene>),
 }
@@ -143,7 +143,7 @@ pub struct InspectRequest {
     /// Extra AGF catalog folders for ZMX import.
     #[serde(default)]
     pub catalogs: Vec<PathBuf>,
-    /// Save the imported project JSON here.
+    /// Save the imported design JSON here.
     #[serde(default)]
     pub output: Option<PathBuf>,
     /// Also export the model as ZMX (standalone models only).
@@ -153,9 +153,9 @@ pub struct InspectRequest {
     pub ignore_coatings: bool,
     #[serde(default)]
     pub wavelength_um: Option<f64>,
-    /// Return the imported project in the result.
+    /// Return the imported design in the result.
     #[serde(default)]
-    pub include_project: bool,
+    pub include_design: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
@@ -264,8 +264,8 @@ pub struct ConvergenceRequest {
 
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct SaveProjectRequest {
-    pub project: Box<Project>,
+pub struct SaveDesignRequest {
+    pub design: Box<Design>,
     pub output: PathBuf,
 }
 
@@ -325,8 +325,8 @@ pub enum SchemaName {
     Response,
     /// Optical model, as in `examples/*.json`.
     Scene,
-    /// Project JSON saved by the GUI and `inspect`.
-    Project,
+    /// Design JSON saved by the GUI and `inspect`.
+    Design,
     /// Calculation record saved by `trace` and `replay`.
     Run,
     ScanPlan,
@@ -342,7 +342,7 @@ impl SchemaName {
         Self::Request,
         Self::Response,
         Self::Scene,
-        Self::Project,
+        Self::Design,
         Self::Run,
         Self::ScanPlan,
         Self::Scan,
@@ -354,7 +354,7 @@ impl SchemaName {
             Self::Request => "request",
             Self::Response => "response",
             Self::Scene => "scene",
-            Self::Project => "project",
+            Self::Design => "design",
             Self::Run => "run",
             Self::ScanPlan => "scan_plan",
             Self::Scan => "scan",
@@ -389,7 +389,7 @@ pub struct Response {
 #[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 pub struct ErrorInfo {
     /// Stable snake_case identifier, e.g. `io`, `invalid_json`, `invalid_request`,
-    /// `invalid_scene`, `zmx`, `plan`, `cases_failed`, `cancelled`.
+    /// `invalid_scene`, `design`, `zmx`, `plan`, `cases_failed`, `cancelled`.
     pub code: String,
     /// Japanese message for people.
     pub message: String,
@@ -411,7 +411,7 @@ pub enum Outcome {
     Traced(TraceResult),
     Scanned(ScanResult),
     Converged(ConvergenceResult),
-    /// `save_project`, `save_run`, `export_zmx` and `export_screen`.
+    /// `save_design`, `save_run`, `export_zmx` and `export_screen`.
     Saved {
         output: PathBuf,
     },
@@ -421,7 +421,7 @@ pub enum Outcome {
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Document {
-    Project { project: Box<Project> },
+    Design { design: Box<Design> },
     Run { record: Box<RunRecord> },
     Scan { manifest: Box<scan::ScanManifest> },
 }
@@ -437,7 +437,7 @@ pub struct InspectResult {
     pub traceable: bool,
     pub compatibility: CompatibilityReport,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub project: Option<Box<Project>>,
+    pub design: Option<Box<Design>>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -520,7 +520,12 @@ macro_rules! coded_error {
         }
     )*};
 }
-coded_error!(crate::Error, raytrace_io::Error, raytrace_core::Error);
+coded_error!(
+    crate::Error,
+    raytrace_io::Error,
+    raytrace_doc::Error,
+    raytrace_core::Error
+);
 
 /// Progress reported while a request runs. Ray progress of single traces is in
 /// [`TraceControl::completed`] and [`TraceControl::total`].
@@ -612,8 +617,8 @@ pub fn execute_with(
                     "走査の出力先は既に存在します。resume_scan で再開するか、新しいディレクトリを指定してください",
                 ));
             }
-            let project = load(r.model, &r.catalogs)?;
-            let manifest = scan::ScanManifest::new(&project, r.plan)?;
+            let design = load(r.model, &r.catalogs)?;
+            let manifest = scan::ScanManifest::new(&design, r.plan)?;
             run_scan(manifest, r.output, r.include_manifest, control, progress)
         }
         Request::ResumeScan(r) => {
@@ -635,9 +640,9 @@ pub fn execute_with(
                 report: r.include_report.then(|| Box::new(report)),
             }))
         }
-        Request::SaveProject(r) => {
+        Request::SaveDesign(r) => {
             create_parent(&r.output)?;
-            r.project.save(&r.output)?;
+            design::save(&r.design, &r.output)?;
             Ok(Outcome::Saved { output: r.output })
         }
         Request::SaveRun(r) => {
@@ -647,24 +652,23 @@ pub fn execute_with(
             Ok(Outcome::Saved { output: r.output })
         }
         Request::ExportZmx(r) => {
-            let project = load(r.model, &r.catalogs)?;
-            zemax::export(&project, &r.output)?;
+            let design = load(r.model, &r.catalogs)?;
+            zemax::export(&design, &r.output)?;
             Ok(Outcome::Saved { output: r.output })
         }
         Request::ExportScreen(r) => export_screen(r).map(|output| Outcome::Saved { output }),
     }
 }
 
-/// Load a model input as a project.
-pub(crate) fn load(model: ModelInput, catalogs: &[PathBuf]) -> Result<Project, EngineError> {
+/// Load a model input as a design.
+pub(crate) fn load(model: ModelInput, catalogs: &[PathBuf]) -> Result<Design, EngineError> {
     Ok(match model {
-        ModelInput::Path(path) => Project::open(&path, catalogs)?,
-        ModelInput::Project(project) => {
-            let mut project = *project;
-            project.refresh_assembly()?;
-            project
+        ModelInput::Path(path) => design::open(&path, catalogs)?,
+        ModelInput::Design(design) => {
+            design::check(&design)?;
+            *design
         }
-        ModelInput::Scene(scene) => Project::new(*scene),
+        ModelInput::Scene(scene) => Design::from_scene(*scene),
     })
 }
 
@@ -694,11 +698,11 @@ fn open(r: OpenRequest) -> Result<Document, EngineError> {
             manifest: Box::new(scan::ScanManifest::open(&r.path)?),
         });
     }
-    match Project::open(&r.path, &r.catalogs) {
-        Ok(project) => Ok(Document::Project {
-            project: Box::new(project),
+    match design::open(&r.path, &r.catalogs) {
+        Ok(design) => Ok(Document::Design {
+            design: Box::new(design),
         }),
-        // Project::open recognises calculation records and refers them to replay.
+        // design::open recognises calculation records and refers them to replay.
         Err(raytrace_io::Error::Project(message)) if message.starts_with("計算記録は") => {
             let mut record = RunRecord::open(&r.path)?;
             if r.viewer_paths {
@@ -713,28 +717,29 @@ fn open(r: OpenRequest) -> Result<Document, EngineError> {
 }
 
 fn inspect(r: InspectRequest) -> Result<InspectResult, EngineError> {
-    let mut project = load(r.model, &r.catalogs)?;
-    project.allow_uncoated |= r.ignore_coatings;
+    let mut design = load(r.model, &r.catalogs)?;
+    design.conditions.allow_uncoated |= r.ignore_coatings;
     if let Some(w) = r.wavelength_um {
-        project.monochromatic_override_um = Some(w);
+        design.conditions.monochromatic_override_um = Some(w);
     }
     if let Some(path) = &r.export_zmx {
-        zemax::export(&project, path)?;
+        zemax::export(&design, path)?;
     }
     if let Some(path) = &r.output {
         create_parent(path)?;
-        project.save(path)?;
+        design::save(&design, path)?;
     }
-    let compatibility = project.compatibility_report();
+    let compatibility = design.compatibility_report();
+    let compiled = design.compile().map_err(raytrace_io::Error::from)?;
     Ok(InspectResult {
         output: r.output,
         exported_zmx: r.export_zmx,
-        sources: project.scene.sources.len(),
-        surfaces: project.scene.surfaces.len(),
-        materials: project.scene.materials.len(),
+        sources: compiled.scene.sources.len(),
+        surfaces: compiled.scene.surfaces.len(),
+        materials: compiled.scene.materials.len(),
         traceable: compatibility.traceable,
         compatibility,
-        project: r.include_project.then(|| Box::new(project)),
+        design: r.include_design.then(|| Box::new(design)),
     })
 }
 
@@ -823,7 +828,7 @@ fn schema(name: SchemaName) -> schemars::Schema {
         SchemaName::Request => schema_for!(Request),
         SchemaName::Response => schema_for!(Response),
         SchemaName::Scene => schema_for!(Scene),
-        SchemaName::Project => schema_for!(Project),
+        SchemaName::Design => schema_for!(Design),
         SchemaName::Run => schema_for!(RunOutput),
         SchemaName::ScanPlan => schema_for!(scan::ScanPlan),
         SchemaName::Scan => schema_for!(scan::ScanManifest),

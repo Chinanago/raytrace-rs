@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 #[derive(Clone)]
 pub(super) struct Snapshot {
     explicit_record: bool,
-    project: Project,
+    design: Design,
     preview: Option<usize>,
     component: usize,
     surface: usize,
@@ -38,10 +38,10 @@ impl History {
         !self.future.is_empty()
     }
     fn trim(&mut self) {
-        let mut bytes: usize = self.past.iter().map(|s| project_bytes(&s.project)).sum();
+        let mut bytes: usize = self.past.iter().map(|s| design_bytes(&s.design)).sum();
         while self.past.len() > 1 && (self.past.len() > 64 || bytes > 128 * 1024 * 1024) {
             if let Some(s) = self.past.pop_front() {
-                bytes = bytes.saturating_sub(project_bytes(&s.project));
+                bytes = bytes.saturating_sub(design_bytes(&s.design));
             }
         }
     }
@@ -94,28 +94,38 @@ fn scene_bytes(scene: &Scene) -> usize {
             })
             .sum::<usize>()
 }
-fn project_bytes(p: &Project) -> usize {
-    scene_bytes(&p.scene)
-        + p.zemax
-            .as_ref()
-            .map_or(0, |z| z.text.len() + scene_bytes(&z.baseline_scene))
-        + p.assembly.as_ref().map_or(0, |a| {
-            a.components
-                .iter()
-                .map(|c| {
-                    project_bytes(&c.project)
-                        + c.rod
-                            .as_ref()
-                            .map_or(0, |r| r.coatings.values().map(coating_bytes).sum::<usize>())
-                })
-                .sum()
+// The provenance is opaque JSON; arrays are assumed to hold similar entries so that a
+// large mesh costs one step per nesting level instead of one per triangle.
+fn value_bytes(v: &serde_json::Value) -> usize {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => s.len(),
+        Value::Array(a) => a
+            .first()
+            .map_or(0, |first| a.len() * (value_bytes(first) + 16)),
+        Value::Object(o) => o.iter().map(|(k, v)| k.len() + value_bytes(v) + 16).sum(),
+        _ => 16,
+    }
+}
+fn design_bytes(d: &Design) -> usize {
+    d.parts
+        .iter()
+        .map(|p| {
+            scene_bytes(&p.scene)
+                + p.provenance
+                    .as_ref()
+                    .map_or(0, |o| value_bytes(&o.document))
+                + p.rod
+                    .as_ref()
+                    .map_or(0, |r| r.coatings.values().map(coating_bytes).sum::<usize>())
         })
+        .sum()
 }
 impl App {
     fn snapshot(&self) -> Snapshot {
         Snapshot {
             explicit_record: self.viewing_explicit_record,
-            project: self.project.clone(),
+            design: self.design.clone(),
             preview: self.preview_limit,
             component: self.component,
             surface: self.selected,
@@ -146,7 +156,8 @@ impl App {
     }
     fn restore_snapshot(&mut self, state: &Snapshot) {
         self.viewing_explicit_record = state.explicit_record;
-        self.project = state.project.clone();
+        self.design = state.design.clone();
+        self.recompile();
         self.preview_limit = state.preview;
         self.component = state.component;
         self.selected = state.surface;
@@ -224,19 +235,13 @@ mod tests {
     #[test]
     fn edits_coalesce_until_release_and_undo_restores_the_matching_result_revision() {
         let mut app = App::demo();
-        let original = serde_json::to_value(&app.project).unwrap();
-        let scene = app.project.trace_scene().unwrap();
+        let original = serde_json::to_value(&app.design).unwrap();
+        let scene = app.design.trace_scene().unwrap();
         let p = scene.clone().prepare().unwrap();
         let rays = p.generate_rays().unwrap();
         app.result = Some(ResultView {
             revision: 0,
-            calculation: RunContext::capture(
-                &app.project,
-                &scene,
-                None,
-                1,
-                TraceOptions::default(),
-            ),
+            calculation: RunContext::capture(&app.design, &scene, None, 1, TraceOptions::default()),
             scene,
             report: trace(&p, &rays, TraceOptions::default()),
             seconds: 0.0,
@@ -245,23 +250,20 @@ mod tests {
             roi_cache: None,
         });
         for _ in 0..3 {
-            app.project.assembly.as_mut().unwrap().components[2]
-                .pose
-                .translation_mm
-                .0[2] += 1.0;
+            app.design.occurrences[2].pose.translation_mm.0[2] += 1.0;
             app.refresh_components();
         }
         assert!(app.stale);
         app.commit_edit();
         assert_eq!(app.history.past.len(), 1);
         app.undo();
-        assert_eq!(serde_json::to_value(&app.project).unwrap(), original);
+        assert_eq!(serde_json::to_value(&app.design).unwrap(), original);
         assert!(!app.stale);
         assert!(!app.dirty);
         app.redo();
         assert!(app.stale);
         app.undo();
-        app.project.assembly.as_mut().unwrap().components[1].enabled = false;
+        app.design.occurrences[1].enabled = false;
         app.refresh_components();
         app.commit_edit();
         assert!(!app.history.can_redo());

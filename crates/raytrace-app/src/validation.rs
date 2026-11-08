@@ -5,7 +5,11 @@ use raytrace_core::{
     model::*,
     trace::{Report, TraceOptions, trace},
 };
-use raytrace_io::{project::Project, record::RunContext, zemax};
+use raytrace_io::{
+    design::{self, Design},
+    record::RunContext,
+    zemax,
+};
 use serde::Serialize;
 use std::{fs, path::Path};
 
@@ -229,7 +233,7 @@ impl ValidationCase {
     pub fn run(&self, directory: &Path) -> Result<CaseResult> {
         fs::create_dir_all(directory)
             .map_err(|e| crate::Error::from(raytrace_io::Error::io(directory, e)))?;
-        let project = Project::new(self.scene.clone());
+        let design = Design::from_scene(self.scene.clone());
         let prepared = self.scene.clone().prepare()?;
         let mut rays = self.rays.clone();
         for ray in &mut rays {
@@ -242,7 +246,7 @@ impl ValidationCase {
         let started = std::time::Instant::now();
         let report = trace(&prepared, &rays, options);
         let seconds = started.elapsed().as_secs_f64();
-        RunContext::capture(&project, &self.scene, Some(&rays), 1, options).save(
+        RunContext::capture(&design, &self.scene, Some(&rays), 1, options).save(
             &report,
             seconds,
             &directory.join("run.json"),
@@ -266,8 +270,8 @@ impl ValidationCase {
         let mut zemax_file = None;
         if self.exportable {
             let path = directory.join(format!("{}.zmx", self.name));
-            zemax::export(&project, &path)?;
-            let imported = Project::open(&path, &[])?;
+            zemax::export(&design, &path)?;
+            let imported = design::open(&path, &[])?;
             let mut scene = imported.trace_scene()?;
             scene.surfaces.remove(0); // ZMX export's dummy starting surface.
             let other = trace(&scene.prepare()?, &rays, options);

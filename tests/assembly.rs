@@ -1,9 +1,8 @@
 use raytrace_rs::{
-    assembly::{self, Component, ComponentKind},
+    design::{self, Component, Design, Issue, PartKind},
     geometry::intersect,
     math::{Frame, Pose, V3},
     model::*,
-    project::{Issue, Project},
     trace::{TraceOptions, trace},
 };
 use std::{
@@ -36,14 +35,14 @@ fn files() -> (PathBuf, PathBuf, PathBuf) {
     .unwrap();
     (dir, source, lens)
 }
-fn assembled() -> (Project, PathBuf, PathBuf, PathBuf) {
+fn assembled() -> (Design, PathBuf, PathBuf, PathBuf) {
     let (dir, source, lens) = files();
-    let mut p = Project::new_assembly();
+    let mut p = Design::empty();
     let mut s =
-        Component::imported(Project::open(&source, &[]).unwrap(), ComponentKind::Source).unwrap();
-    s.pose.translation_mm.0[2] = -5.0;
+        design::imported_component(design::open(&source, &[]).unwrap(), PartKind::Source).unwrap();
+    s.occurrence.pose.translation_mm.0[2] = -5.0;
     p.add_component(s).unwrap();
-    let l = Component::imported(Project::open(&lens, &[]).unwrap(), ComponentKind::Optic).unwrap();
+    let l = design::imported_component(design::open(&lens, &[]).unwrap(), PartKind::Optic).unwrap();
     p.add_component(l).unwrap();
     let mut rod = Component::rod(
         Material::Constant {
@@ -52,18 +51,18 @@ fn assembled() -> (Project, PathBuf, PathBuf, PathBuf) {
         },
         "TESTGLASS".into(),
     );
-    rod.pose.translation_mm.0[2] = 8.0;
-    let r = rod.rod.as_mut().unwrap();
+    rod.occurrence.pose.translation_mm.0[2] = 8.0;
+    let r = rod.part.rod.as_mut().unwrap();
     r.width_mm = 3.0;
     r.height_mm = 3.0;
     r.length_mm = 5.0;
     p.add_component(rod).unwrap();
     let mut d = Component::detector();
-    d.pose.translation_mm.0[2] = 20.0;
+    d.occurrence.pose.translation_mm.0[2] = 20.0;
     p.add_component(d).unwrap();
     (p, dir, source, lens)
 }
-fn run(p: &Project) -> raytrace_rs::trace::Report {
+fn run(p: &Design) -> raytrace_rs::trace::Report {
     let s = p.trace_scene().unwrap().prepare().unwrap();
     let rays = s.generate_rays().unwrap();
     trace(
@@ -91,12 +90,18 @@ fn separate_zmx_parts_drop_test_sources_detectors_and_remap_materials() {
             .count(),
         1
     );
-    let a = p.assembly.as_ref().unwrap();
-    let lens = &a.components[1];
-    assert_eq!(lens.project.scene.sources.len(), 0);
-    assert_eq!(lens.project.scene.surfaces.len(), 3);
-    assert_eq!(lens.anchor_mm, V3([0.0, 0.0, 5.0]));
-    assert!(lens.project.zemax.as_ref().unwrap().text.contains("SURF 4"));
+    let lens = p.occurrence_part(1).unwrap();
+    assert_eq!(lens.scene.sources.len(), 0);
+    assert_eq!(lens.scene.surfaces.len(), 3);
+    assert_eq!(p.occurrences[1].anchor_mm, V3([0.0, 0.0, 5.0]));
+    let original = lens.provenance.as_ref().unwrap();
+    assert_eq!(original.format, "zmx");
+    assert!(
+        original.document["text"]
+            .as_str()
+            .unwrap()
+            .contains("SURF 4")
+    );
     let rod_entry = scene
         .surfaces
         .iter()
@@ -127,20 +132,26 @@ fn separate_zmx_parts_drop_test_sources_detectors_and_remap_materials() {
 #[test]
 fn composition_survives_source_file_removal_and_saves_latest_poses() {
     let (mut p, dir, source, lens) = assembled();
-    p.assembly.as_mut().unwrap().components[3]
-        .pose
-        .translation_mm
-        .0[2] = 23.0;
+    p.occurrences[3].pose.translation_mm.0[2] = 23.0;
     let output = dir.join("system.json");
-    p.save(&output).unwrap();
+    design::save(&p, &output).unwrap();
     fs::remove_file(source).unwrap();
     fs::remove_file(lens).unwrap();
     fs::remove_file(dir.join("TEST.AGF")).unwrap();
-    let loaded = Project::open(&output, &[]).unwrap();
-    assert_eq!(loaded.format, "raytrace-project-v2");
-    assert_eq!(loaded.assembly.as_ref().unwrap().components.len(), 4);
+    let loaded = design::open(&output, &[]).unwrap();
+    assert_eq!(loaded.format, design::FORMAT);
+    assert_eq!(loaded.occurrences.len(), 4);
     assert_eq!(
-        loaded.scene.surfaces.last().unwrap().pose.translation_mm.0[2],
+        loaded
+            .compile()
+            .unwrap()
+            .scene
+            .surfaces
+            .last()
+            .unwrap()
+            .pose
+            .translation_mm
+            .0[2],
         23.0
     );
     assert!((run(&p).budget.detected - run(&loaded).budget.detected).abs() < 1e-14);
@@ -155,8 +166,8 @@ fn rigid_component_rotations_preserve_ray_positions_directions_power_and_opl() {
         translation_mm: V3([12.0, -7.0, 9.0]),
         rotation_deg: V3([23.0, 31.0, -17.0]),
     });
-    for c in &mut p.assembly.as_mut().unwrap().components {
-        c.pose = f.transform_pose(&c.pose);
+    for o in &mut p.occurrences {
+        o.pose = f.transform_pose(&o.pose);
     }
     let after = run(&p);
     assert!((before.budget.detected - after.budget.detected).abs() < 1e-11);
@@ -258,46 +269,41 @@ fn oblique_asphere_finds_the_first_of_two_intersections_and_excludes_misses() {
 #[test]
 fn disabled_parts_do_not_block_and_import_does_not_override_material_safety() {
     let (mut p, _, _, _) = assembled();
-    p.assembly.as_mut().unwrap().components[1]
-        .project
-        .issues
-        .push(Issue {
-            code: "coating".into(),
-            message: "Synthetic coating".into(),
-            blocking: true,
-        });
+    p.occurrence_part_mut(1).unwrap().issues.push(Issue {
+        code: "coating".into(),
+        message: "Synthetic coating".into(),
+        blocking: true,
+    });
     assert!(p.trace_scene().is_err());
-    p.allow_uncoated = true;
+    p.conditions.allow_uncoated = true;
     assert!(p.trace_scene().is_ok());
-    p.allow_uncoated = false;
-    p.assembly.as_mut().unwrap().components[1].enabled = false;
+    p.conditions.allow_uncoated = false;
+    p.occurrences[1].enabled = false;
     assert!(p.trace_scene().is_ok());
     let before = p.trace_scene().unwrap().surfaces.len();
-    p.assembly.as_mut().unwrap().components.remove(2);
+    p.remove_occurrence(2).unwrap();
     assert_eq!(p.trace_scene().unwrap().surfaces.len(), before - 6);
 }
 
 #[test]
 fn source_editor_changes_are_kept_in_component_local_coordinates() {
     let (mut p, _, _, _) = assembled();
-    let old = p.scene.sources[0].origin_mm;
-    p.scene.sources[0].origin_mm.0[0] += 1.25;
-    p.scene.sources[0].count = 256;
-    p.assembly.as_mut().unwrap().sync_sources(&p.scene);
-    p.refresh_assembly().unwrap();
-    assert!((p.scene.sources[0].origin_mm.0[0] - old.0[0] - 1.25).abs() < 1e-12);
-    assert_eq!(p.scene.sources[0].count, 256);
-    p.assembly.as_mut().unwrap().components[0]
-        .pose
-        .translation_mm
-        .0[0] += 3.0;
-    p.refresh_assembly().unwrap();
-    assert!((p.scene.sources[0].origin_mm.0[0] - old.0[0] - 4.25).abs() < 1e-12);
+    let mut flat = p.compile().unwrap().scene;
+    let old = flat.sources[0].origin_mm;
+    flat.sources[0].origin_mm.0[0] += 1.25;
+    flat.sources[0].count = 256;
+    p.sync_sources(&flat);
+    let scene = p.compile().unwrap().scene;
+    assert!((scene.sources[0].origin_mm.0[0] - old.0[0] - 1.25).abs() < 1e-12);
+    assert_eq!(scene.sources[0].count, 256);
+    p.occurrences[0].pose.translation_mm.0[0] += 3.0;
+    let scene = p.compile().unwrap().scene;
+    assert!((scene.sources[0].origin_mm.0[0] - old.0[0] - 4.25).abs() < 1e-12);
 }
 
 #[test]
 fn demo_traces_source_lens_rod_and_detector_with_tir_and_closed_budget() {
-    let p = assembly::demo_project().unwrap();
+    let p = design::demo_design().unwrap();
     let report = run(&p);
     assert!(report.budget.detected > 0.75, "{:?}", report.budget);
     assert!(report.total_internal_reflections > 0);

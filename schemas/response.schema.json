@@ -81,20 +81,6 @@
         }
       ]
     },
-    "Assembly": {
-      "type": "object",
-      "properties": {
-        "components": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/Component"
-          }
-        }
-      },
-      "required": [
-        "components"
-      ]
-    },
     "Benchmark": {
       "description": "Timing of the repeated trace; see `timed_scope` for what is measured.",
       "type": "object",
@@ -421,66 +407,9 @@
         "unsupported"
       ]
     },
-    "Component": {
-      "type": "object",
-      "properties": {
-        "anchor_mm": {
-          "description": "Local point placed at pose.translation_mm; lens first vertex / source-array centre.",
-          "type": "array",
-          "items": {
-            "type": "number",
-            "format": "double"
-          },
-          "maxItems": 3,
-          "minItems": 3
-        },
-        "enabled": {
-          "type": "boolean"
-        },
-        "kind": {
-          "$ref": "#/$defs/ComponentKind"
-        },
-        "name": {
-          "type": "string"
-        },
-        "pose": {
-          "$ref": "#/$defs/Pose"
-        },
-        "project": {
-          "$ref": "#/$defs/Project"
-        },
-        "rod": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RodSize"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "name",
-        "enabled",
-        "kind",
-        "pose",
-        "anchor_mm",
-        "project"
-      ]
-    },
     "ComponentCompatibility": {
       "type": "object",
       "properties": {
-        "component": {
-          "description": "Zero-based index in the assembly; None denotes a standalone project.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "uint",
-          "minimum": 0
-        },
         "effective_wavelengths_um": {
           "type": "array",
           "items": {
@@ -505,6 +434,18 @@
         },
         "name": {
           "type": "string"
+        },
+        "occurrence": {
+          "description": "The occurrence; None denotes a single system traced as it is.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OccurrenceId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "source_format": {
           "type": "string"
@@ -531,15 +472,26 @@
         "entries"
       ]
     },
-    "ComponentKind": {
-      "type": "string",
-      "enum": [
-        "system",
-        "source",
-        "optic",
-        "rod",
-        "detector"
-      ]
+    "Conditions": {
+      "description": "Calculation conditions that change how imported definitions are traced.",
+      "type": "object",
+      "properties": {
+        "allow_uncoated": {
+          "description": "Trace coated surfaces as uncoated Fresnel interfaces (changes the physics).",
+          "type": "boolean",
+          "default": false
+        },
+        "monochromatic_override_um": {
+          "description": "Replace every source spectrum with one wavelength in micrometres.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        }
+      },
+      "additionalProperties": false
     },
     "ConvergenceCase": {
       "type": "object",
@@ -828,6 +780,66 @@
         "cases",
         "comparisons",
         "failed"
+      ]
+    },
+    "Design": {
+      "description": "The design document. Compile it with [`Design::compile`] or [`Design::trace_scene`].",
+      "type": "object",
+      "properties": {
+        "conditions": {
+          "$ref": "#/$defs/Conditions",
+          "default": {
+            "allow_uncoated": false,
+            "monochromatic_override_um": null
+          }
+        },
+        "format": {
+          "description": "Always `raytrace-design-v1`.",
+          "type": "string"
+        },
+        "mode": {
+          "$ref": "#/$defs/Mode"
+        },
+        "name": {
+          "description": "Name, reference plane, tracing mode and limits of a composed design. A single\nsystem part placed without transform (see [`Design::lone_system`]) is traced\nas it is and uses its own scene header instead.",
+          "type": "string"
+        },
+        "next_id": {
+          "description": "Next number for new ids; numbers are never reused.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 1,
+          "minimum": 0
+        },
+        "occurrences": {
+          "description": "Root-level placements in order; names of composed surfaces use their position.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Occurrence"
+          }
+        },
+        "parts": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Part"
+          }
+        },
+        "reference_plane": {
+          "type": "string"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "name",
+        "reference_plane",
+        "settings",
+        "mode"
       ]
     },
     "DetectorDifference": {
@@ -1119,17 +1131,17 @@
         {
           "type": "object",
           "properties": {
+            "design": {
+              "$ref": "#/$defs/Design"
+            },
             "kind": {
               "type": "string",
-              "const": "project"
-            },
-            "project": {
-              "$ref": "#/$defs/Project"
+              "const": "design"
             }
           },
           "required": [
             "kind",
-            "project"
+            "design"
           ]
         },
         {
@@ -1170,7 +1182,7 @@
       "type": "object",
       "properties": {
         "code": {
-          "description": "Stable snake_case identifier, e.g. `io`, `invalid_json`, `invalid_request`,\n`invalid_scene`, `zmx`, `plan`, `cases_failed`, `cancelled`.",
+          "description": "Stable snake_case identifier, e.g. `io`, `invalid_json`, `invalid_request`,\n`invalid_scene`, `design`, `zmx`, `plan`, `cases_failed`, `cancelled`.",
           "type": "string"
         },
         "message": {
@@ -1189,6 +1201,16 @@
         "compatibility": {
           "$ref": "#/$defs/CompatibilityReport"
         },
+        "design": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Design"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "exported_zmx": {
           "type": [
             "string",
@@ -1204,16 +1226,6 @@
           "type": [
             "string",
             "null"
-          ]
-        },
-        "project": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Project"
-            },
-            {
-              "type": "null"
-            }
           ]
         },
         "sources": {
@@ -1379,6 +1391,7 @@
       ]
     },
     "Issue": {
+      "description": "A condition found while importing or editing a definition.",
       "type": "object",
       "properties": {
         "blocking": {
@@ -1696,6 +1709,66 @@
         "non_sequential"
       ]
     },
+    "Occurrence": {
+      "description": "A placed instance of a part: a rigid transform plus an enabled switch.",
+      "type": "object",
+      "properties": {
+        "anchor_mm": {
+          "description": "Local point placed at `pose.translation_mm`: lens first vertex or source-array centre.",
+          "type": "array",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "id": {
+          "$ref": "#/$defs/OccurrenceId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "part": {
+          "$ref": "#/$defs/PartId"
+        },
+        "pose": {
+          "$ref": "#/$defs/Pose",
+          "default": {
+            "rotation_deg": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "translation_mm": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "part",
+        "name"
+      ]
+    },
+    "OccurrenceId": {
+      "description": "Identifier of a occurrence, unique within the design document.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    },
     "OpticalPupil": {
       "type": "object",
       "properties": {
@@ -1798,7 +1871,7 @@
           "$ref": "#/$defs/ConvergenceResult"
         },
         {
-          "description": "`save_project`, `save_run`, `export_zmx` and `export_screen`.",
+          "description": "`save_design`, `save_run`, `export_zmx` and `export_screen`.",
           "type": "object",
           "properties": {
             "output": {
@@ -1812,10 +1885,10 @@
       ]
     },
     "Parameter": {
-      "description": "Scanned value. Indices are zero-based; axis 0/1/2 is X/Y/Z.",
+      "description": "Scanned value. Components are addressed by occurrence id and surfaces by name; axis\n0/1/2 is X/Y/Z.",
       "oneOf": [
         {
-          "description": "Assembly component position in mm.",
+          "description": "Occurrence position in mm.",
           "type": "object",
           "properties": {
             "axis": {
@@ -1823,10 +1896,8 @@
               "format": "uint",
               "minimum": 0
             },
-            "component": {
-              "type": "integer",
-              "format": "uint",
-              "minimum": 0
+            "occurrence": {
+              "$ref": "#/$defs/OccurrenceId"
             },
             "type": {
               "type": "string",
@@ -1836,12 +1907,12 @@
           "additionalProperties": false,
           "required": [
             "type",
-            "component",
+            "occurrence",
             "axis"
           ]
         },
         {
-          "description": "Assembly component rotation in degrees.",
+          "description": "Occurrence rotation in degrees.",
           "type": "object",
           "properties": {
             "axis": {
@@ -1849,10 +1920,8 @@
               "format": "uint",
               "minimum": 0
             },
-            "component": {
-              "type": "integer",
-              "format": "uint",
-              "minimum": 0
+            "occurrence": {
+              "$ref": "#/$defs/OccurrenceId"
             },
             "type": {
               "type": "string",
@@ -1862,12 +1931,12 @@
           "additionalProperties": false,
           "required": [
             "type",
-            "component",
+            "occurrence",
             "axis"
           ]
         },
         {
-          "description": "Rod width X / width Y / length (axis 0/1/2) in mm.",
+          "description": "Rod width X / width Y / length (axis 0/1/2) in mm, of the occurrence's rod part.",
           "type": "object",
           "properties": {
             "axis": {
@@ -1875,10 +1944,8 @@
               "format": "uint",
               "minimum": 0
             },
-            "component": {
-              "type": "integer",
-              "format": "uint",
-              "minimum": 0
+            "occurrence": {
+              "$ref": "#/$defs/OccurrenceId"
             },
             "type": {
               "type": "string",
@@ -1888,12 +1955,12 @@
           "additionalProperties": false,
           "required": [
             "type",
-            "component",
+            "occurrence",
             "axis"
           ]
         },
         {
-          "description": "Standalone-model surface position in mm.",
+          "description": "Surface position in mm, in the coordinates of its part. Without `occurrence` the\ndesign must be a single unplaced system.",
           "type": "object",
           "properties": {
             "axis": {
@@ -1901,10 +1968,20 @@
               "format": "uint",
               "minimum": 0
             },
+            "occurrence": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/OccurrenceId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "surface": {
-              "type": "integer",
-              "format": "uint",
-              "minimum": 0
+              "description": "Surface name in the part.",
+              "type": "string"
             },
             "type": {
               "type": "string",
@@ -1919,7 +1996,7 @@
           ]
         },
         {
-          "description": "Standalone-model surface rotation in degrees.",
+          "description": "Surface rotation in degrees, in the coordinates of its part.",
           "type": "object",
           "properties": {
             "axis": {
@@ -1927,10 +2004,19 @@
               "format": "uint",
               "minimum": 0
             },
+            "occurrence": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/OccurrenceId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "surface": {
-              "type": "integer",
-              "format": "uint",
-              "minimum": 0
+              "type": "string"
             },
             "type": {
               "type": "string",
@@ -1985,6 +2071,105 @@
         "target",
         "scale",
         "offset"
+      ]
+    },
+    "Part": {
+      "description": "A part definition in its own local coordinates.",
+      "type": "object",
+      "properties": {
+        "cad_deflection_mm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "conditions": {
+          "$ref": "#/$defs/Conditions",
+          "default": {
+            "allow_uncoated": false,
+            "monochromatic_override_um": null
+          }
+        },
+        "id": {
+          "$ref": "#/$defs/PartId"
+        },
+        "issues": {
+          "description": "Import findings that may block tracing.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Issue"
+          }
+        },
+        "kind": {
+          "$ref": "#/$defs/PartKind"
+        },
+        "material_names": {
+          "description": "One display name per entry of `scene.materials`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "provenance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Provenance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rod": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RodSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scene": {
+          "description": "Local optical definition: materials, surfaces, sources, and (for a `system`\npart) the name, reference plane, tracing mode and limits of the whole system.\nA `rod` part keeps its material in slot 1; its six faces are generated from `rod`.",
+          "$ref": "#/$defs/Scene"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "scene",
+        "material_names"
+      ]
+    },
+    "PartId": {
+      "description": "Identifier of a part, unique within the design document.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    },
+    "PartKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "source",
+            "optic",
+            "rod",
+            "detector"
+          ]
+        },
+        {
+          "description": "A complete optical system: surfaces, sources and tracing mode.",
+          "type": "string",
+          "const": "system"
+        }
       ]
     },
     "PathEvent": {
@@ -2072,74 +2257,20 @@
       },
       "additionalProperties": false
     },
-    "Project": {
-      "description": "Editable project saved by the GUI and `--inspect`: the scene, its source documents\n(ZMX definitions, assembly components) and import issues.",
+    "Provenance": {
+      "description": "Where a part was imported from. The document keeps it as an opaque JSON value;\nonly the input/output layer interprets it (for example to export ZMX again).",
       "type": "object",
       "properties": {
-        "allow_uncoated": {
-          "type": "boolean",
-          "default": false
-        },
-        "assembly": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Assembly"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "cad_deflection_mm": {
-          "type": [
-            "number",
-            "null"
-          ],
-          "format": "double"
-        },
+        "document": true,
         "format": {
+          "description": "Name of the source format, for example `zmx`.",
           "type": "string"
-        },
-        "issues": {
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/Issue"
-          }
-        },
-        "material_names": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "monochromatic_override_um": {
-          "type": [
-            "number",
-            "null"
-          ],
-          "format": "double",
-          "default": null
-        },
-        "scene": {
-          "$ref": "#/$defs/Scene"
-        },
-        "zemax": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ZmxDocument"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
         }
       },
+      "additionalProperties": false,
       "required": [
         "format",
-        "scene",
-        "material_names"
+        "document"
       ]
     },
     "PupilGeometry": {
@@ -2393,6 +2524,10 @@
           "format": "uint64",
           "minimum": 0
         },
+        "design": {
+          "description": "The editor state, including original documents, parts, placements and overrides.\nRecords saved by earlier builds hold this as `project` and are migrated on load.",
+          "$ref": "#/$defs/Design"
+        },
         "input": {
           "$ref": "#/$defs/LaunchInput"
         },
@@ -2402,10 +2537,6 @@
             "type": "number",
             "format": "double"
           }
-        },
-        "project": {
-          "description": "The editor state, including original documents, local components and overrides.",
-          "$ref": "#/$defs/Project"
         },
         "pupils": {
           "type": "array",
@@ -2433,7 +2564,7 @@
         "software_version",
         "created_unix_ms",
         "worker_threads",
-        "project",
+        "design",
         "scene",
         "input",
         "trace_options",
@@ -2457,7 +2588,7 @@
           }
         },
         "calculation": {
-          "description": "Frozen project, effective scene, launch input and software version used for replay.",
+          "description": "Frozen design, effective scene, launch input and software version used for replay.",
           "$ref": "#/$defs/RunContext"
         },
         "detector_percent_of_reference": {
@@ -2663,7 +2794,7 @@
       "type": "object",
       "properties": {
         "base": {
-          "$ref": "#/$defs/Project"
+          "$ref": "#/$defs/Design"
         },
         "cases": {
           "type": "array",
@@ -3343,16 +3474,6 @@
         "depth"
       ]
     },
-    "TextEncoding": {
-      "type": "string",
-      "enum": [
-        "Utf8",
-        "Utf8Bom",
-        "Utf16Le",
-        "Utf16Be",
-        "Windows1252"
-      ]
-    },
     "TraceDiagnostic": {
       "type": "object",
       "properties": {
@@ -3551,46 +3672,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "ZmxDocument": {
-      "type": "object",
-      "properties": {
-        "baseline_scene": {
-          "$ref": "#/$defs/Scene"
-        },
-        "encoding": {
-          "$ref": "#/$defs/TextEncoding"
-        },
-        "glass_records": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        },
-        "source_path": {
-          "type": "string"
-        },
-        "surface_numbers": {
-          "description": "One source-document surface number per editable sequential surface.",
-          "type": "array",
-          "items": {
-            "type": "integer",
-            "format": "uint",
-            "minimum": 0
-          }
-        },
-        "text": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "text",
-        "encoding",
-        "source_path",
-        "baseline_scene",
-        "surface_numbers",
-        "glass_records"
-      ]
     }
   }
 }

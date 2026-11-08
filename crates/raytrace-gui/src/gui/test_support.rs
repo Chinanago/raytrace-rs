@@ -74,7 +74,7 @@ pub(super) fn click(app: &mut App, ctx: &egui::Context, p: Pos2) -> egui::FullOu
 
 pub(super) fn calculate_demo(app: &mut App) {
     use raytrace_core::trace::{TraceOptions, trace};
-    let mut scene = app.project.trace_scene().unwrap();
+    let mut scene = app.design.trace_scene().unwrap();
     for source in &mut scene.sources {
         source.count = 64;
     }
@@ -82,7 +82,7 @@ pub(super) fn calculate_demo(app: &mut App) {
     let rays = prepared.generate_rays().unwrap();
     app.result = Some(ResultView {
         revision: app.history.revision,
-        calculation: RunContext::capture(&app.project, &scene, None, 1, TraceOptions::default()),
+        calculation: RunContext::capture(&app.design, &scene, None, 1, TraceOptions::default()),
         scene,
         report: trace(&prepared, &rays, TraceOptions::default()),
         seconds: 0.0,

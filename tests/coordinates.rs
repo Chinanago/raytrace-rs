@@ -1,8 +1,7 @@
 use raytrace_rs::{
-    assembly::{Component, ComponentKind},
+    design::{self, Design, PartKind},
     math::{Frame, Pose, V3},
-    model::Ray,
-    project::Project,
+    model::{Ray, Scene},
     trace::{TraceOptions, trace},
     zemax,
 };
@@ -22,6 +21,10 @@ fn folder() -> PathBuf {
         ));
     fs::create_dir_all(&p).unwrap();
     p
+}
+/// Scene of a single unplaced system.
+fn scene(design: &Design) -> &Scene {
+    &design.lone_system().unwrap().scene
 }
 fn near(a: V3, b: V3) {
     assert!((a - b).norm() < 1e-10, "{a:?} != {b:?}");
@@ -66,16 +69,22 @@ fn coordinate_break_compound_inverse_restores_position_and_orientation() {
     let dir = folder();
     let path = dir.join("chain.zmx");
     fs::write(&path,"MODE SEQ\nUNIT MM\nWAVM 1 0.55 1\nSURF 0\n DISZ INFINITY\nSURF 1\n TYPE COORDBRK\n PARM 1 3\n PARM 2 5\n PARM 3 12\n PARM 4 23\n PARM 5 34\n PARM 6 0\n DISZ 0\nSURF 2\n TYPE STANDARD\n DISZ 0\nSURF 3\n TYPE COORDBRK\n PARM 1 -3\n PARM 2 -5\n PARM 3 -12\n PARM 4 -23\n PARM 5 -34\n PARM 6 1\n DISZ 0\nSURF 4\n TYPE STANDARD\n DISZ 0\n").unwrap();
-    let p = Project::open(&path, &[]).unwrap();
-    assert!(p.trace_scene().is_ok(), "{:?}", p.issues);
-    assert_eq!(p.scene.surfaces.len(), 2);
-    near(p.scene.surfaces[0].pose.translation_mm, V3([3., 5., 0.]));
-    near(p.scene.surfaces[1].pose.translation_mm, V3::default());
+    let p = design::open(&path, &[]).unwrap();
+    assert!(p.trace_scene().is_ok(), "{:?}", p.compile().unwrap().issues);
+    assert_eq!(scene(&p).surfaces.len(), 2);
+    near(scene(&p).surfaces[0].pose.translation_mm, V3([3., 5., 0.]));
+    near(scene(&p).surfaces[1].pose.translation_mm, V3::default());
     near(
-        Frame::new(&p.scene.surfaces[1].pose).world_vector(V3([0., 0., 1.])),
+        Frame::new(&scene(&p).surfaces[1].pose).world_vector(V3([0., 0., 1.])),
         V3([0., 0., 1.]),
     );
-    assert_eq!(p.zemax.as_ref().unwrap().surface_numbers, vec![2, 4]);
+    assert_eq!(
+        zemax::document(p.lone_system().unwrap())
+            .unwrap()
+            .unwrap()
+            .surface_numbers,
+        vec![2, 4]
+    );
     zemax::export(&p, &dir.join("same.zmx")).unwrap();
     assert_eq!(
         fs::read(&path).unwrap(),
@@ -92,15 +101,15 @@ fn tilted_lens_thickness_optical_path_and_assembly_are_preserved() {
     )
     .unwrap();
     fs::write(&path,"MODE SEQ\nUNIT MM\nGCAT TEST\nWAVM 1 0.55 1\nSURF 0\n DISZ INFINITY\nSURF 1\n TYPE COORDBRK\n PARM 1 3\n PARM 2 5\n PARM 3 12\n PARM 4 23\n PARM 5 34\n DISZ 2\nSURF 2\n TYPE STANDARD\n GLAS TEST 0 0\n DIAM 2\n DISZ 5\nSURF 3\n TYPE STANDARD\n DIAM 2\n DISZ 3\nSURF 4\n TYPE STANDARD\n DIAM 2\n DISZ 0\n").unwrap();
-    let p = Project::open(&path, &[]).unwrap();
+    let p = design::open(&path, &[]).unwrap();
     let norm = intrinsic(V3([0., 0., 1.]), V3([12., 23., 34.]));
     near(
-        p.scene.surfaces[0].pose.translation_mm,
+        scene(&p).surfaces[0].pose.translation_mm,
         V3([3., 5., 0.]) + norm * 2.,
     );
     let ray = Ray {
         id: 0,
-        position_mm: p.scene.surfaces[0].pose.translation_mm - norm * 2.,
+        position_mm: scene(&p).surfaces[0].pose.translation_mm - norm * 2.,
         direction: norm,
         weight: 1.,
         wavelength_um: 0.55,
@@ -119,9 +128,9 @@ fn tilted_lens_thickness_optical_path_and_assembly_are_preserved() {
     assert!((r.budget.detected - 0.9216).abs() < 1e-12);
     let terminal = r.terminals.iter().find(|t| t.reason == "detected").unwrap();
     assert!((terminal.ray.optical_path_mm - 12.5).abs() < 1e-10);
-    let lens = Component::imported(p, ComponentKind::Optic).unwrap();
-    assert_eq!(lens.project.scene.surfaces.len(), 3); // two optical faces and one barrel
-    let barrel = &lens.project.scene.surfaces[2];
+    let lens = design::imported_component(p, PartKind::Optic).unwrap();
+    assert_eq!(lens.part.scene.surfaces.len(), 3); // two optical faces and one barrel
+    let barrel = &lens.part.scene.surfaces[2];
     near(
         Frame::new(&barrel.pose).world_vector(V3([0., 0., 1.])),
         norm,
@@ -132,34 +141,39 @@ fn nsc_reference_hierarchy_and_compound_tilts_hit_the_referenced_detector() {
     let dir = folder();
     let path = dir.join("references.zmx");
     fs::write(&path,"MODE NSC\nUNIT MM\nWAVM 1 0.55 1\nSURF 1\n TYPE NONSEQCO\n NSOH NSC_NULL 0 0\n NSOP 2 3 4 12 23 34\n NSOH NSC_NULL 1 0\n NSOP 1 0 5 -5 7 11\n NSOH NSC_SDIO -1 0\n NSOP 0 0 -1 0 0 0\n NSOD 2 256\n NSOD 3 1\n NSOD 7 0\n NSOD 9 0\n NSOH NSC_DETC 2 0\n NSOP 0 0 10 0 0 0 ABSORB\n NSOD 1 10\n NSOD 2 10\n NSOD 3 4\n NSOD 4 4\n").unwrap();
-    let p = Project::open(&path, &[]).unwrap();
-    assert!(p.trace_scene().is_ok(), "{:?}", p.issues);
+    let p = design::open(&path, &[]).unwrap();
+    assert!(p.trace_scene().is_ok(), "{:?}", p.compile().unwrap().issues);
     let a = V3([12., 23., 34.]);
     let b = V3([-5., 7., 11.]);
     let origin = V3([2., 3., 4.]) + intrinsic(V3([1., 0., 5.]), a);
     let axis = intrinsic(intrinsic(V3([0., 0., 1.]), b), a);
-    near(p.scene.sources[0].origin_mm, origin - axis);
-    near(p.scene.sources[0].direction, axis);
-    near(p.scene.surfaces[0].pose.translation_mm, origin + axis * 10.);
+    near(scene(&p).sources[0].origin_mm, origin - axis);
+    near(scene(&p).sources[0].direction, axis);
+    near(
+        scene(&p).surfaces[0].pose.translation_mm,
+        origin + axis * 10.,
+    );
     let prepared = p.trace_scene().unwrap().prepare().unwrap();
     let rays = prepared.generate_rays().unwrap();
     let r = trace(&prepared, &rays, TraceOptions::default());
     assert!((r.budget.detected - 1.).abs() < 1e-12);
     let mut moved = p.clone();
-    moved.scene.sources[0].origin_mm.0[0] += 1.;
+    moved.lone_system_mut().unwrap().scene.sources[0]
+        .origin_mm
+        .0[0] += 1.;
     zemax::export(&moved, &dir.join("edited.zmx")).unwrap();
-    let reopened = Project::open(&dir.join("edited.zmx"), &[]).unwrap();
+    let reopened = design::open(&dir.join("edited.zmx"), &[]).unwrap();
     near(
-        reopened.scene.sources[0].origin_mm,
-        moved.scene.sources[0].origin_mm,
+        scene(&reopened).sources[0].origin_mm,
+        scene(&moved).sources[0].origin_mm,
     );
     near(
-        reopened.scene.sources[0].direction,
-        moved.scene.sources[0].direction,
+        scene(&reopened).sources[0].direction,
+        scene(&moved).sources[0].direction,
     );
     near(
-        reopened.scene.surfaces[0].pose.translation_mm,
-        moved.scene.surfaces[0].pose.translation_mm,
+        scene(&reopened).surfaces[0].pose.translation_mm,
+        scene(&moved).surfaces[0].pose.translation_mm,
     );
 }
 #[test]
@@ -173,6 +187,6 @@ fn invalid_references_and_inside_of_missing_volumes_block_tracing() {
             base.replace("REF", reference).replace("INSIDE", inside),
         )
         .unwrap();
-        assert!(Project::open(&path, &[]).unwrap().trace_scene().is_err());
+        assert!(design::open(&path, &[]).unwrap().trace_scene().is_err());
     }
 }

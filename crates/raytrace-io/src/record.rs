@@ -1,7 +1,7 @@
-//! Self-contained calculation conditions and their validation, separate from the editable project.
+//! Self-contained calculation conditions and their validation, separate from the editable design.
 //! Tracing a record is a pipeline stage in `raytrace_app::pipeline`.
 use crate::Result;
-use crate::{compatibility::CompatibilityReport, project::Project};
+use crate::{compatibility::CompatibilityReport, design::Design, legacy};
 use raytrace_core::{
     model::{PreparedScene, Ray, Scene},
     trace::{Report, TraceOptions},
@@ -38,14 +38,15 @@ pub enum LaunchInput {
         rays: Vec<Ray>,
     },
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RunContext {
     pub software_version: String,
     pub created_unix_ms: u64,
     pub worker_threads: usize,
-    /// The editor state, including original documents, local components and overrides.
-    pub project: Project,
+    /// The editor state, including original documents, parts, placements and overrides.
+    /// Records saved by earlier builds hold this as `project` and are migrated on load.
+    pub design: Design,
     /// Exact effective scene after CLI overrides or GUI preview limits.
     pub scene: Scene,
     pub input: LaunchInput,
@@ -55,6 +56,58 @@ pub struct RunContext {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pupils: Vec<SavedPupil>,
 }
+/// Record layout as stored; `project` is the field of builds before the design document.
+#[derive(Deserialize)]
+struct RunContextWire {
+    software_version: String,
+    created_unix_ms: u64,
+    worker_threads: usize,
+    #[serde(default)]
+    design: Option<Design>,
+    #[serde(default)]
+    project: Option<serde_json::Value>,
+    scene: Scene,
+    input: LaunchInput,
+    trace_options: TraceOptions,
+    launch_wavelengths_um: Vec<f64>,
+    compatibility: serde_json::Value,
+    #[serde(default)]
+    pupils: Vec<SavedPupil>,
+}
+impl<'de> Deserialize<'de> for RunContext {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        let wire = RunContextWire::deserialize(deserializer)?;
+        let (design, mut compatibility) = match (wire.design, wire.project) {
+            (Some(design), None) => (design, wire.compatibility),
+            (None, Some(project)) => {
+                let design = legacy::migrate_embedded(project).map_err(D::Error::custom)?;
+                let mut compatibility = wire.compatibility;
+                legacy::migrate_compatibility(&mut compatibility, &design);
+                (design, compatibility)
+            }
+            _ => {
+                return Err(D::Error::custom(
+                    "計算記録にはdesign（旧版ではproject）を1つだけ指定してください",
+                ));
+            }
+        };
+        let compatibility =
+            serde_json::from_value(std::mem::take(&mut compatibility)).map_err(D::Error::custom)?;
+        Ok(Self {
+            software_version: wire.software_version,
+            created_unix_ms: wire.created_unix_ms,
+            worker_threads: wire.worker_threads,
+            design,
+            scene: wire.scene,
+            input: wire.input,
+            trace_options: wire.trace_options,
+            launch_wavelengths_um: wire.launch_wavelengths_um,
+            compatibility,
+            pupils: wire.pupils,
+        })
+    }
+}
 impl RunContext {
     pub fn input_count(&self) -> usize {
         match &self.input {
@@ -63,7 +116,7 @@ impl RunContext {
         }
     }
     pub fn capture(
-        project: &Project,
+        design: &Design,
         scene: &Scene,
         explicit: Option<&[Ray]>,
         worker_threads: usize,
@@ -75,7 +128,7 @@ impl RunContext {
         };
         waves.sort_by(f64::total_cmp);
         waves.dedup();
-        let mut compatibility = project.compatibility_report_at_wavelengths(&waves);
+        let mut compatibility = design.compatibility_report_at_wavelengths(&waves);
         if explicit.is_some() {
             for component in &mut compatibility.components {
                 if component.sources > 0 {
@@ -104,7 +157,7 @@ impl RunContext {
                 .unwrap_or_default()
                 .as_millis() as u64,
             worker_threads,
-            project: project.clone(),
+            design: design.clone(),
             scene: scene.clone(),
             input: explicit.map_or_else(
                 || LaunchInput::Generated {

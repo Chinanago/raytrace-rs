@@ -1,10 +1,9 @@
 use raytrace_rs::{
-    assembly::{Assembly, Component, ComponentKind},
+    design::{self, Component, Design, Part, PartKind},
     geometry::{dielectric, intersect_ordered},
     illumination::{RayAiming, pupil_geometry},
     math::{Frame, Pose, V3},
     model::{Interaction, PreparedScene, Ray},
-    project::Project,
     trace::{TraceOptions, trace},
     zemax,
 };
@@ -32,7 +31,14 @@ fn native(mode: usize, finite: bool) -> String {
         if finite { "50" } else { "INFINITY" }
     )
 }
-fn load(mode: usize, finite: bool, dispersive: bool) -> (PathBuf, Project) {
+/// The single unplaced system of a design.
+fn part(design: &Design) -> &Part {
+    design.lone_system().unwrap()
+}
+fn part_mut(design: &mut Design) -> &mut Part {
+    design.lone_system_mut().unwrap()
+}
+fn load(mode: usize, finite: bool, dispersive: bool) -> (PathBuf, Design) {
     let dir = folder();
     let path = dir.join("owned.zmx");
     fs::write(
@@ -46,8 +52,12 @@ fn load(mode: usize, finite: bool, dispersive: bool) -> (PathBuf, Project) {
     .unwrap();
     fs::write(&path, native(mode, finite)).unwrap();
     let mut p = zemax::read_zmx(&path, &[]).unwrap();
-    assert!(!p.issues.iter().any(|i| i.blocking), "{:?}", p.issues);
-    for s in &mut p.scene.sources {
+    assert!(
+        !part(&p).issues.iter().any(|i| i.blocking),
+        "{:?}",
+        part(&p).issues
+    );
+    for s in &mut part_mut(&mut p).scene.sources {
         s.count = 128;
     }
     (dir, p)
@@ -94,7 +104,7 @@ fn entrance_pupil_matches_independent_thick_lens_matrix_and_updates_with_stop() 
     assert!((g.entrance_pose.translation_mm.0[2] - 680. / 43.).abs() < 1e-11);
     assert!((g.paraxial_stop_radius_mm - 3. * 43. / 75.).abs() < 1e-12);
     assert_eq!(g.aiming, RayAiming::Off);
-    p.scene.surfaces[2].pose.translation_mm.0[2] += 2.;
+    part_mut(&mut p).scene.surfaces[2].pose.translation_mm.0[2] += 2.;
     let moved = pupil_geometry(&p.trace_scene().unwrap().prepare().unwrap(), 0)
         .unwrap()
         .unwrap();
@@ -106,7 +116,7 @@ fn paraxial_and_real_ray_aiming_fill_stop_at_each_field_and_wavelength() {
         for mode in [1, 2] {
             let (_, p) = load(mode, finite, true);
             let prepared = p.trace_scene().unwrap().prepare().unwrap();
-            let mut off = p.scene.clone();
+            let mut off = part(&p).scene.clone();
             for s in &mut off.sources {
                 s.pupil.as_mut().unwrap().optical.as_mut().unwrap().aiming = RayAiming::Off;
             }
@@ -175,15 +185,15 @@ fn vignetting_factors_shift_compress_then_rotate_without_hiding_aperture_losses(
     )
     .unwrap();
     let mut q = zemax::read_zmx(&path, &[]).unwrap();
-    for s in &mut q.scene.sources {
+    for s in &mut part_mut(&mut q).scene.sources {
         s.count = 128;
     }
-    let base = p.scene.clone().prepare().unwrap();
+    let base = part(&p).scene.clone().prepare().unwrap();
     let before = base.generate_rays().unwrap();
-    let transformed = q.scene.clone().prepare().unwrap();
+    let transformed = part(&q).scene.clone().prepare().unwrap();
     let after = transformed.generate_rays().unwrap();
     for (i, (a, b)) in before.iter().zip(&after).enumerate() {
-        let pupil = q.scene.sources[i / 128].pupil.as_ref().unwrap();
+        let pupil = part(&q).scene.sources[i / 128].pupil.as_ref().unwrap();
         let v = &pupil.vignetting;
         let g = pupil_geometry(&base, i / 128).unwrap().unwrap();
         let aa = stop_hit(&base, a);
@@ -195,8 +205,9 @@ fn vignetting_factors_shift_compress_then_rotate_without_hiding_aperture_losses(
         assert!((bb.0[1] / g.target_stop_radius_mm - (x * sn + y * cs)).abs() < 1e-8);
     }
     // A narrow physical front aperture remains a loss in the actual trace.
-    q.scene.surfaces[0].aperture = raytrace_rs::model::Aperture::Circle { radius_mm: 0.5 };
-    let clipped = q.scene.prepare().unwrap();
+    part_mut(&mut q).scene.surfaces[0].aperture =
+        raytrace_rs::model::Aperture::Circle { radius_mm: 0.5 };
+    let clipped = part(&q).scene.clone().prepare().unwrap();
     let rays = clipped.generate_rays().unwrap();
     let report = trace(&clipped, &rays, TraceOptions::default());
     assert!(report.budget.geometric_miss > 0.5);
@@ -208,11 +219,15 @@ fn finite_angle_fields_follow_the_computed_pupil_after_layout_changes() {
     let path = dir.join("angle.zmx");
     fs::write(&path, native(1, true).replace("FTYP 1", "FTYP 0")).unwrap();
     let mut p = zemax::read_zmx(&path, &[]).unwrap();
-    assert!(!p.issues.iter().any(|i| i.blocking), "{:?}", p.issues);
-    for s in &mut p.scene.sources {
+    assert!(
+        !part(&p).issues.iter().any(|i| i.blocking),
+        "{:?}",
+        part(&p).issues
+    );
+    for s in &mut part_mut(&mut p).scene.sources {
         s.count = 128;
     }
-    p.scene.surfaces[2].pose.translation_mm.0[2] += 1.;
+    part_mut(&mut p).scene.surfaces[2].pose.translation_mm.0[2] += 1.;
     let prepared = p.trace_scene().unwrap().prepare().unwrap();
     let g = pupil_geometry(&prepared, 1).unwrap().unwrap();
     let x = -3_f64.to_radians().tan() * (g.entrance_pose.translation_mm.0[2] + 50.);
@@ -227,7 +242,7 @@ fn finite_angle_fields_follow_the_computed_pupil_after_layout_changes() {
     let out = dir.join("edited_angle.zmx");
     zemax::export(&p, &out).unwrap();
     let mut q = zemax::read_zmx(&out, &[]).unwrap();
-    for s in &mut q.scene.sources {
+    for s in &mut part_mut(&mut q).scene.sources {
         s.count = 128;
     }
     let after = q
@@ -288,7 +303,7 @@ fn saved_conditions_capture_pupil_geometry_and_enforce_sampling_revision() {
     }
     assert!(old.rays().is_ok());
     let mut mono = p;
-    mono.monochromatic_override_um = Some(0.65);
+    mono.conditions.monochromatic_override_um = Some(0.65);
     let prepared = mono.trace_scene().unwrap().prepare().unwrap();
     assert_eq!(
         pupil_geometry(&prepared, 0)
@@ -308,7 +323,7 @@ fn failed_aiming_reports_the_source_ray_and_wavelength_instead_of_substitution()
     )
     .unwrap();
     let mut p = zemax::read_zmx(&dir.join("owned.zmx"), &[]).unwrap();
-    for s in &mut p.scene.sources {
+    for s in &mut part_mut(&mut p).scene.sources {
         s.count = 128;
     }
     let error = p
@@ -338,14 +353,14 @@ fn failed_aiming_reports_the_source_ray_and_wavelength_instead_of_substitution()
 #[test]
 fn aspheric_prefix_aims_at_the_same_stop_targets() {
     let (_, mut p) = load(1, false, false);
-    p.scene.surfaces[0].shape = raytrace_rs::model::Shape::EvenAsphere {
+    part_mut(&mut p).scene.surfaces[0].shape = raytrace_rs::model::Shape::EvenAsphere {
         radius_mm: 20.,
         conic: -1.,
         coefficients: vec![1e-5],
     };
     let prepared = p.trace_scene().unwrap().prepare().unwrap();
     let rays = prepared.generate_rays().unwrap();
-    let mut off = p.scene.clone();
+    let mut off = part(&p).scene.clone();
     for s in &mut off.sources {
         s.pupil.as_mut().unwrap().optical.as_mut().unwrap().aiming = RayAiming::Off;
     }
@@ -367,11 +382,11 @@ fn aspheric_prefix_aims_at_the_same_stop_targets() {
 #[test]
 fn optical_pupil_survives_composition_native_roundtrip_and_source_file_removal() {
     let (dir, mut p) = load(1, true, false);
-    p.scene.surfaces[3].pose.translation_mm.0[2] += 3.;
+    part_mut(&mut p).scene.surfaces[3].pose.translation_mm.0[2] += 3.;
     let output = dir.join("roundtrip.zmx");
     zemax::export(&p, &output).unwrap();
     let mut q = zemax::read_zmx(&output, &[]).unwrap();
-    for s in &mut q.scene.sources {
+    for s in &mut part_mut(&mut q).scene.sources {
         s.count = 128;
     }
     let original = p
@@ -393,14 +408,14 @@ fn optical_pupil_survives_composition_native_roundtrip_and_source_file_removal()
         serde_json::to_value(&round).unwrap()
     );
     let saved = dir.join("saved.json");
-    p.save(&saved).unwrap();
+    design::save(&p, &saved).unwrap();
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&fs::read(&saved).unwrap()).unwrap()["format"],
-        "raytrace-project-v3"
+        design::FORMAT
     );
     fs::remove_file(dir.join("owned.zmx")).unwrap();
     fs::remove_file(dir.join("own.AGF")).unwrap();
-    let reopened = Project::open(&saved, &[]).unwrap();
+    let reopened = design::open(&saved, &[]).unwrap();
     assert_eq!(
         serde_json::to_value(&original).unwrap(),
         serde_json::to_value(
@@ -414,17 +429,17 @@ fn optical_pupil_survives_composition_native_roundtrip_and_source_file_removal()
         )
         .unwrap()
     );
-    let mut component = Component::imported(reopened, ComponentKind::System).unwrap();
-    component.pose = Pose {
+    let mut component = Component::imported(reopened, PartKind::System).unwrap();
+    component.occurrence.pose = Pose {
         translation_mm: V3([3., 4., 5.]),
         rotation_deg: V3([12., 18., 25.]),
     };
-    let frame = Frame::new(&component.pose);
-    let anchor = component.anchor_mm;
-    let mut assembly = Assembly {
-        components: vec![Component::detector(), component],
-    };
-    let (flat, _, _) = assembly.compose(&p.scene).unwrap();
+    let frame = Frame::new(&component.occurrence.pose);
+    let anchor = component.occurrence.anchor_mm;
+    let mut assembly = Design::empty();
+    assembly.add_component(Component::detector()).unwrap();
+    assembly.add_component(component).unwrap();
+    let flat = assembly.compile().unwrap().scene;
     assert_eq!(
         flat.sources[0]
             .pupil
@@ -442,7 +457,7 @@ fn optical_pupil_survives_composition_native_roundtrip_and_source_file_removal()
         assert!((frame.world_vector(a.direction) - b.direction).norm() < 1e-10);
     }
     assembly.sync_sources(&flat);
-    let (synced, _, _) = assembly.compose(&p.scene).unwrap();
+    let synced = assembly.compile().unwrap().scene;
     assert_eq!(
         synced.sources[0]
             .pupil

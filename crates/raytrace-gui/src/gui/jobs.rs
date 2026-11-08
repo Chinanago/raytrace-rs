@@ -70,7 +70,7 @@ impl App {
         let revision = self.history.revision;
         self.status = "光線を追跡中…".into();
         let request = Request::Trace(TraceRequest {
-            model: ModelInput::Project(Box::new(self.project.clone())),
+            model: ModelInput::Design(Box::new(self.design.clone())),
             catalogs: Vec::new(),
             rays: None,
             overrides: Overrides {
@@ -136,7 +136,7 @@ impl App {
                     }
                 }
                 Job::LoadedRun(Ok(record)) => self.adopt_record(*record),
-                Job::Added(kind, Ok(p)) => match Component::imported(*p, kind) {
+                Job::Added(kind, Ok(p)) => match design::imported_component(*p, kind) {
                     Ok(c) => {
                         self.append_component(c);
                         self.preview_limit = Some(256);
@@ -145,12 +145,16 @@ impl App {
                 },
                 Job::Added(_, Err(e)) => self.error = Some(e.to_string()),
                 Job::Loaded(Ok(mut p)) => {
-                    p.allow_uncoated |= self.project.allow_uncoated;
-                    if self.project.monochromatic_override_um.is_some() {
-                        p.monochromatic_override_um = self.project.monochromatic_override_um;
+                    p.conditions.allow_uncoated |= self.design.conditions.allow_uncoated;
+                    if self.design.conditions.monochromatic_override_um.is_some() {
+                        p.conditions.monochromatic_override_um =
+                            self.design.conditions.monochromatic_override_um;
                     }
-                    self.preview_limit = (p.zemax.is_some() || p.assembly.is_some()).then_some(256);
-                    self.project = *p;
+                    self.preview_limit = (p.is_assembly()
+                        || p.lone_system().is_some_and(|s| s.provenance.is_some()))
+                    .then_some(256);
+                    self.design = *p;
+                    self.recompile();
                     self.viewing_explicit_record = false;
                     self.result = None;
                     self.selected = 0;
@@ -164,7 +168,7 @@ impl App {
                     self.reset_history(true);
                     self.remember_path();
                     self.status = "読込完了".into();
-                    if self.project.trace_scene().is_ok() {
+                    if self.design.trace_scene().is_ok() {
                         self.run(ctx);
                     } else {
                         self.details = Some(Details::Import);

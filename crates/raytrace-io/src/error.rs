@@ -49,7 +49,7 @@ impl Error {
             Self::Spcd(_) => "spcd",
             Self::Step { .. } => "step",
             Self::Unsupported(_) => "unsupported",
-            Self::Project(_) => "project",
+            Self::Project(_) => "design",
             Self::Record(_) => "record",
         }
     }
@@ -81,6 +81,17 @@ impl From<raytrace_formats::Error> for Error {
             raytrace_formats::Error::Step { detail } => Self::Step { detail },
             raytrace_formats::Error::Cad(detail) => Self::Project(detail),
             error => Self::Format(error),
+        }
+    }
+}
+
+impl From<raytrace_doc::Error> for Error {
+    fn from(error: raytrace_doc::Error) -> Self {
+        match error {
+            raytrace_doc::Error::Design(message) => Self::Project(message),
+            raytrace_doc::Error::Core(source) => Self::Core(source),
+            raytrace_doc::Error::Json(source) => Self::Json { path: None, source },
+            error => Self::Project(error.to_string()),
         }
     }
 }

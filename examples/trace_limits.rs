@@ -36,7 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let report = pool.install(|| trace(&prepared, &rays, TraceOptions::default()));
         let seconds = start.elapsed().as_secs_f64();
         RunContext::capture(
-            &record.calculation.project,
+            &record.calculation.design,
             &scene,
             Some(&rays),
             4,

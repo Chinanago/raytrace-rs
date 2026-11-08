@@ -22,11 +22,11 @@ impl App {
                 .color(TEXT_MUTED),
             );
             let mut changed = false;
-            if let Some(first) = self.project.scene.sources.first() {
+            if let Some(first) = self.compiled.scene.sources.first() {
                 let mut count = first.count;
                 let mut sampling = first.sampling;
                 let mixed = self
-                    .project
+                    .compiled
                     .scene
                     .sources
                     .iter()
@@ -42,12 +42,12 @@ impl App {
                     )
                     .changed()
                 {
-                    edit_sources(&mut self.project, |s| s.count = count);
+                    edit_sources(&mut self.design, |s| s.count = count);
                     changed = true;
                 }
                 ui.label("サンプリング");
                 if sampling_control(ui, &mut sampling) {
-                    edit_sources(&mut self.project, |s| s.sampling = sampling);
+                    edit_sources(&mut self.design, |s| s.sampling = sampling);
                     changed = true;
                 }
                 if mixed {
@@ -65,7 +65,7 @@ impl App {
                 );
             }
             section_label(ui, "追跡方式");
-            if self.project.assembly.is_some() {
+            if self.design.is_assembly() {
                 ui.label("非シーケンシャル");
                 ui.label(
                     egui::RichText::new("組立光学系は、光線が次に当たる部品を探索して追跡します。")
@@ -73,22 +73,15 @@ impl App {
                         .color(TEXT_MUTED),
                 );
             } else {
+                let mut mode = self.design.trace_mode();
                 ui.horizontal(|ui| {
-                    changed |= ui
-                        .selectable_value(
-                            &mut self.project.scene.mode,
-                            Mode::Sequential,
-                            "シーケンシャル",
-                        )
-                        .changed();
-                    changed |= ui
-                        .selectable_value(
-                            &mut self.project.scene.mode,
-                            Mode::NonSequential,
-                            "非シーケンシャル",
-                        )
-                        .changed();
+                    ui.selectable_value(&mut mode, Mode::Sequential, "シーケンシャル");
+                    ui.selectable_value(&mut mode, Mode::NonSequential, "非シーケンシャル");
                 });
+                if mode != self.design.trace_mode() {
+                    self.design.set_trace_mode(mode);
+                    changed = true;
+                }
             }
             ui.add_space(12.0);
             egui::CollapsingHeader::new("追跡の詳細").show(ui, |ui| {
@@ -100,7 +93,7 @@ impl App {
                     ui.label("最大相互作用回数");
                     changed |= ui
                         .add(
-                            egui::DragValue::new(&mut self.project.scene.settings.max_depth)
+                            egui::DragValue::new(&mut self.design.settings_mut().max_depth)
                                 .range(1..=1000)
                                 .clamp_existing_to_range(false),
                         )
@@ -448,15 +441,10 @@ pub(super) fn source_controls(
     changed
 }
 
-fn edit_sources(project: &mut Project, edit: impl Fn(&mut Source)) {
-    if let Some(a) = &mut project.assembly {
-        for c in &mut a.components {
-            for s in &mut c.project.scene.sources {
-                edit(s);
-            }
-        }
-    } else {
-        for s in &mut project.scene.sources {
+/// Apply `edit` to the sources of every part, including those of disabled occurrences.
+fn edit_sources(design: &mut Design, edit: impl Fn(&mut Source)) {
+    for part in &mut design.parts {
+        for s in &mut part.scene.sources {
             edit(s);
         }
     }
@@ -467,21 +455,25 @@ mod tests {
     use super::*;
     #[test]
     fn global_source_controls_keep_component_local_coordinates_and_disabled_sources() {
-        let mut project = assembly::demo_project().unwrap();
-        let a = project.assembly.as_mut().unwrap();
-        let mut disabled = a.components[0].clone();
+        use raytrace_io::design::{OccurrenceId, PartId};
+        let mut design = design::demo_design().unwrap();
+        let mut disabled = design.occurrences[0].clone();
+        let mut part = design.occurrence_part(0).unwrap().clone();
+        part.id = PartId::new("source-90").unwrap();
+        disabled.id = OccurrenceId::new("source-91").unwrap();
+        disabled.part = part.id.clone();
         disabled.enabled = false;
-        a.components.push(disabled);
-        a.components[0].pose.translation_mm = V3([2.0, -3.0, 8.0]);
-        a.components[0].pose.rotation_deg = V3([7.0, 19.0, 31.0]);
-        project.refresh_assembly().unwrap();
-        let before = project.scene.sources.clone();
-        edit_sources(&mut project, |s| {
+        design.parts.push(part);
+        design.occurrences.push(disabled);
+        design.occurrences[0].pose.translation_mm = V3([2.0, -3.0, 8.0]);
+        design.occurrences[0].pose.rotation_deg = V3([7.0, 19.0, 31.0]);
+        let before = design.compile().unwrap().scene.sources;
+        edit_sources(&mut design, |s| {
             s.count = 1024;
             s.sampling = Sampling::Pseudorandom;
         });
-        project.refresh_assembly().unwrap();
-        for (old, current) in before.iter().zip(&project.scene.sources) {
+        let after = design.compile().unwrap().scene.sources;
+        for (old, current) in before.iter().zip(&after) {
             assert_eq!(current.count, 1024);
             assert_eq!(current.sampling, Sampling::Pseudorandom);
             assert_eq!(current.origin_mm, old.origin_mm);
@@ -490,14 +482,9 @@ mod tests {
             assert_eq!(current.wavelength_um, old.wavelength_um);
         }
         assert!(
-            project
-                .assembly
-                .as_ref()
+            design
+                .occurrence_part(design.occurrences.len() - 1)
                 .unwrap()
-                .components
-                .last()
-                .unwrap()
-                .project
                 .scene
                 .sources
                 .iter()

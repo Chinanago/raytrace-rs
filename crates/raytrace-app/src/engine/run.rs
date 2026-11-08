@@ -4,7 +4,7 @@ use super::{
     load, load_record,
 };
 use crate::pipeline::{
-    self, Launch, LaunchRequest, Limits, ProjectOverrides, SceneOverrides, Schedule,
+    self, DesignOverrides, Launch, LaunchRequest, Limits, SceneOverrides, Schedule,
 };
 use raytrace_core::{
     math::V3,
@@ -12,7 +12,7 @@ use raytrace_core::{
     trace::{Report, TraceControl, TraceOptions},
 };
 use raytrace_io::{
-    project::Project,
+    design::Design,
     record::{LaunchInput, RUN_FORMAT, RunContext, RunRecord},
     zemax,
 };
@@ -53,7 +53,7 @@ pub struct RunOutput {
     pub format: String,
     /// Output layout version of the record.
     pub schema_version: u32,
-    /// Frozen project, effective scene, launch input and software version used for replay.
+    /// Frozen design, effective scene, launch input and software version used for replay.
     pub calculation: RunContext,
     /// Median trace time in seconds (same as `benchmark.median_seconds`).
     pub trace_seconds: f64,
@@ -74,7 +74,7 @@ pub struct RunOutput {
 }
 
 struct Calculation {
-    project: Project,
+    design: Design,
     scene: Scene,
     launch: LaunchRequest,
     options: TraceOptions,
@@ -89,20 +89,20 @@ pub(super) fn trace(r: TraceRequest, control: &TraceControl) -> Result<TraceResu
         ModelInput::Path(path) => Some(path.clone()),
         _ => None,
     };
-    let mut project = load(r.model, &r.catalogs)?;
+    let mut design = load(r.model, &r.catalogs)?;
     let o = r.overrides;
-    pipeline::configure_project(
-        &mut project,
-        ProjectOverrides {
+    pipeline::configure_design(
+        &mut design,
+        DesignOverrides {
             allow_uncoated: o.ignore_coatings,
             wavelength_um: o.wavelength_um,
         },
     );
     if let Some(path) = &r.export_zmx {
-        zemax::export(&project, path)?;
+        zemax::export(&design, path)?;
     }
-    let mut scene = project.trace_scene()?;
-    if o.mode == Some(Mode::Sequential) && project.assembly.is_some() {
+    let mut scene = design.trace_scene()?;
+    if o.mode == Some(Mode::Sequential) && design.is_assembly() {
         return Err(EngineError::invalid(
             "組立光学系は非シーケンシャルで追跡してください",
         ));
@@ -142,7 +142,7 @@ pub(super) fn trace(r: TraceRequest, control: &TraceControl) -> Result<TraceResu
     };
     let output = run(
         Calculation {
-            project,
+            design,
             scene,
             launch,
             options: TraceOptions {
@@ -173,7 +173,7 @@ pub(super) fn replay(r: ReplayRequest, control: &TraceControl) -> Result<TraceRe
     let launch = LaunchRequest::from_record(&calculation)?;
     let output = run(
         Calculation {
-            project: calculation.project,
+            design: calculation.design,
             scene: calculation.scene,
             launch,
             options,
@@ -246,7 +246,7 @@ fn run(c: Calculation, control: &TraceControl) -> Result<RunOutput, EngineError>
             )
         },
     };
-    let calculation = pipeline::capture(&c.project, &scene.spec, &launch, threads, c.options);
+    let calculation = pipeline::capture(&c.design, &scene.spec, &launch, threads, c.options);
     if c.preview_paths > 0 && launch.rays().is_none() {
         report.paths = pool.install(|| preview_paths(&scene, c.preview_paths))?;
     }

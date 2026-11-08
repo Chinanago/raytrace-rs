@@ -1,11 +1,10 @@
 #[path = "support/cli.rs"]
 mod cli_support;
 use raytrace_rs::{
-    assembly,
     compatibility::CompatibilityStatus as Status,
+    design::{self, Design},
     math::{Pose, V3},
     model::*,
-    project::Project,
     record::{LaunchInput, RunContext, RunRecord},
     trace::{TraceOptions, trace},
 };
@@ -123,19 +122,19 @@ fn ray(id: u64, x: f64) -> Ray {
 
 #[test]
 fn compatibility_keeps_component_conditions_even_when_flat_issues_are_resolved() {
-    let mut p = assembly::demo_project().unwrap();
-    let a = p.assembly.as_mut().unwrap();
-    a.components[0]
-        .project
+    let mut p = design::demo_design().unwrap();
+    p.occurrence_part_mut(0)
+        .unwrap()
         .issue("spectrum", "test spectrum", true);
-    a.components[1]
-        .project
+    p.occurrence_part_mut(1)
+        .unwrap()
         .issue("coating", "test coating", true);
-    a.components[1].project.allow_uncoated = true;
-    a.components[2].project.issue("object", "unsupported", true);
-    a.components[2].enabled = false;
-    p.monochromatic_override_um = Some(0.55);
-    p.refresh_assembly().unwrap();
+    p.occurrence_part_mut(1).unwrap().conditions.allow_uncoated = true;
+    p.occurrence_part_mut(2)
+        .unwrap()
+        .issue("object", "unsupported", true);
+    p.occurrences[2].enabled = false;
+    p.conditions.monochromatic_override_um = Some(0.55);
     assert!(p.trace_scene().is_ok());
     let report = p.compatibility_report();
     assert!(report.traceable);
@@ -167,11 +166,12 @@ fn compatibility_keeps_component_conditions_even_when_flat_issues_are_resolved()
             .flat_map(|m| &m.samples)
             .all(|s| s.wavelength_um == 0.55 && s.refractive_index.is_some())
     );
-    p.monochromatic_override_um = None;
+    p.conditions.monochromatic_override_um = None;
     assert!(!p.compatibility_report().traceable);
     assert!(p.trace_scene().is_err());
-    p.assembly.as_mut().unwrap().components[0]
-        .project
+    p.occurrence_part_mut(0)
+        .unwrap()
+        .conditions
         .monochromatic_override_um = Some(0.465);
     assert!(p.compatibility_report().traceable);
 }
@@ -182,17 +182,17 @@ fn unknown_records_and_invalid_or_missing_wavelengths_do_not_silently_trace() {
     let path = dir.join("test.zmx");
     let text = "MODE SEQ\nUNIT MM\nWAVM 1 0.55 1\nPWAV 1\nSURF 0\n TYPE STANDARD\n DISZ INFINITY\nSURF 1\n TYPE STANDARD\n DISZ 2\n DIAM 3\nSURF 2\n TYPE STANDARD\n DISZ 0\n DIAM 3\nMNUM 1 1\nOPER RETAIN\n";
     fs::write(&path, text).unwrap();
-    assert!(Project::open(&path, &[]).unwrap().trace_scene().is_ok());
+    assert!(design::open(&path, &[]).unwrap().trace_scene().is_ok());
     fs::write(&path, text.replace(" DISZ 2", "MYSTERY_EFFECT 2\n DISZ 2")).unwrap();
-    assert!(Project::open(&path, &[]).unwrap().trace_scene().is_err());
+    assert!(design::open(&path, &[]).unwrap().trace_scene().is_err());
     for bad in ["NaN", "-0.55", "not_a_number"] {
         fs::write(&path, text.replace("WAVM 1 0.55", &format!("WAVM 1 {bad}"))).unwrap();
-        assert!(Project::open(&path, &[]).is_err());
+        assert!(design::open(&path, &[]).is_err());
     }
     fs::write(&path, text.replace("PWAV 1", "PWAV 2")).unwrap();
-    let mut p = Project::open(&path, &[]).unwrap();
+    let mut p = design::open(&path, &[]).unwrap();
     assert!(p.trace_scene().is_err());
-    p.monochromatic_override_um = Some(0.465);
+    p.conditions.monochromatic_override_um = Some(0.465);
     assert_eq!(p.trace_scene().unwrap().sources[0].wavelength_um, 0.465);
 }
 
@@ -202,9 +202,9 @@ fn unknown_nsc_attributes_and_coated_air_cad_are_explicit_conditions() {
     let path = dir.join("attributes.zmx");
     let base = "MODE NSC\nUNIT MM\nWAVM 1 0.55 1\nSURF 1\n TYPE NONSEQCO\n NSOH NSC_IMPT 0 0 unused.step\n NSOP 0 0 0 0 0 0\n";
     fs::write(&path, format!("{base} NSCS 1 0 \"EXAMPLE_COATING\"\n")).unwrap();
-    let mut p = Project::open(&path, &[]).unwrap();
+    let mut p = design::open(&path, &[]).unwrap();
     assert!(p.trace_scene().is_err());
-    p.allow_uncoated = true;
+    p.conditions.allow_uncoated = true;
     let report = p.compatibility_report();
     assert!(report.traceable);
     assert!(
@@ -214,22 +214,22 @@ fn unknown_nsc_attributes_and_coated_air_cad_are_explicit_conditions() {
             .any(|e| e.status == Status::PreservedOnly)
     );
     fs::write(&path, format!("{base} NSCS 999 0 0\n")).unwrap();
-    let mut p = Project::open(&path, &[]).unwrap();
-    p.allow_uncoated = true;
+    let mut p = design::open(&path, &[]).unwrap();
+    p.conditions.allow_uncoated = true;
     assert!(p.trace_scene().is_err());
     fs::write(&path, format!("{base} NSOD 1 invalid\n")).unwrap();
-    assert!(Project::open(&path, &[]).is_err());
+    assert!(design::open(&path, &[]).is_err());
     let source = base.replace("NSC_IMPT 0 0 unused.step", "NSC_SDIO 0 0");
     fs::write(&path, format!("{source} NSCS 7 3 0\n")).unwrap();
-    let mut p = Project::open(&path, &[]).unwrap();
+    let mut p = design::open(&path, &[]).unwrap();
     assert!(p.trace_scene().is_err());
-    p.monochromatic_override_um = Some(0.465);
+    p.conditions.monochromatic_override_um = Some(0.465);
     assert_eq!(p.trace_scene().unwrap().sources[0].wavelength_um, 0.465);
 }
 
 #[test]
 fn diagnostics_identify_medium_and_surface_and_remain_bounded() {
-    let mut scene = assembly::empty_scene("diagnostic groups");
+    let mut scene = design::empty_scene("diagnostic groups");
     scene.materials.push(Material::Constant {
         n: 1.5,
         absorption_per_mm: 0.0,
@@ -301,7 +301,7 @@ fn depth_limit_points_to_the_last_interacting_surface() {
 
 #[test]
 fn generated_record_is_immutable_and_replays_every_float_after_reload() {
-    let mut p = assembly::demo_project().unwrap();
+    let mut p = design::demo_design().unwrap();
     let mut scene = p.trace_scene().unwrap();
     for source in &mut scene.sources {
         source.count = 128;
@@ -315,11 +315,7 @@ fn generated_record_is_immutable_and_replays_every_float_after_reload() {
     };
     let report = trace(&prepared, &rays, options);
     let context = RunContext::capture(&p, &scene, None, 2, options);
-    p.assembly.as_mut().unwrap().components[2]
-        .pose
-        .translation_mm
-        .0[2] += 7.0;
-    p.refresh_assembly().unwrap();
+    p.occurrences[2].pose.translation_mm.0[2] += 7.0;
     let path = folder().join("run.json");
     context.save(&report, 0.25, &path).unwrap();
     let saved = RunRecord::open(&path).unwrap();
@@ -329,13 +325,7 @@ fn generated_record_is_immutable_and_replays_every_float_after_reload() {
         serde_json::to_value(&rays).unwrap()
     );
     assert_eq!(
-        saved
-            .calculation
-            .project
-            .assembly
-            .as_ref()
-            .unwrap()
-            .components[2]
+        saved.calculation.design.occurrences[2]
             .pose
             .translation_mm
             .0[2],
@@ -356,9 +346,11 @@ fn generated_record_is_immutable_and_replays_every_float_after_reload() {
 fn explicit_record_keeps_launches_and_uses_their_actual_wavelengths() {
     let scene: Scene =
         serde_json::from_str(include_str!("../examples/sequential_lens.json")).unwrap();
-    let mut p = Project::new(scene.clone());
-    p.issue("spectrum", "external spectrum", true);
-    p.monochromatic_override_um = Some(0.465);
+    let mut p = Design::from_scene(scene.clone());
+    p.lone_system_mut()
+        .unwrap()
+        .issue("spectrum", "external spectrum", true);
+    p.conditions.monochromatic_override_um = Some(0.465);
     let prepared = scene.clone().prepare().unwrap();
     let mut rays = vec![Ray {
         medium: 0,
@@ -397,7 +389,7 @@ fn explicit_record_keeps_launches_and_uses_their_actual_wavelengths() {
 
 #[test]
 fn coincident_sequential_stop_and_interface_do_not_discard_the_ray() {
-    let mut scene = assembly::empty_scene("coincident stop");
+    let mut scene = design::empty_scene("coincident stop");
     scene.mode = Mode::Sequential;
     scene.materials.push(Material::Constant {
         n: 1.5,
@@ -476,8 +468,8 @@ fn coincident_sequential_stop_and_interface_do_not_discard_the_ray() {
     // The same configuration must survive the native ZMX roundtrip, including its start plane.
     let dir = folder();
     let path = dir.join("coincident.zmx");
-    raytrace_rs::zemax::export(&Project::new(scene), &path).unwrap();
-    let imported = Project::open(&path, &[])
+    raytrace_rs::zemax::export(&Design::from_scene(scene), &path).unwrap();
+    let imported = design::open(&path, &[])
         .unwrap()
         .trace_scene()
         .unwrap()

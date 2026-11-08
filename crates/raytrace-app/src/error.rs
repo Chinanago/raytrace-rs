@@ -6,6 +6,8 @@ pub enum Error {
     #[error(transparent)]
     Core(#[from] raytrace_core::Error),
     #[error(transparent)]
+    Doc(#[from] raytrace_doc::Error),
+    #[error(transparent)]
     Io(#[from] raytrace_io::Error),
     #[error("{0}")]
     Plan(String),
@@ -31,6 +33,7 @@ impl Error {
     pub fn code(&self) -> &'static str {
         match self {
             Self::Core(error) => error.code(),
+            Self::Doc(error) => error.code(),
             Self::Io(error) => error.code(),
             Self::Plan(_) => "plan",
             Self::InvalidRay(_) => "invalid_ray",

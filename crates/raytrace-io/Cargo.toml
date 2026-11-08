@@ -14,13 +14,14 @@ categories = ["science", "simulation"]
 default = []
 png = ["dep:image"]
 # JSON Schema generation for model and report types.
-schema = ["dep:schemars", "raytrace-core/schema", "raytrace-formats/schema"]
+schema = ["dep:schemars", "raytrace-core/schema", "raytrace-formats/schema", "raytrace-doc/schema"]
 
 [dependencies]
 thiserror = { workspace = true }
 rayon = { workspace = true }
 raytrace-core = { workspace = true }
 raytrace-formats = { workspace = true }
+raytrace-doc = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 image = { workspace = true, optional = true }

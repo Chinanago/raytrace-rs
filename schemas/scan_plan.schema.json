@@ -61,11 +61,16 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "OccurrenceId": {
+      "description": "Identifier of a occurrence, unique within the design document.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$"
+    },
     "Parameter": {
-      "description": "Scanned value. Indices are zero-based; axis 0/1/2 is X/Y/Z.",
+      "description": "Scanned value. Components are addressed by occurrence id and surfaces by name; axis\n0/1/2 is X/Y/Z.",
       "oneOf": [
         {
-          "description": "Assembly component position in mm.",
+          "description": "Occurrence position in mm.",
           "type": "object",
           "properties": {
             "axis": {
@@ -73,10 +78,8 @@
               "format": "uint",
               "minimum": 0
             },
-            "component": {
-              "type": "integer",
-              "format": "uint",
-              "minimum": 0
+            "occurrence": {
+              "$ref": "#/$defs/OccurrenceId"
             },
             "type": {
               "type": "string",
@@ -86,12 +89,12 @@
           "additionalProperties": false,
           "required": [
             "type",
-            "component",
+            "occurrence",
             "axis"
           ]
         },
         {
-          "description": "Assembly component rotation in degrees.",
+          "description": "Occurrence rotation in degrees.",
           "type": "object",
           "properties": {
             "axis": {
@@ -99,10 +102,8 @@
               "format": "uint",
               "minimum": 0
             },
-            "component": {
-              "type": "integer",
-              "format": "uint",
-              "minimum": 0
+            "occurrence": {
+              "$ref": "#/$defs/OccurrenceId"
             },
             "type": {
               "type": "string",
@@ -112,12 +113,12 @@
           "additionalProperties": false,
           "required": [
             "type",
-            "component",
+            "occurrence",
             "axis"
           ]
         },
         {
-          "description": "Rod width X / width Y / length (axis 0/1/2) in mm.",
+          "description": "Rod width X / width Y / length (axis 0/1/2) in mm, of the occurrence's rod part.",
           "type": "object",
           "properties": {
             "axis": {
@@ -125,10 +126,8 @@
               "format": "uint",
               "minimum": 0
             },
-            "component": {
-              "type": "integer",
-              "format": "uint",
-              "minimum": 0
+            "occurrence": {
+              "$ref": "#/$defs/OccurrenceId"
             },
             "type": {
               "type": "string",
@@ -138,12 +137,12 @@
           "additionalProperties": false,
           "required": [
             "type",
-            "component",
+            "occurrence",
             "axis"
           ]
         },
         {
-          "description": "Standalone-model surface position in mm.",
+          "description": "Surface position in mm, in the coordinates of its part. Without `occurrence` the\ndesign must be a single unplaced system.",
           "type": "object",
           "properties": {
             "axis": {
@@ -151,10 +150,20 @@
               "format": "uint",
               "minimum": 0
             },
+            "occurrence": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/OccurrenceId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "surface": {
-              "type": "integer",
-              "format": "uint",
-              "minimum": 0
+              "description": "Surface name in the part.",
+              "type": "string"
             },
             "type": {
               "type": "string",
@@ -169,7 +178,7 @@
           ]
         },
         {
-          "description": "Standalone-model surface rotation in degrees.",
+          "description": "Surface rotation in degrees, in the coordinates of its part.",
           "type": "object",
           "properties": {
             "axis": {
@@ -177,10 +186,19 @@
               "format": "uint",
               "minimum": 0
             },
+            "occurrence": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/OccurrenceId"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "surface": {
-              "type": "integer",
-              "format": "uint",
-              "minimum": 0
+              "type": "string"
             },
             "type": {
               "type": "string",

@@ -7,24 +7,52 @@ use crate::{
     },
 };
 use raytrace_core::trace::{TraceControl, TraceOptions};
-use raytrace_io::{project::Project, record::RunRecord};
+use raytrace_io::{
+    design::{self, Design, OccurrenceId},
+    record::RunRecord,
+};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path, sync::atomic::Ordering};
 
-/// Scanned value. Indices are zero-based; axis 0/1/2 is X/Y/Z.
+/// Format name of `scan.json`.
+const FORMAT: &str = "raytrace-scan-v2";
+
+/// Scanned value. Components are addressed by occurrence id and surfaces by name; axis
+/// 0/1/2 is X/Y/Z.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Parameter {
-    /// Assembly component position in mm.
-    ComponentPosition { component: usize, axis: usize },
-    /// Assembly component rotation in degrees.
-    ComponentRotation { component: usize, axis: usize },
-    /// Rod width X / width Y / length (axis 0/1/2) in mm.
-    RodSize { component: usize, axis: usize },
-    /// Standalone-model surface position in mm.
-    SurfacePosition { surface: usize, axis: usize },
-    /// Standalone-model surface rotation in degrees.
-    SurfaceRotation { surface: usize, axis: usize },
+    /// Occurrence position in mm.
+    ComponentPosition {
+        occurrence: OccurrenceId,
+        axis: usize,
+    },
+    /// Occurrence rotation in degrees.
+    ComponentRotation {
+        occurrence: OccurrenceId,
+        axis: usize,
+    },
+    /// Rod width X / width Y / length (axis 0/1/2) in mm, of the occurrence's rod part.
+    RodSize {
+        occurrence: OccurrenceId,
+        axis: usize,
+    },
+    /// Surface position in mm, in the coordinates of its part. Without `occurrence` the
+    /// design must be a single unplaced system.
+    SurfacePosition {
+        #[serde(default)]
+        occurrence: Option<OccurrenceId>,
+        /// Surface name in the part.
+        surface: String,
+        axis: usize,
+    },
+    /// Surface rotation in degrees, in the coordinates of its part.
+    SurfaceRotation {
+        #[serde(default)]
+        occurrence: Option<OccurrenceId>,
+        surface: String,
+        axis: usize,
+    },
     /// Wavelength of every source in micrometres.
     Wavelength,
 }
@@ -36,29 +64,24 @@ impl Parameter {
             _ => "mm",
         }
     }
-    fn slot<'a>(&self, p: &'a mut Project) -> Result<&'a mut f64> {
+    fn slot<'a>(&self, d: &'a mut Design) -> Result<&'a mut f64> {
         let bad = || crate::Error::Plan("走査対象の部品・面・軸が見つかりません".into());
-        match *self {
-            Self::ComponentPosition { component, axis }
-            | Self::ComponentRotation { component, axis } => {
-                let c = p
-                    .assembly
-                    .as_mut()
-                    .and_then(|a| a.components.get_mut(component))
-                    .ok_or_else(bad)?;
+        match self {
+            Self::ComponentPosition { occurrence, axis }
+            | Self::ComponentRotation { occurrence, axis } => {
+                let o = d.occurrence_mut(occurrence).ok_or_else(bad)?;
                 let v = if matches!(self, Self::ComponentPosition { .. }) {
-                    &mut c.pose.translation_mm.0
+                    &mut o.pose.translation_mm.0
                 } else {
-                    &mut c.pose.rotation_deg.0
+                    &mut o.pose.rotation_deg.0
                 };
-                v.get_mut(axis).ok_or_else(bad)
+                v.get_mut(*axis).ok_or_else(bad)
             }
-            Self::RodSize { component, axis } => {
-                let r = p
-                    .assembly
-                    .as_mut()
-                    .and_then(|a| a.components.get_mut(component))
-                    .and_then(|c| c.rod.as_mut())
+            Self::RodSize { occurrence, axis } => {
+                let index = d.occurrence_index(occurrence).ok_or_else(bad)?;
+                let r = d
+                    .occurrence_part_mut(index)
+                    .and_then(|p| p.rod.as_mut())
                     .ok_or_else(bad)?;
                 match axis {
                     0 => Ok(&mut r.width_mm),
@@ -67,36 +90,69 @@ impl Parameter {
                     _ => Err(bad()),
                 }
             }
-            Self::SurfacePosition { surface, axis } | Self::SurfaceRotation { surface, axis } => {
-                if p.assembly.is_some() {
-                    return Err(crate::Error::Plan(
-                        "組立光学系は部品の位置・角度を指定してください".into(),
-                    ));
-                }
-                let s = p.scene.surfaces.get_mut(surface).ok_or_else(bad)?;
+            Self::SurfacePosition {
+                occurrence,
+                surface,
+                axis,
+            }
+            | Self::SurfaceRotation {
+                occurrence,
+                surface,
+                axis,
+            } => {
+                let part = match occurrence {
+                    None => {
+                        if d.is_assembly() {
+                            return Err(crate::Error::Plan(
+                                "組立光学系は部品の位置・角度を指定してください".into(),
+                            ));
+                        }
+                        d.lone_system_mut().ok_or_else(bad)?
+                    }
+                    Some(id) => {
+                        let index = d.occurrence_index(id).ok_or_else(bad)?;
+                        d.occurrence_part_mut(index).ok_or_else(bad)?
+                    }
+                };
+                let s = part
+                    .scene
+                    .surfaces
+                    .iter_mut()
+                    .find(|s| s.name == *surface)
+                    .ok_or_else(bad)?;
                 let v = if matches!(self, Self::SurfacePosition { .. }) {
                     &mut s.pose.translation_mm.0
                 } else {
                     &mut s.pose.rotation_deg.0
                 };
-                v.get_mut(axis).ok_or_else(bad)
+                v.get_mut(*axis).ok_or_else(bad)
             }
             Self::Wavelength => {
-                let wave = p
+                if d.conditions.monochromatic_override_um.is_none() {
+                    let wave = d
+                        .compile()
+                        .map_err(raytrace_io::Error::from)?
+                        .scene
+                        .sources
+                        .first()
+                        .map(|s| s.wavelength_um)
+                        .ok_or_else(|| crate::Error::Plan("光源がありません".into()))?;
+                    d.conditions.monochromatic_override_um = Some(wave);
+                }
+                d.conditions
                     .monochromatic_override_um
-                    .or_else(|| p.scene.sources.first().map(|s| s.wavelength_um))
-                    .ok_or_else(|| crate::Error::Plan("光源がありません".into()))?;
-                Ok(p.monochromatic_override_um.get_or_insert(wave))
+                    .as_mut()
+                    .ok_or_else(bad)
             }
         }
     }
-    pub fn value(&self, p: &Project) -> Result<f64> {
-        self.slot(&mut p.clone()).copied()
+    pub fn value(&self, d: &Design) -> Result<f64> {
+        self.slot(&mut d.clone()).copied()
     }
-    pub fn apply(&self, p: &mut Project, value: f64) -> Result<()> {
+    pub fn apply(&self, d: &mut Design, value: f64) -> Result<()> {
         self.validate_value(value)?;
-        *self.slot(p)? = value;
-        p.refresh_assembly().map_err(crate::Error::from)
+        *self.slot(d)? = value;
+        design::check(d).map_err(crate::Error::from)
     }
     fn validate_value(&self, value: f64) -> Result<()> {
         if !value.is_finite()
@@ -109,42 +165,44 @@ impl Parameter {
         }
         Ok(())
     }
-    pub fn label(&self, p: &Project) -> String {
+    pub fn label(&self, d: &Design) -> String {
         let axis = |a: usize| ["X", "Y", "Z"].get(a).copied().unwrap_or("?");
-        let part = |i: usize| {
-            p.assembly
-                .as_ref()
-                .and_then(|a| a.components.get(i))
-                .map_or("?", |c| c.name.as_str())
+        let part = |id: &OccurrenceId| d.occurrence(id).map_or("?", |o| o.name.as_str());
+        let surface = |occurrence: &Option<OccurrenceId>, surface: &str| match occurrence {
+            Some(id) => format!("{} / {surface}", part(id)),
+            None => surface.to_string(),
         };
-        match *self {
-            Self::ComponentPosition { component, axis: a } => {
-                format!("{} · 位置 {}", part(component), axis(a))
+        match self {
+            Self::ComponentPosition {
+                occurrence,
+                axis: a,
+            } => {
+                format!("{} · 位置 {}", part(occurrence), axis(*a))
             }
-            Self::ComponentRotation { component, axis: a } => {
-                format!("{} · 傾き {}", part(component), axis(a))
+            Self::ComponentRotation {
+                occurrence,
+                axis: a,
+            } => {
+                format!("{} · 傾き {}", part(occurrence), axis(*a))
             }
-            Self::RodSize { component, axis: a } => format!(
+            Self::RodSize {
+                occurrence,
+                axis: a,
+            } => format!(
                 "{} · {}",
-                part(component),
-                ["幅 X", "幅 Y", "長さ"].get(a).unwrap_or(&"?")
+                part(occurrence),
+                ["幅 X", "幅 Y", "長さ"].get(*a).unwrap_or(&"?")
             ),
-            Self::SurfacePosition { surface, axis: a } => format!(
-                "{} · 位置 {}",
-                p.scene
-                    .surfaces
-                    .get(surface)
-                    .map_or("?", |s| s.name.as_str()),
-                axis(a)
-            ),
-            Self::SurfaceRotation { surface, axis: a } => format!(
-                "{} · 傾き {}",
-                p.scene
-                    .surfaces
-                    .get(surface)
-                    .map_or("?", |s| s.name.as_str()),
-                axis(a)
-            ),
+            Self::SurfacePosition {
+                occurrence,
+                surface: s,
+                axis: a,
+            } => format!("{} · 位置 {}", surface(occurrence, s), axis(*a)),
+            Self::SurfaceRotation {
+                occurrence,
+                surface: s,
+                axis: a,
+            } => format!("{} · 傾き {}", surface(occurrence, s), axis(*a)),
             Self::Wavelength => "全光源 · 計算波長".into(),
         }
     }
@@ -215,7 +273,7 @@ pub struct ParameterLink {
     pub offset: f64,
 }
 impl ScanPlan {
-    fn link_order(&self, base: &Project) -> Result<Vec<usize>> {
+    fn link_order(&self, base: &Design) -> Result<Vec<usize>> {
         if self.links.len() > 64 {
             return Err(crate::Error::Plan("連動条件は64個までです".into()));
         }
@@ -260,12 +318,7 @@ impl ScanPlan {
         }
         Ok(order)
     }
-    pub fn case_project(
-        &self,
-        base: &Project,
-        value: f64,
-        secondary: Option<f64>,
-    ) -> Result<Project> {
+    pub fn case_design(&self, base: &Design, value: f64, secondary: Option<f64>) -> Result<Design> {
         let order = self.link_order(base)?;
         let mut p = base.clone();
         self.parameter.apply(&mut p, value)?;
@@ -304,12 +357,12 @@ pub struct ScanCase {
 pub struct ScanManifest {
     pub format: String,
     pub software_version: String,
-    pub base: Project,
+    pub base: Design,
     pub plan: ScanPlan,
     pub cases: Vec<ScanCase>,
 }
 impl ScanManifest {
-    pub fn new(base: &Project, plan: ScanPlan) -> Result<Self> {
+    pub fn new(base: &Design, plan: ScanPlan) -> Result<Self> {
         if plan.values.is_empty()
             || plan.values.len() > 256
             || !(1..=64).contains(&plan.threads)
@@ -362,7 +415,7 @@ impl ScanManifest {
             })
             .collect();
         Ok(Self {
-            format: "raytrace-scan-v1".into(),
+            format: FORMAT.into(),
             software_version: env!("CARGO_PKG_VERSION").into(),
             base: base.clone(),
             plan,
@@ -370,14 +423,17 @@ impl ScanManifest {
         })
     }
     pub fn open(dir: &Path) -> Result<Self> {
-        let manifest: Self = serde_json::from_slice(
-            &fs::read(dir.join("scan.json"))
-                .map_err(|e| raytrace_io::Error::io(dir.join("scan.json"), e))?,
-        )
-        .map_err(|e| raytrace_io::Error::json(Some(dir.join("scan.json")), e))?;
-        if manifest.format != "raytrace-scan-v1"
-            || manifest.software_version != env!("CARGO_PKG_VERSION")
-        {
+        let bytes = fs::read(dir.join("scan.json"))
+            .map_err(|e| raytrace_io::Error::io(dir.join("scan.json"), e))?;
+        let json_error = |e| raytrace_io::Error::json(Some(dir.join("scan.json")), e);
+        let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(json_error)?;
+        if value["format"] == "raytrace-scan-v1" {
+            return Err(crate::Error::Plan(
+                "この走査記録は設計文書への移行前の形式です。走査をやり直してください".into(),
+            ));
+        }
+        let manifest: Self = serde_json::from_value(value).map_err(json_error)?;
+        if manifest.format != FORMAT || manifest.software_version != env!("CARGO_PKG_VERSION") {
             return Err(crate::Error::Plan(
                 "走査記録は同じソフトの版で再開してください".into(),
             ));
@@ -403,16 +459,15 @@ impl ScanManifest {
                 return Err(crate::Error::Plan("走査結果のファイル名が不正です".into()));
             }
             let record = RunRecord::open(&dir.join(expected))?;
-            let intended =
-                manifest
-                    .plan
-                    .case_project(&manifest.base, c.value, c.secondary_value)?;
+            let intended = manifest
+                .plan
+                .case_design(&manifest.base, c.value, c.secondary_value)?;
             let parameters = std::iter::once(&manifest.plan.parameter)
                 .chain(manifest.plan.secondary.iter().map(|s| &s.parameter))
                 .chain(manifest.plan.links.iter().map(|l| &l.target));
             if record.calculation.software_version != manifest.software_version
                 || parameters
-                    .map(|p| Ok(p.value(&record.calculation.project)? != p.value(&intended)?))
+                    .map(|p| Ok(p.value(&record.calculation.design)? != p.value(&intended)?))
                     .collect::<Result<Vec<_>>>()?
                     .into_iter()
                     .any(|v| v)
@@ -460,12 +515,12 @@ impl ScanManifest {
             self.save(dir)?;
             progress(self);
             let outcome = (|| -> Result<Option<ScanCase>> {
-                let project = self.plan.case_project(
+                let design = self.plan.case_design(
                     &self.base,
                     self.cases[i].value,
                     self.cases[i].secondary_value,
                 )?;
-                let mut scene = project.trace_scene()?;
+                let mut scene = design.trace_scene()?;
                 pipeline::configure_scene(
                     &mut scene,
                     &SceneOverrides {
@@ -524,7 +579,7 @@ impl ScanManifest {
                     })
                     .collect::<Result<Vec<_>>>()?;
                 let file = format!("case_{i:04}.raytrace-run.json");
-                pipeline::capture(&project, &scene, &launch, self.plan.threads, options).save(
+                pipeline::capture(&design, &scene, &launch, self.plan.threads, options).save(
                     &report,
                     seconds,
                     &dir.join(&file),

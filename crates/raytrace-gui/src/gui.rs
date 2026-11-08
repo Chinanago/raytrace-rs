@@ -7,8 +7,7 @@ use raytrace_core::{
     trace::{Report, TraceControl},
 };
 use raytrace_io::{
-    assembly::{self, Component, ComponentKind},
-    project::Project,
+    design::{self, Compiled, Component, Design, PartKind},
     record::RunContext,
 };
 use std::{
@@ -116,8 +115,8 @@ enum Job {
     Cancelled,
     Scanned(Result<Box<raytrace_app::scan::ScanManifest>, String>),
     LoadedRun(Result<Box<raytrace_io::record::RunRecord>, String>),
-    Added(ComponentKind, Result<Box<Project>, String>),
-    Loaded(Result<Box<Project>, String>),
+    Added(PartKind, Result<Box<Design>, String>),
+    Loaded(Result<Box<Design>, String>),
     Traced(Result<Box<ResultView>, String>),
 }
 struct App {
@@ -129,7 +128,10 @@ struct App {
     study: study::Study,
     camera: LayoutCamera,
     history: history::History,
-    project: Project,
+    /// The document. Edit it, then call `refresh_components` so that `compiled` follows.
+    design: Design,
+    /// The compiled design: flat scene, material names and issues.
+    compiled: Compiled,
     path: Option<PathBuf>,
     loading_path: Option<PathBuf>,
     result: Option<ResultView>,
@@ -226,10 +228,10 @@ impl App {
                     i += 1;
                     app.smoke = args.get(i).map(PathBuf::from);
                 }
-                "--allow-uncoated" => app.project.allow_uncoated = true,
+                "--allow-uncoated" => app.design.conditions.allow_uncoated = true,
                 "--wavelength-um" => {
                     i += 1;
-                    app.project.monochromatic_override_um =
+                    app.design.conditions.monochromatic_override_um =
                         args.get(i).and_then(|s| s.parse().ok());
                 }
                 p if !p.starts_with('-') => input = Some(PathBuf::from(p)),
@@ -248,6 +250,12 @@ impl App {
         app
     }
     fn demo() -> Self {
+        let design = design::demo_design().expect("assembly demo");
+        let compiled = design.compile().unwrap_or_else(|_| Compiled {
+            scene: design::empty_scene(""),
+            material_names: Vec::new(),
+            issues: Vec::new(),
+        });
         let mut app = Self {
             viewing_explicit_record: false,
             data_directory: PathBuf::from("results/gui_runtime"),
@@ -257,7 +265,8 @@ impl App {
             study: study::Study::default(),
             camera: LayoutCamera::default(),
             history: history::History::default(),
-            project: assembly::demo_project().expect("assembly demo"),
+            design,
+            compiled,
             path: None,
             loading_path: None,
             result: None,
@@ -297,21 +306,27 @@ impl App {
             .as_ref()
             .is_some_and(|r| r.revision != self.history.revision);
     }
-    fn refresh_components(&mut self) {
-        if let Err(e) = self.project.refresh_assembly() {
-            self.error = Some(e.to_string());
+    /// Compile the design again after an edit. A design that does not compile keeps the
+    /// previous result and reports the reason.
+    fn recompile(&mut self) {
+        match self.design.compile() {
+            Ok(compiled) => self.compiled = compiled,
+            Err(e) => self.error = Some(e.to_string()),
         }
+    }
+    fn refresh_components(&mut self) {
+        self.recompile();
         self.changed();
     }
     fn next_z(&self) -> f64 {
         let mut end = self
-            .project
+            .compiled
             .scene
             .sources
             .iter()
             .map(|s| s.origin_mm.0[2])
             .fold(0.0, f64::max);
-        for s in &self.project.scene.surfaces {
+        for s in &self.compiled.scene.surfaces {
             if matches!(s.interaction, Interaction::Detector { .. }) {
                 continue;
             }
@@ -329,14 +344,14 @@ impl App {
         end + 10.0
     }
     fn append_component(&mut self, mut component: Component) {
-        if component.kind != ComponentKind::Source {
-            component.pose.translation_mm.0[2] = self.next_z();
+        if component.part.kind != PartKind::Source {
+            component.occurrence.pose.translation_mm.0[2] = self.next_z();
         }
-        match self.project.add_component(component) {
-            Ok(()) => {
-                self.component = self.project.assembly.as_ref().unwrap().components.len() - 1;
+        match self.design.add_component(component) {
+            Ok(_) => {
+                self.component = self.design.occurrences.len().saturating_sub(1);
                 self.detector = 0;
-                self.changed();
+                self.refresh_components();
                 self.status = "部品を追加しました・位置を調整して計算してください".into();
             }
             Err(e) => self.error = Some(e.to_string()),
@@ -365,14 +380,14 @@ impl App {
             let _ = std::fs::create_dir_all(dir);
             let screen = self.result.as_ref().and_then(|r| r.screen.as_ref()).map(|a| serde_json::json!({"peak_weight":a.peak_weight,"peak_position_mm":a.peak_position_mm,"pixel_pitch_mm":a.pixel_pitch_mm,"fwhm_x_mm":a.x_profile.as_ref().and_then(|p|p.half_maximum.width_mm()),"fwhm_y_mm":a.y_profile.as_ref().and_then(|p|p.half_maximum.width_mm())}));
             let status = serde_json::json!({
-                "scene": self.project.scene.name,
+                "scene": self.design.display_name(),
                 "view": format!("{:?}", self.view),
                 "details": self.details.map(|d| format!("{d:?}")),
-                "components": self.project.assembly.as_ref().map(|a| a.components.len()),
-                "sources": self.project.scene.sources.len(),
-                "surfaces": self.project.scene.surfaces.len(),
-                "issues": self.project.issues,
-                "compatibility": self.project.compatibility_report(),
+                "components": self.design.is_assembly().then_some(self.design.occurrences.len()),
+                "sources": self.compiled.scene.sources.len(),
+                "surfaces": self.compiled.scene.surfaces.len(),
+                "issues": self.compiled.issues,
+                "compatibility": self.design.compatibility_report(),
                 "error": self.error,
                 "trace_seconds": self.result.as_ref().map(|r| r.seconds),
                 "budget": self.result.as_ref().map(|r| &r.report.budget),

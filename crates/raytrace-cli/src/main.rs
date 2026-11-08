@@ -283,7 +283,7 @@ fn resolve<'a>(schema: &'a Value, value: &'a Value) -> &'a Value {
     value
 }
 
-/// Short type label: `string`, `integer`, `sequential|non_sequential`, `[string]`, `Project`.
+/// Short type label: `string`, `integer`, `sequential|non_sequential`, `[string]`, `Design`.
 fn label(schema: &Value, value: &Value) -> String {
     let target = resolve(schema, value);
     let consts: Vec<&str> = target["oneOf"]
@@ -358,7 +358,7 @@ fn command_help(schema: &Value, name: &str, text: &str, variant: &Value) -> Stri
             label(schema, value)
         );
         let target = resolve(schema, value);
-        // Exactly-one-key inputs such as model: {path} | {project} | {scene}.
+        // Exactly-one-key inputs such as model: {path} | {design} | {scene}.
         for option in target["oneOf"].as_array().into_iter().flatten() {
             if let (Some(keys), Some(_)) = (
                 option["required"].as_array(),

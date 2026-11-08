@@ -1,5 +1,5 @@
 use raytrace_rs::{
-    assembly,
+    design,
     model::{Sampling, Scene},
     zemax,
 };
@@ -58,7 +58,7 @@ fn build_scenes() -> Vec<(String, Scene)> {
     }
     scenes.push((
         "assembly".into(),
-        assembly::demo_project().unwrap().trace_scene().unwrap(),
+        design::demo_design().unwrap().trace_scene().unwrap(),
     ));
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/streaming_fixtures");
     std::fs::create_dir_all(&dir).unwrap();

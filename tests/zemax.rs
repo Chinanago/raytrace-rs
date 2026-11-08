@@ -1,10 +1,17 @@
 use raytrace_rs::{
+    design::{self, Design, Part},
     math::V3,
     model::*,
-    project::Project,
     trace::{TraceOptions, trace},
     zemax,
 };
+/// The single unplaced system of a design.
+fn part(design: &Design) -> &Part {
+    design.lone_system().unwrap()
+}
+fn part_mut(design: &mut Design) -> &mut Part {
+    design.lone_system_mut().unwrap()
+}
 use std::{
     fs,
     path::PathBuf,
@@ -40,21 +47,24 @@ fn native_agf_dispersion_utf16_and_exact_unchanged_roundtrip() {
     let input = dir.join("lens.zmx");
     write_utf16(&input, &lens());
     fs::write(dir.join("TEST.AGF"), glass()).unwrap();
-    let p = Project::open(&input, &[]).unwrap();
-    assert_eq!(p.scene.surfaces.len(), 3);
-    assert_eq!(p.material_names[1], "TESTGLASS");
-    assert!((p.scene.materials[1].index(0.465).unwrap() - 1.464483960997639).abs() < 1e-14);
+    let p = design::open(&input, &[]).unwrap();
+    assert_eq!(part(&p).scene.surfaces.len(), 3);
+    assert_eq!(part(&p).material_names[1], "TESTGLASS");
+    assert!((part(&p).scene.materials[1].index(0.465).unwrap() - 1.464483960997639).abs() < 1e-14);
     assert!(p.trace_scene().is_err());
     let mut allowed = p.clone();
-    allowed.allow_uncoated = true;
+    allowed.conditions.allow_uncoated = true;
     assert!(allowed.trace_scene().is_ok());
     let output = dir.join("copy.zmx");
     zemax::export(&p, &output).unwrap();
     assert_eq!(fs::read(input).unwrap(), fs::read(output).unwrap());
     let json = dir.join("project.json");
-    p.save(&json).unwrap();
-    let reopened = Project::open(&json, &[]).unwrap();
-    assert_eq!(reopened.zemax.unwrap().text, lens());
+    design::save(&p, &json).unwrap();
+    let reopened = design::open(&json, &[]).unwrap();
+    assert_eq!(
+        zemax::document(part(&reopened)).unwrap().unwrap().text,
+        lens()
+    );
 }
 
 #[test]
@@ -63,8 +73,8 @@ fn sequential_edits_preserve_coating_notes_and_merit_records() {
     let input = dir.join("lens.zmx");
     write_utf16(&input, &lens());
     fs::write(dir.join("TEST.AGF"), glass()).unwrap();
-    let mut p = Project::open(&input, &[]).unwrap();
-    p.scene.surfaces[1].pose.translation_mm.0[2] = 6.0;
+    let mut p = design::open(&input, &[]).unwrap();
+    part_mut(&mut p).scene.surfaces[1].pose.translation_mm.0[2] = 6.0;
     let output = dir.join("edited.zmx");
     zemax::export(&p, &output).unwrap();
     let bytes = fs::read(&output).unwrap();
@@ -72,9 +82,9 @@ fn sequential_edits_preserve_coating_notes_and_merit_records() {
     assert!(text.contains("COAT ORIGINAL_COATING"));
     assert!(text.contains("NOTE 0 Preserve this note"));
     assert!(text.contains("OPER TEST_RETAIN"));
-    let again = Project::open(&output, &[]).unwrap();
-    assert_eq!(again.scene.surfaces[1].pose.translation_mm.0[2], 6.0);
-    let Shape::EvenAsphere { coefficients, .. } = &again.scene.surfaces[0].shape else {
+    let again = design::open(&output, &[]).unwrap();
+    assert_eq!(part(&again).scene.surfaces[1].pose.translation_mm.0[2], 6.0);
+    let Shape::EvenAsphere { coefficients, .. } = &part(&again).scene.surfaces[0].shape else {
         panic!()
     };
     assert_eq!(coefficients[0], 1e-7);
@@ -113,12 +123,12 @@ fn native_source_diode_angular_distribution_and_detector() {
     let dir = folder();
     let path = dir.join("source.zmx");
     fs::write(&path, diode()).unwrap();
-    let mut p = Project::open(&path, &[]).unwrap();
-    assert_eq!(p.scene.sources.len(), 1);
-    assert_eq!(p.scene.surfaces.len(), 1);
+    let mut p = design::open(&path, &[]).unwrap();
+    assert_eq!(part(&p).scene.sources.len(), 1);
+    assert_eq!(part(&p).scene.surfaces.len(), 1);
     assert!(p.trace_scene().is_ok());
-    p.scene.sources[0].count = 20000;
-    let scene = p.scene.prepare().unwrap();
+    part_mut(&mut p).scene.sources[0].count = 20000;
+    let scene = part(&p).scene.clone().prepare().unwrap();
     let rays = scene.generate_rays().unwrap();
     let x: Vec<_> = rays
         .iter()
@@ -148,13 +158,13 @@ fn missing_spectrum_and_unknown_object_cannot_silently_trace() {
         " NSCS 7 3 8 0 0 0 0.4 0.7 3 \"missing.SPCD\"\n NSOP 0 0 0 0 0 0",
     );
     fs::write(&path, text).unwrap();
-    let mut p = Project::open(&path, &[]).unwrap();
+    let mut p = design::open(&path, &[]).unwrap();
     assert!(p.trace_scene().is_err());
-    p.monochromatic_override_um = Some(0.465);
+    p.conditions.monochromatic_override_um = Some(0.465);
     assert!(p.trace_scene().is_ok());
     let text = diode().replace("NSC_SDIO", "NSC_UNKNOWN");
     fs::write(&path, &text).unwrap();
-    let p = Project::open(&path, &[]).unwrap();
+    let p = design::open(&path, &[]).unwrap();
     assert!(p.trace_scene().is_err());
     let copy = dir.join("copy.zmx");
     zemax::export(&p, &copy).unwrap();
@@ -171,9 +181,9 @@ fn nsc_source_edits_and_dependency_copy_preserve_the_original() {
     );
     fs::write(&path, &text).unwrap();
     fs::write(dir.join("body.STEP"), "reference geometry bytes").unwrap();
-    let mut project = Project::open(&path, &[]).unwrap();
-    project.scene.sources[0].origin_mm.0[0] = 1.25;
-    project.scene.sources[0].count = 1500;
+    let mut project = design::open(&path, &[]).unwrap();
+    part_mut(&mut project).scene.sources[0].origin_mm.0[0] = 1.25;
+    part_mut(&mut project).scene.sources[0].count = 1500;
     let destination = dir.join("out");
     fs::create_dir(&destination).unwrap();
     let output = destination.join("edited.zmx");
@@ -183,9 +193,9 @@ fn nsc_source_edits_and_dependency_copy_preserve_the_original() {
         fs::read_to_string(destination.join("body.STEP")).unwrap(),
         "reference geometry bytes"
     );
-    let again = Project::open(&output, &[]).unwrap();
-    assert_eq!(again.scene.sources[0].origin_mm.0[0], 1.25);
-    assert_eq!(again.scene.sources[0].count, 1500);
+    let again = design::open(&output, &[]).unwrap();
+    assert_eq!(part(&again).scene.sources[0].origin_mm.0[0], 1.25);
+    assert_eq!(part(&again).scene.sources[0].count, 1500);
     fs::write(destination.join("body.STEP"), "different existing file").unwrap();
     assert!(zemax::export(&project, &output).is_err());
 }
@@ -201,8 +211,10 @@ fn declared_catalog_selection_and_unsupported_records_are_explicit() {
         glass().replace("0.6961663", "1.6961663"),
     )
     .unwrap();
-    let project = Project::open(&path, &[]).unwrap();
-    assert!((project.scene.materials[1].index(0.465).unwrap() - 1.464483960997639).abs() < 1e-14);
+    let project = design::open(&path, &[]).unwrap();
+    assert!(
+        (part(&project).scene.materials[1].index(0.465).unwrap() - 1.464483960997639).abs() < 1e-14
+    );
     fs::write(
         &path,
         lens().replace(
@@ -211,8 +223,8 @@ fn declared_catalog_selection_and_unsupported_records_are_explicit() {
         ),
     )
     .unwrap();
-    let mut project = Project::open(&path, &[]).unwrap();
-    project.allow_uncoated = true;
+    let mut project = design::open(&path, &[]).unwrap();
+    project.conditions.allow_uncoated = true;
     assert!(project.trace_scene().is_err());
 }
 
@@ -221,15 +233,15 @@ fn newly_exported_lens_keeps_positions_apertures_and_dispersion() {
     let dir = folder();
     let scene: Scene =
         serde_json::from_str(include_str!("../examples/sequential_lens.json")).unwrap();
-    let project = Project::new(scene.clone());
+    let project = Design::from_scene(scene.clone());
     let output = dir.join("new_lens.zmx");
     zemax::export(&project, &output).unwrap();
-    let again = Project::open(&output, &[]).unwrap();
-    assert_eq!(again.scene.surfaces.len(), scene.surfaces.len() + 1);
+    let again = design::open(&output, &[]).unwrap();
+    assert_eq!(part(&again).scene.surfaces.len(), scene.surfaces.len() + 1);
     for (s, t) in scene
         .surfaces
         .iter()
-        .zip(again.scene.surfaces.iter().skip(1))
+        .zip(part(&again).scene.surfaces.iter().skip(1))
     {
         assert_eq!(s.pose.translation_mm, t.pose.translation_mm);
         assert_eq!(
@@ -238,8 +250,9 @@ fn newly_exported_lens_keeps_positions_apertures_and_dispersion() {
         );
     }
     assert!(
-        (again.scene.materials[1].index(0.45).unwrap() - scene.materials[1].index(0.45).unwrap())
-            .abs()
+        (part(&again).scene.materials[1].index(0.45).unwrap()
+            - scene.materials[1].index(0.45).unwrap())
+        .abs()
             < 1e-14
     );
 }
@@ -346,12 +359,12 @@ fn flat_even_asphere_import_trace_and_edited_roundtrip() {
     let text = "MODE SEQ\nUNIT MM\nENPD 4\nWAVM 1 0.55 1\nSURF 0\n TYPE STANDARD\n DISZ INFINITY\nSURF 1\n TYPE EVENASPH\n CURV 0\n PARM 2 0.001\n DIAM 3\n DISZ 5\n GLAS TESTGLASS 0 0\nSURF 2\n TYPE STANDARD\n DIAM 3\n DISZ 5\nSURF 3\n TYPE STANDARD\n DIAM 3\n";
     fs::write(&input, text).unwrap();
     fs::write(dir.join("TEST.AGF"), glass()).unwrap();
-    let mut p = Project::open(&input, &[]).unwrap();
-    let Shape::FlatEvenAsphere { coefficients } = &p.scene.surfaces[0].shape else {
+    let mut p = design::open(&input, &[]).unwrap();
+    let Shape::FlatEvenAsphere { coefficients } = &part(&p).scene.surfaces[0].shape else {
         panic!()
     };
     assert_eq!(coefficients[0], 0.001);
-    let prepared = p.scene.clone().prepare().unwrap();
+    let prepared = part(&p).scene.clone().prepare().unwrap();
     let h: f64 = 2.;
     let r = Ray {
         id: 42,
@@ -385,22 +398,22 @@ fn flat_even_asphere_import_trace_and_edited_roundtrip() {
     );
     assert!(result.paths.len() >= 2);
     assert!((result.paths[1].end_mm.0[0] - h).abs() > 1e-3);
-    p.scene.surfaces[1].pose.translation_mm.0[2] = 6.;
+    part_mut(&mut p).scene.surfaces[1].pose.translation_mm.0[2] = 6.;
     let output = dir.join("edited.zmx");
     zemax::export(&p, &output).unwrap();
-    let again = Project::open(&output, &[]).unwrap();
+    let again = design::open(&output, &[]).unwrap();
     assert_eq!(
-        serde_json::to_value(&again.scene.surfaces[0].shape).unwrap(),
-        serde_json::to_value(&p.scene.surfaces[0].shape).unwrap()
+        serde_json::to_value(&part(&again).scene.surfaces[0].shape).unwrap(),
+        serde_json::to_value(&part(&p).scene.surfaces[0].shape).unwrap()
     );
     for coefficients in [vec![f64::NAN], vec![0.; 9]] {
-        let mut invalid = p.scene.clone();
+        let mut invalid = part(&p).scene.clone();
         invalid.surfaces[0].shape = Shape::FlatEvenAsphere { coefficients };
         assert!(invalid.prepare().is_err());
     }
     fs::write(&input, text.replace("PARM 2 0.001", "PARM 2 0")).unwrap();
     assert!(matches!(
-        Project::open(&input, &[]).unwrap().scene.surfaces[0].shape,
+        part(&design::open(&input, &[]).unwrap()).scene.surfaces[0].shape,
         Shape::Plane
     ));
 }

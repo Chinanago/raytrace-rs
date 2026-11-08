@@ -1,4 +1,5 @@
 use raytrace_rs::{
+    design::{Design, Part},
     math::{Frame, Pose},
     model::Diode,
     zemax,
@@ -8,6 +9,13 @@ use std::{
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
 };
+/// The single unplaced system of a design.
+fn part(design: &Design) -> &Part {
+    design.lone_system().unwrap()
+}
+fn part_mut(design: &mut Design) -> &mut Part {
+    design.lone_system_mut().unwrap()
+}
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 fn folder() -> PathBuf {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -61,8 +69,12 @@ fn native_supergaussian_spatial_and_angular_masses_match_documented_law() {
     let path = dir.join("owned.zmx");
     fs::write(&path, native(0.)).unwrap();
     let p = zemax::read_zmx(&path, &[]).unwrap();
-    assert!(!p.issues.iter().any(|i| i.blocking), "{:?}", p.issues);
-    let source = &p.scene.sources[0];
+    assert!(
+        !part(&p).issues.iter().any(|i| i.blocking),
+        "{:?}",
+        part(&p).issues
+    );
+    let source = &part(&p).scene.sources[0];
     let d = source.diode.as_ref().unwrap();
     let frame = Frame::new(&Pose {
         translation_mm: source.origin_mm,
@@ -99,7 +111,7 @@ fn astigmatic_source_has_two_waist_planes_and_ignores_spatial_parameters() {
     let path = dir.join("astigmatic.zmx");
     fs::write(&path, native(2.)).unwrap();
     let p = zemax::read_zmx(&path, &[]).unwrap();
-    let source = &p.scene.sources[0];
+    let source = &part(&p).scene.sources[0];
     let frame = Frame::new(&Pose {
         translation_mm: source.origin_mm,
         rotation_deg: source.diode.as_ref().unwrap().rotation_deg,
@@ -117,7 +129,7 @@ fn astigmatic_source_has_two_waist_planes_and_ignores_spatial_parameters() {
         assert!(pos.0[1].abs() < 1e-12 && pos.0[2].abs() < 1e-12);
         assert!((pos.0[0] - 2. * d.0[0] / d.0[2]).abs() < 1e-11);
     }
-    let mut changed = p.scene.clone();
+    let mut changed = part(&p).scene.clone();
     let d = changed.sources[0].diode.as_mut().unwrap();
     d.half_width_mm = [-3., -4.];
     d.gaussian_width_mm = [-5., -6.];
@@ -134,22 +146,22 @@ fn native_distribution_edits_roundtrip_and_old_json_gets_gaussian_defaults() {
     let path = dir.join("edit.zmx");
     fs::write(&path, native(0.)).unwrap();
     let mut p = zemax::read_zmx(&path, &[]).unwrap();
-    let d = p.scene.sources[0].diode.as_mut().unwrap();
+    let d = part_mut(&mut p).scene.sources[0].diode.as_mut().unwrap();
     d.astigmatism_mm = 1.25;
     d.angular_supergaussian = [3., 4.];
     d.spatial_supergaussian = [5., 6.];
     let out = dir.join("roundtrip.zmx");
     zemax::export(&p, &out).unwrap();
     let q = zemax::read_zmx(&out, &[]).unwrap();
-    let mut round = q.scene.sources[0].diode.clone().unwrap();
-    let wanted = p.scene.sources[0].diode.as_ref().unwrap();
+    let mut round = part(&q).scene.sources[0].diode.clone().unwrap();
+    let wanted = part(&p).scene.sources[0].diode.as_ref().unwrap();
     assert!((round.rotation_deg - wanted.rotation_deg).norm() < 1e-12);
     round.rotation_deg = wanted.rotation_deg;
     assert_eq!(
-        serde_json::to_value(&p.scene.sources[0].diode).unwrap(),
+        serde_json::to_value(&part(&p).scene.sources[0].diode).unwrap(),
         serde_json::to_value(&round).unwrap()
     );
-    let mut legacy = serde_json::to_value(&p.scene.sources[0].diode).unwrap();
+    let mut legacy = serde_json::to_value(&part(&p).scene.sources[0].diode).unwrap();
     for key in [
         "astigmatism_mm",
         "angular_supergaussian",
@@ -177,7 +189,12 @@ fn invalid_new_source_parameters_are_reported_at_import() {
         let path = dir.join(format!("invalid{i}.zmx"));
         fs::write(&path, native(0.).replace(from, to)).unwrap();
         let p = zemax::read_zmx(&path, &[]).unwrap();
-        assert!(p.issues.iter().any(|i| i.blocking && i.code == "source"));
+        assert!(
+            part(&p)
+                .issues
+                .iter()
+                .any(|i| i.blocking && i.code == "source")
+        );
         assert!(p.trace_scene().is_err());
     }
 }
@@ -188,9 +205,9 @@ fn new_distribution_records_reject_legacy_sampling_but_normal_gaussians_replay()
     let path = dir.join("owned.zmx");
     fs::write(&path, native(0.)).unwrap();
     let mut p = zemax::read_zmx(&path, &[]).unwrap();
-    p.scene.sources[0].count = 32;
+    part_mut(&mut p).scene.sources[0].count = 32;
     let mut record =
-        raytrace_rs::record::RunContext::capture(&p, &p.scene, None, 1, Default::default());
+        raytrace_rs::record::RunContext::capture(&p, &part(&p).scene, None, 1, Default::default());
     assert!(matches!(
         record.input,
         raytrace_rs::record::LaunchInput::Generated {

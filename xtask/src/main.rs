@@ -14,7 +14,6 @@ use std::{
 /// Layer of every workspace crate (docs/DESIGN.md §4). L0 and L1 share `raytrace-core`.
 const LAYERS: &[(&str, u8)] = &[
     ("raytrace-core", 1),
-    // `raytrace-io` still holds `Project` and `Assembly` until `raytrace-doc` replaces them (docs/DESIGN.md §13).
     ("raytrace-doc", 2),
     ("raytrace-formats", 3),
     ("raytrace-io", 3),

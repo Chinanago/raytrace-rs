@@ -1,7 +1,7 @@
 use super::*;
 use raytrace_app::engine::{
-    self, Document, ExportZmxRequest, ModelInput, OpenRequest, Outcome, Request,
-    SaveProjectRequest, SaveRunRequest,
+    self, Document, ExportZmxRequest, ModelInput, OpenRequest, Outcome, Request, SaveDesignRequest,
+    SaveRunRequest,
 };
 
 impl App {
@@ -85,10 +85,10 @@ impl App {
     }
 
     pub(super) fn update_window_title(&mut self, ctx: &egui::Context) {
-        let name = if self.project.scene.name.trim().is_empty() {
+        let name = if self.design.display_name().trim().is_empty() {
             "新規の光学系"
         } else {
-            &self.project.scene.name
+            self.design.display_name()
         };
         let title = format!("{}{name} — Raytrace", if self.dirty { "*" } else { "" });
         if self.last_window_title.as_ref() != Some(&title) {
@@ -103,7 +103,7 @@ impl App {
             ui.close();
         }
         if ui.button("新規の光学系").clicked() {
-            self.replace_project(Project::new_assembly(), Some(256), 0);
+            self.replace_design(Design::empty(), Some(256), 0);
             self.changed();
             self.status = "部品を追加して光学系を組み立てます".into();
             ui.close();
@@ -134,8 +134,8 @@ impl App {
                 .add_filter("Raytrace", &["json"])
                 .save_file()
             {
-                let request = Request::SaveProject(SaveProjectRequest {
-                    project: Box::new(self.project.clone()),
+                let request = Request::SaveDesign(SaveDesignRequest {
+                    design: Box::new(self.design.clone()),
                     output: path.clone(),
                 });
                 match engine::execute(request) {
@@ -193,10 +193,7 @@ impl App {
             }
         }
         if ui
-            .add_enabled(
-                self.project.assembly.is_none(),
-                egui::Button::new("ZMX書出し…"),
-            )
+            .add_enabled(!self.design.is_assembly(), egui::Button::new("ZMX書出し…"))
             .on_hover_text("組立光学系はJSONプロジェクトで保存します")
             .clicked()
         {
@@ -207,7 +204,7 @@ impl App {
                 .save_file()
             {
                 let request = Request::ExportZmx(ExportZmxRequest {
-                    model: ModelInput::Project(Box::new(self.project.clone())),
+                    model: ModelInput::Design(Box::new(self.design.clone())),
                     catalogs: Vec::new(),
                     output: path,
                 });
@@ -220,7 +217,7 @@ impl App {
         ui.separator();
         ui.menu_button("サンプルを開く", |ui| {
             if ui.button("光源＋レンズ＋ロッド").clicked() {
-                self.replace_project(assembly::demo_project().expect("assembly demo"), None, 2);
+                self.replace_design(design::demo_design().expect("assembly demo"), None, 2);
                 self.run(ctx);
                 ui.close();
             }
@@ -239,8 +236,8 @@ impl App {
                 ),
             ] {
                 if ui.button(name).clicked() {
-                    self.replace_project(
-                        Project::new(serde_json::from_str(text).unwrap()),
+                    self.replace_design(
+                        Design::from_scene(serde_json::from_str(text).unwrap()),
                         None,
                         0,
                     );
@@ -251,8 +248,8 @@ impl App {
         });
     }
 
-    fn replace_project(&mut self, project: Project, preview: Option<usize>, component: usize) {
-        self.project = project;
+    fn replace_design(&mut self, design: Design, preview: Option<usize>, component: usize) {
+        self.design = design;
         self.viewing_explicit_record = false;
         self.path = None;
         self.loading_path = None;
@@ -267,14 +264,15 @@ impl App {
         self.stale = false;
         self.view = View::Layout;
         self.error = None;
+        self.recompile();
         self.camera = LayoutCamera::default();
         self.reset_history(true);
     }
 
     pub(super) fn add_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         for (label, kind) in [
-            ("光源のZMX…", ComponentKind::Source),
-            ("レンズのZMX…", ComponentKind::Optic),
+            ("光源のZMX…", PartKind::Source),
+            ("レンズのZMX…", PartKind::Optic),
         ] {
             if ui.button(label).clicked() {
                 ui.close();
@@ -297,7 +295,7 @@ impl App {
         }
     }
 
-    pub(super) fn add_file(&mut self, path: PathBuf, kind: ComponentKind, ctx: &egui::Context) {
+    pub(super) fn add_file(&mut self, path: PathBuf, kind: PartKind, ctx: &egui::Context) {
         self.status = "部品を読込中…".into();
         let request = Request::Open(OpenRequest {
             path,
@@ -308,7 +306,7 @@ impl App {
             Job::Added(
                 kind,
                 match result {
-                    Ok(Outcome::Opened(Document::Project { project })) => Ok(project),
+                    Ok(Outcome::Opened(Document::Design { design })) => Ok(design),
                     Ok(_) => Err("部品にはZMXまたはプロジェクトJSONを指定してください".into()),
                     Err(e) => Err(e.message),
                 },
@@ -324,7 +322,7 @@ impl App {
             viewer_paths: true,
         });
         self.submit(ctx, request, false, None, |result| match result {
-            Ok(Outcome::Opened(Document::Project { project })) => Job::Loaded(Ok(project)),
+            Ok(Outcome::Opened(Document::Design { design })) => Job::Loaded(Ok(design)),
             Ok(Outcome::Opened(Document::Run { record })) => Job::LoadedRun(Ok(record)),
             Ok(_) => Job::Loaded(Err("走査記録は「走査記録を開く…」から開いてください".into())),
             Err(e) => Job::Loaded(Err(e.message)),
@@ -362,7 +360,7 @@ mod tests {
         let text = visible_text(&out);
         assert!(!text.contains(&"Raytrace"));
         assert!(!text.contains(&"●"));
-        assert!(!text.contains(&app.project.scene.name.as_str()));
+        assert!(!text.contains(&app.design.display_name()));
         let calculate = text_rect(&out, "▶  計算する").unwrap();
         let mut previous = None;
         for label in [
@@ -446,7 +444,7 @@ mod tests {
         let ctx = egui::Context::default();
         install(&ctx);
         let mut app = App::demo();
-        let name = app.project.scene.name.clone();
+        let name = app.design.display_name().to_string();
         let out = frame(&mut app, &ctx, vec![]);
         assert_eq!(titles(&out), [format!("{name} — Raytrace")]);
         assert!(titles(&frame(&mut app, &ctx, vec![])).is_empty());
@@ -462,10 +460,10 @@ mod tests {
         app.mark_saved();
         let out = frame(&mut app, &ctx, vec![]);
         assert_eq!(titles(&out), [format!("{name} — Raytrace")]);
-        app.project.scene.name = "別の光学系".into();
+        app.design.set_display_name("別の光学系");
         let out = frame(&mut app, &ctx, vec![]);
         assert_eq!(titles(&out), ["別の光学系 — Raytrace"]);
-        app.project.scene.name.clear();
+        app.design.set_display_name("");
         let out = frame(&mut app, &ctx, vec![]);
         assert_eq!(titles(&out), ["新規の光学系 — Raytrace"]);
         assert!(titles(&frame(&mut app, &ctx, vec![])).is_empty());

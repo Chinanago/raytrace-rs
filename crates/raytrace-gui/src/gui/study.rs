@@ -76,29 +76,47 @@ pub(super) struct Comparison {
     texture: Option<egui::TextureHandle>,
 }
 
-fn parameters(project: &Project) -> Vec<Parameter> {
+fn parameters(design: &Design) -> Vec<Parameter> {
     let mut p = Vec::new();
-    if let Some(a) = &project.assembly {
-        for (component, c) in a.components.iter().enumerate() {
+    if let Some(part) = design.lone_system() {
+        for s in &part.scene.surfaces {
             for axis in [2, 0, 1] {
-                p.push(Parameter::ComponentPosition { component, axis });
+                p.push(Parameter::SurfacePosition {
+                    occurrence: None,
+                    surface: s.name.clone(),
+                    axis,
+                });
             }
             for axis in 0..3 {
-                p.push(Parameter::ComponentRotation { component, axis });
-            }
-            if c.rod.is_some() {
-                for axis in [2, 0, 1] {
-                    p.push(Parameter::RodSize { component, axis });
-                }
+                p.push(Parameter::SurfaceRotation {
+                    occurrence: None,
+                    surface: s.name.clone(),
+                    axis,
+                });
             }
         }
     } else {
-        for surface in 0..project.scene.surfaces.len() {
+        for (i, o) in design.occurrences.iter().enumerate() {
+            let occurrence = o.id.clone();
             for axis in [2, 0, 1] {
-                p.push(Parameter::SurfacePosition { surface, axis });
+                p.push(Parameter::ComponentPosition {
+                    occurrence: occurrence.clone(),
+                    axis,
+                });
             }
             for axis in 0..3 {
-                p.push(Parameter::SurfaceRotation { surface, axis });
+                p.push(Parameter::ComponentRotation {
+                    occurrence: occurrence.clone(),
+                    axis,
+                });
+            }
+            if design.occurrence_part(i).is_some_and(|c| c.rod.is_some()) {
+                for axis in [2, 0, 1] {
+                    p.push(Parameter::RodSize {
+                        occurrence: occurrence.clone(),
+                        axis,
+                    });
+                }
             }
         }
     }
@@ -124,14 +142,14 @@ fn parameter_choice(
     id: &str,
     value: &mut Parameter,
     options: &[Parameter],
-    project: &Project,
+    design: &Design,
 ) {
     egui::ComboBox::from_id_salt(id)
         .width(390.)
-        .selected_text(value.label(project))
+        .selected_text(value.label(design))
         .show_ui(ui, |ui| {
             for p in options {
-                ui.selectable_value(value, p.clone(), p.label(project));
+                ui.selectable_value(value, p.clone(), p.label(design));
             }
         });
 }
@@ -155,24 +173,32 @@ impl App {
         }
     }
     pub(super) fn configure_study(&mut self) {
-        let parameter = if self.project.assembly.is_some() {
-            Parameter::ComponentPosition {
-                component: self.component,
-                axis: 2,
+        let parameter =
+            if self.design.is_assembly() {
+                self.design
+                    .occurrences
+                    .get(self.component)
+                    .map(|o| Parameter::ComponentPosition {
+                        occurrence: o.id.clone(),
+                        axis: 2,
+                    })
+            } else {
+                self.compiled.scene.surfaces.get(self.selected).map(|s| {
+                    Parameter::SurfacePosition {
+                        occurrence: None,
+                        surface: s.name.clone(),
+                        axis: 2,
+                    }
+                })
             }
-        } else {
-            Parameter::SurfacePosition {
-                surface: self.selected,
-                axis: 2,
-            }
-        };
+            .unwrap_or(Parameter::Wavelength);
         self.set_study_parameter(parameter);
         self.study.open = true;
         self.study.use_current = self.preview_limit.is_none();
         self.study.rays = self.preview_limit.unwrap_or(256);
     }
     fn set_study_parameter(&mut self, parameter: Parameter) {
-        let value = parameter.value(&self.project).unwrap_or(0.55) * scale(&parameter);
+        let value = parameter.value(&self.design).unwrap_or(0.55) * scale(&parameter);
         let spread = if parameter == Parameter::Wavelength {
             20.0
         } else if matches!(parameter, Parameter::RodSize { .. }) {
@@ -262,7 +288,7 @@ impl App {
                 return Err("同名の走査記録があります。新しい保存先を指定してください".into());
             }
             let request = Request::Scan(ScanRequest {
-                model: ModelInput::Project(Box::new(self.project.clone())),
+                model: ModelInput::Design(Box::new(self.design.clone())),
                 catalogs: Vec::new(),
                 plan,
                 output: dir.clone(),
@@ -320,7 +346,7 @@ impl App {
             record.calculation.input,
             raytrace_io::record::LaunchInput::Explicit { .. }
         );
-        self.project = record.calculation.project.clone();
+        self.design = record.calculation.design.clone();
         let mut sources = record.calculation.scene.sources.iter();
         let copy = |s: &mut Source, actual: &Source| {
             s.count = actual.count;
@@ -329,24 +355,32 @@ impl App {
             s.wavelength_um = actual.wavelength_um;
             s.total_weight = actual.total_weight;
         };
-        if let Some(a) = &mut self.project.assembly {
-            for c in a.components.iter_mut().filter(|c| c.enabled) {
-                for s in &mut c.project.scene.sources {
-                    if let Some(actual) = sources.next() {
-                        copy(s, actual);
+        if self.design.is_assembly() {
+            for i in 0..self.design.occurrences.len() {
+                if !self.design.occurrences[i].enabled {
+                    continue;
+                }
+                if let Some(part) = self.design.occurrence_part_mut(i) {
+                    for s in &mut part.scene.sources {
+                        if let Some(actual) = sources.next() {
+                            copy(s, actual);
+                        }
                     }
                 }
             }
-        } else {
-            for s in &mut self.project.scene.sources {
+        } else if let Some(part) = self.design.lone_system_mut() {
+            for s in &mut part.scene.sources {
                 if let Some(actual) = sources.next() {
                     copy(s, actual);
                 }
             }
         }
-        if let Err(error) = self.project.refresh_assembly() {
-            self.error = Some(error.to_string());
-            return;
+        match self.design.compile() {
+            Ok(compiled) => self.compiled = compiled,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                return;
+            }
         }
         self.preview_limit = None;
         self.component = 0;
@@ -390,14 +424,10 @@ mod tests {
         let mut app = App::demo();
         let ctx = egui::Context::default();
         install(&ctx);
-        for s in &mut app.project.assembly.as_mut().unwrap().components[0]
-            .project
-            .scene
-            .sources
-        {
+        for s in &mut app.design.occurrence_part_mut(0).unwrap().scene.sources {
             s.count = 2_000_000;
         }
-        app.project.refresh_assembly().unwrap();
+        app.recompile();
         app.run(&ctx);
         let deadline = Instant::now() + Duration::from_secs(5);
         while app.job.is_some() {
@@ -411,14 +441,10 @@ mod tests {
                 .is_some_and(|e| e.contains("合計1〜2,000,000"))
         );
         app.error = None;
-        for s in &mut app.project.assembly.as_mut().unwrap().components[0]
-            .project
-            .scene
-            .sources
-        {
+        for s in &mut app.design.occurrence_part_mut(0).unwrap().scene.sources {
             s.count = 32;
         }
-        app.project.refresh_assembly().unwrap();
+        app.recompile();
         app.run(&ctx);
         app.control
             .as_ref()
@@ -474,13 +500,7 @@ mod tests {
         );
         assert!(!r.report.paths.is_empty());
         assert_eq!(r.calculation.input_count(), 64);
-        assert_eq!(
-            app.project.assembly.as_ref().unwrap().components[2]
-                .pose
-                .translation_mm
-                .0[2],
-            68.0
-        );
+        assert_eq!(app.design.occurrences[2].pose.translation_mm.0[2], 68.0);
         assert!(!app.stale);
         assert_eq!(app.view, View::Screen);
         app.study.pair = [0, 2];

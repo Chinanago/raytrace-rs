@@ -5,7 +5,7 @@ pub use raytrace_core::{
     trace,
 };
 pub use raytrace_doc as doc;
-pub use raytrace_io::{assembly, cad, compatibility, export, project, record, storage, zemax};
+pub use raytrace_io::{cad, compatibility, design, export, record, storage, zemax};
 
 pub mod error {
     pub use raytrace_app::Error as AppError;

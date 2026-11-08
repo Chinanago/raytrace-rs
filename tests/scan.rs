@@ -1,9 +1,8 @@
 #[path = "support/cli.rs"]
 mod cli_support;
 use raytrace_rs::{
-    assembly,
+    design::{self, Design, OccurrenceId},
     model::Scene,
-    project::Project,
     record::RunRecord,
     scan::{Parameter, ScanManifest, ScanPlan, linear_values},
     trace::{TraceControl, TraceOptions, trace, trace_controlled},
@@ -18,18 +17,9 @@ fn two_axes_and_reversed_dependency_order_preserve_gaps_and_resume() {
     use raytrace_rs::scan::{ParameterLink, ScanAxis};
     let dir = folder();
     let base = lens();
-    let x = Parameter::SurfacePosition {
-        surface: 0,
-        axis: 2,
-    };
-    let y = Parameter::SurfacePosition {
-        surface: 1,
-        axis: 2,
-    };
-    let z = Parameter::SurfacePosition {
-        surface: 2,
-        axis: 2,
-    };
+    let x = surface(0, 2);
+    let y = surface(1, 2);
+    let z = surface(2, 2);
     let plan = ScanPlan {
         parameter: x.clone(),
         values: vec![0., 1.],
@@ -77,7 +67,7 @@ fn two_axes_and_reversed_dependency_order_preserve_gaps_and_resume() {
     let mut launch_signatures = Vec::new();
     for (i, c) in resumed.cases.iter().enumerate() {
         let r = RunRecord::open(&dir.join(c.run_file.as_ref().unwrap())).unwrap();
-        let p = &r.calculation.project;
+        let p = &r.calculation.design;
         assert_eq!(x.value(p).unwrap(), (i / 2) as f64);
         assert_eq!(y.value(p).unwrap() - x.value(p).unwrap(), 5.);
         assert_eq!(z.value(p).unwrap() - y.value(p).unwrap(), 60.);
@@ -99,14 +89,8 @@ fn two_axes_and_reversed_dependency_order_preserve_gaps_and_resume() {
 fn cyclic_links_duplicate_targets_axis_conflicts_and_case_explosion_are_rejected() {
     use raytrace_rs::scan::{ParameterLink, ScanAxis};
     let base = lens();
-    let a = Parameter::SurfacePosition {
-        surface: 0,
-        axis: 0,
-    };
-    let b = Parameter::SurfacePosition {
-        surface: 1,
-        axis: 0,
-    };
+    let a = surface(0, 0);
+    let b = surface(1, 0);
     let link = ParameterLink {
         source: a.clone(),
         target: b.clone(),
@@ -186,17 +170,34 @@ fn folder() -> PathBuf {
     fs::create_dir_all(&p).unwrap();
     p
 }
-fn lens() -> Project {
+/// Position of the `index`-th surface of the lens along `axis`.
+fn surface(index: usize, axis: usize) -> Parameter {
+    let name = lens().lone_system().unwrap().scene.surfaces[index]
+        .name
+        .clone();
+    Parameter::SurfacePosition {
+        occurrence: None,
+        surface: name,
+        axis,
+    }
+}
+fn lens() -> Design {
     let mut s: Scene =
         serde_json::from_str(include_str!("../examples/sequential_lens.json")).unwrap();
     for source in &mut s.sources {
         source.count = 32;
     }
-    Project::new(s)
+    Design::from_scene(s)
 }
 #[test]
 fn controlled_trace_preserves_the_complete_report_and_cancellation_keeps_it_unpublished() {
-    let p = lens().scene.prepare().unwrap();
+    let p = lens()
+        .lone_system()
+        .unwrap()
+        .scene
+        .clone()
+        .prepare()
+        .unwrap();
     let rays = p.generate_rays().unwrap();
     let options = TraceOptions {
         keep_terminals: true,
@@ -219,10 +220,7 @@ fn cancelled_scan_resumes_from_embedded_inputs_without_rewriting_completed_cases
     let dir = folder();
     let mut base = lens();
     let plan = ScanPlan {
-        parameter: Parameter::SurfacePosition {
-            surface: 2,
-            axis: 2,
-        },
+        parameter: surface(2, 2),
         values: vec![67.0, 68.5, 70.0],
         threads: 2,
         rays_per_source: None,
@@ -243,7 +241,10 @@ fn cancelled_scan_resumes_from_embedded_inputs_without_rewriting_completed_cases
         vec!["completed", "pending", "pending"]
     );
     let first = fs::read(dir.join("case_0000.raytrace-run.json")).unwrap();
-    base.scene.surfaces[2].pose.translation_mm.0[2] = 300.0;
+    base.lone_system_mut().unwrap().scene.surfaces[2]
+        .pose
+        .translation_mm
+        .0[2] = 300.0;
     let mut resumed = ScanManifest::open(&dir).unwrap();
     control.cancel.store(false, Ordering::Relaxed);
     resumed.execute(&dir, &control, |_| {}).unwrap();
@@ -276,21 +277,24 @@ fn cancelled_scan_resumes_from_embedded_inputs_without_rewriting_completed_cases
 }
 #[test]
 fn parameter_units_limits_and_failed_cases_are_retained() {
-    let mut assembly = assembly::demo_project().unwrap();
+    let mut assembly = design::demo_design().unwrap();
+    let rod = assembly.occurrences[2].id.clone();
     Parameter::RodSize {
-        component: 2,
+        occurrence: rod.clone(),
         axis: 2,
     }
     .apply(&mut assembly, 40.0)
     .unwrap();
     Parameter::ComponentRotation {
-        component: 2,
+        occurrence: rod.clone(),
         axis: 1,
     }
     .apply(&mut assembly, 3.0)
     .unwrap();
     assert_eq!(
-        assembly.assembly.as_ref().unwrap().components[2]
+        assembly
+            .occurrence_part(2)
+            .unwrap()
             .rod
             .as_ref()
             .unwrap()
@@ -299,7 +303,7 @@ fn parameter_units_limits_and_failed_cases_are_retained() {
     );
     assert!(
         Parameter::RodSize {
-            component: 2,
+            occurrence: rod.clone(),
             axis: 0
         }
         .apply(&mut assembly, -1.0)
@@ -307,20 +311,21 @@ fn parameter_units_limits_and_failed_cases_are_retained() {
     );
     assert!(
         Parameter::ComponentPosition {
-            component: 2,
+            occurrence: rod,
             axis: 3
         }
         .apply(&mut assembly, 1.0)
         .is_err()
     );
     assert!(
-        Parameter::SurfacePosition {
-            surface: 0,
+        Parameter::ComponentPosition {
+            occurrence: OccurrenceId::new("rod-99").unwrap(),
             axis: 2
         }
         .apply(&mut assembly, 1.0)
         .is_err()
     );
+    assert!(surface(0, 2).apply(&mut assembly, 1.0).is_err());
     assert_eq!(linear_values(0.4, 0.7, 4).unwrap().last(), Some(&0.7));
     assert!(linear_values(0.4, 0.7, 1).is_err());
     let dir = folder();
@@ -342,7 +347,7 @@ fn parameter_units_limits_and_failed_cases_are_retained() {
 #[test]
 fn cli_scan_can_be_reopened_and_protects_existing_output() {
     let dir = folder();
-    lens().save(&dir.join("model.json")).unwrap();
+    design::save(&lens(), &dir.join("model.json")).unwrap();
     fs::write(
         dir.join("plan.json"),
         serde_json::to_vec(&ScanPlan {

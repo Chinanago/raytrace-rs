@@ -230,8 +230,8 @@ fn replay(record: &RunRecord) -> Result<serde_json::Value, engine::EngineError> 
 
 #[test]
 fn record_replay_streams_and_keeps_validation() {
-    let project = raytrace_rs::assembly::demo_project().unwrap();
-    let mut scene = project.trace_scene().unwrap();
+    let design = raytrace_rs::design::demo_design().unwrap();
+    let mut scene = design.trace_scene().unwrap();
     for source in &mut scene.sources {
         source.count = 32;
     }
@@ -243,7 +243,7 @@ fn record_replay_streams_and_keeps_validation() {
     let rays = prepared.generate_rays().unwrap();
     let expected = trace(&prepared, &rays, options);
     for explicit in [None, Some(rays.as_slice())] {
-        let calculation = RunContext::capture(&project, &scene, explicit, 2, options);
+        let calculation = RunContext::capture(&design, &scene, explicit, 2, options);
         let mut record = RunRecord {
             format: RUN_FORMAT.into(),
             calculation,

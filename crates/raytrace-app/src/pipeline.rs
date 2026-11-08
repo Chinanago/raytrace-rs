@@ -1,6 +1,6 @@
 //! Calculation stages shared by `trace`, `replay`, parameter scans and convergence studies.
 //!
-//! The flow is: configure the project and scene, check the case limits, prepare the scene,
+//! The flow is: configure the design and scene, check the case limits, prepare the scene,
 //! resolve the launch, trace (once or timed), capture the run context and analyse the report.
 //! Each stage takes typed inputs and returns typed outputs without file access; callers
 //! decide what to save. Cancellation is reported as [`Completion::Cancelled`].
@@ -14,7 +14,7 @@ use raytrace_core::{
     },
 };
 use raytrace_io::{
-    project::Project,
+    design::Design,
     record::{LaunchInput, RunContext},
 };
 use std::{collections::BTreeMap, collections::HashSet, time::Instant};
@@ -39,20 +39,20 @@ impl<T> Completion<T> {
 // Configure
 // ---------------------------------------------------------------------------------------
 
-/// Switches applied to the project before its scene is composed.
+/// Switches applied to the design before its scene is compiled.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct ProjectOverrides {
+pub struct DesignOverrides {
     /// Trace coated surfaces as uncoated Fresnel interfaces.
     pub allow_uncoated: bool,
     /// Replace the source spectra with one wavelength in micrometres.
     pub wavelength_um: Option<f64>,
 }
 
-/// Apply [`ProjectOverrides`]; omitted fields keep the project.
-pub fn configure_project(project: &mut Project, overrides: ProjectOverrides) {
-    project.allow_uncoated |= overrides.allow_uncoated;
+/// Apply [`DesignOverrides`]; omitted fields keep the design.
+pub fn configure_design(design: &mut Design, overrides: DesignOverrides) {
+    design.conditions.allow_uncoated |= overrides.allow_uncoated;
     if let Some(wavelength) = overrides.wavelength_um {
-        project.monochromatic_override_um = Some(wavelength);
+        design.conditions.monochromatic_override_um = Some(wavelength);
     }
 }
 
@@ -358,13 +358,13 @@ pub fn run_timed(
 
 /// Freeze the conditions of a finished trace for saving and replay.
 pub fn capture(
-    project: &Project,
+    design: &Design,
     scene: &Scene,
     launch: &Launch,
     worker_threads: usize,
     options: TraceOptions,
 ) -> RunContext {
-    RunContext::capture(project, scene, launch.rays(), worker_threads, options)
+    RunContext::capture(design, scene, launch.rays(), worker_threads, options)
 }
 
 // ---------------------------------------------------------------------------------------

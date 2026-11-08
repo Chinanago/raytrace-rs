@@ -1,8 +1,8 @@
 //! Generate an edited local ZMX and identical small-ray reference data.
 use raytrace_rs::{
+    design,
     math::V3,
     model::Ray,
-    project::Project,
     trace::{TraceOptions, trace},
     zemax,
 };
@@ -12,17 +12,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = PathBuf::from(args.first().ok_or("input ZMX")?);
     let out = PathBuf::from(args.get(1).ok_or("output directory")?);
     fs::create_dir_all(&out)?;
-    let mut project = Project::open(&input, &[])?;
-    project.allow_uncoated = true;
-    if project.scene.surfaces.len() != 4 {
+    let mut design = design::open(&input, &[])?;
+    design.conditions.allow_uncoated = true;
+    let part = design
+        .lone_system_mut()
+        .ok_or("This check requires a single ZMX system")?;
+    if part.scene.surfaces.len() != 4 {
         return Err("This check requires a dummy plane, two lens faces, and an image plane".into());
     }
-    for s in project.scene.surfaces.iter_mut().skip(2) {
+    for s in part.scene.surfaces.iter_mut().skip(2) {
         s.pose.translation_mm.0[2] += 0.25;
     }
     let export = out.join("lens_edited.zmx");
-    zemax::export(&project, &export)?;
-    let mut scene = project.trace_scene()?;
+    zemax::export(&design, &export)?;
+    let mut scene = design.trace_scene()?;
     scene.surfaces.remove(0);
     let wavelength = scene.sources[0].wavelength_um;
     let scene = scene.prepare()?;

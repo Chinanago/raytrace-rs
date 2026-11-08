@@ -1,10 +1,10 @@
 //! The engine, scans and convergence studies share the stages of `raytrace_rs::pipeline`.
 use raytrace_rs::{
     convergence::{self, ConvergencePlan},
+    design::{self, Design},
     engine::{self, ModelInput, Outcome, Overrides, Request, TraceRequest},
     model::{Interaction, Scene},
     pipeline::{self, LaunchRequest, LimitViolation, Limits, SceneOverrides, Schedule},
-    project::Project,
     record::RunRecord,
     scan::{Parameter, ScanManifest, ScanPlan},
     trace::TraceControl,
@@ -35,10 +35,10 @@ fn lens(count: usize) -> Scene {
     }
     scene
 }
-/// The report the engine `trace` request produces for `project`, as JSON.
-fn engine_report(project: Project, rays_per_source: usize) -> serde_json::Value {
+/// The report the engine `trace` request produces for `design`, as JSON.
+fn engine_report(design: Design, rays_per_source: usize) -> serde_json::Value {
     let request = Request::Trace(TraceRequest {
-        model: ModelInput::Project(Box::new(project)),
+        model: ModelInput::Design(Box::new(design)),
         catalogs: Vec::new(),
         rays: None,
         overrides: Overrides {
@@ -61,10 +61,10 @@ fn engine_report(project: Project, rays_per_source: usize) -> serde_json::Value 
     };
     serde_json::to_value(&result.record.unwrap().report).unwrap()
 }
-fn saved_report(path: &std::path::Path) -> (Project, serde_json::Value) {
+fn saved_report(path: &std::path::Path) -> (Design, serde_json::Value) {
     let record = RunRecord::open(path).unwrap();
     (
-        record.calculation.project.clone(),
+        record.calculation.design.clone(),
         serde_json::to_value(&record.report).unwrap(),
     )
 }
@@ -80,19 +80,19 @@ fn scan_case_and_engine_trace_save_identical_reports() {
         rays_per_source: Some(32),
         threads: 2,
     };
-    let mut manifest = ScanManifest::new(&Project::new(lens(8)), plan).unwrap();
+    let mut manifest = ScanManifest::new(&Design::from_scene(lens(8)), plan).unwrap();
     manifest
         .execute(&dir, &TraceControl::default(), |_| {})
         .unwrap();
-    let (project, scanned) = saved_report(&dir.join("case_0000.raytrace-run.json"));
-    assert_eq!(scanned, engine_report(project, 32));
+    let (design, scanned) = saved_report(&dir.join("case_0000.raytrace-run.json"));
+    assert_eq!(scanned, engine_report(design, 32));
 }
 
 #[test]
 fn convergence_case_and_engine_trace_save_identical_reports() {
     let dir = folder();
     let model = dir.join("input.json");
-    Project::new(lens(8)).save(&model).unwrap();
+    design::save(&Design::from_scene(lens(8)), &model).unwrap();
     let plan = ConvergencePlan {
         ray_counts: vec![24],
         seeds: Vec::new(),
@@ -102,8 +102,8 @@ fn convergence_case_and_engine_trace_save_identical_reports() {
     };
     let report = convergence::run(&model, &plan, &dir.join("runs")).unwrap();
     let file = report.cases[0].run_file.as_ref().unwrap();
-    let (project, converged) = saved_report(&dir.join("runs").join(file));
-    assert_eq!(converged, engine_report(project, 24));
+    let (design, converged) = saved_report(&dir.join("runs").join(file));
+    assert_eq!(converged, engine_report(design, 24));
 }
 
 #[test]

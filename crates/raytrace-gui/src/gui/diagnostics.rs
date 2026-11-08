@@ -60,16 +60,16 @@ impl App {
         ui.add_enabled_ui(self.job.is_none(), |ui| {
             let mut changed = false;
             section_label(ui, "計算に使う条件");
-            if self.project.issues.iter().any(|i| i.code == "coating") || self.project.scene.surfaces.iter().any(|s| s.coating.is_some()) {
-                changed |= checkbox(ui, &mut self.project.allow_uncoated, "未コートFresnelで計算").changed();
+            if self.compiled.issues.iter().any(|i| i.code == "coating") || self.compiled.scene.surfaces.iter().any(|s| s.coating.is_some()) {
+                changed |= checkbox(ui, &mut self.design.conditions.allow_uncoated, "未コートFresnelで計算").changed();
                 ui.label(egui::RichText::new("元のコーティング名を保持し、界面の反射率は未コートとして計算します。").size(SIZE_CAPTION).color(TEXT_MUTED));
             }
-            let mut mono = self.project.monochromatic_override_um.is_some();
+            let mut mono = self.design.conditions.monochromatic_override_um.is_some();
             if checkbox(ui, &mut mono, "全光源の計算波長を単色で指定").changed() {
-                self.project.monochromatic_override_um = mono.then_some(0.465);
+                self.design.conditions.monochromatic_override_um = mono.then_some(0.465);
                 changed = true;
             }
-            if let Some(value) = self.project.monochromatic_override_um.as_mut() {
+            if let Some(value) = self.design.conditions.monochromatic_override_um.as_mut() {
                 let mut nm = *value * 1000.0;
                 if number_row(ui, "計算波長", &mut nm, " nm", 1.0, 100.0..=20000.0) {
                     *value = nm / 1000.0;
@@ -94,18 +94,18 @@ impl App {
                     });
                 }
             section_label(ui, "読込の確認");
-            let report = self.project.compatibility_report();
+            let report = self.design.compatibility_report();
             ui.label(egui::RichText::new(if report.traceable { "指定した条件で計算できます" } else { "計算前に確認が必要な項目があります" })
                 .color(if report.traceable { SUCCESS } else { WARNING }));
             for component in report.components {
-                let has_issues = component.entries.iter().any(|e| import_entry_needs_review(&self.project, &component, e));
+                let has_issues = component.entries.iter().any(|e| import_entry_needs_review(&self.design, &component, e));
                 ui.horizontal(|ui| {
                 egui::CollapsingHeader::new(format!("{}{}", component.name, if component.enabled { "" } else { "（使用停止）" }))
-                    .id_salt(("compatibility", component.component)).default_open(has_issues).show(ui, |ui| {
+                    .id_salt(("compatibility", component.occurrence.clone())).default_open(has_issues).show(ui, |ui| {
                     for entry in component.entries.iter().filter(|e| e.code != "model") {
                         ui.label(egui::RichText::new(&entry.message).size(SIZE_BODY_LARGE));
                     }
-                    egui::CollapsingHeader::new("計算波長・屈折率・吸収").id_salt(("optics", component.component)).show(ui, |ui| {
+                    egui::CollapsingHeader::new("計算波長・屈折率・吸収").id_salt(("optics", component.occurrence.clone())).show(ui, |ui| {
                         for material in &component.materials {
                             ui.label(egui::RichText::new(&material.name).family(egui::FontFamily::Name("bold".into())).size(SIZE_CAPTION));
                             for sample in &material.samples {
@@ -288,7 +288,7 @@ impl App {
         if let Some(surface) = locate {
             self.details = None;
             self.view = View::Layout;
-            if self.project.assembly.is_some() {
+            if self.design.is_assembly() {
                 if let Some(index) = r.scene.surfaces[surface]
                     .name
                     .split(':')
@@ -322,7 +322,7 @@ fn budget_row(ui: &mut egui::Ui, label: &str, percent: f64) {
 }
 
 fn import_entry_needs_review(
-    project: &Project,
+    design: &Design,
     component: &raytrace_io::compatibility::ComponentCompatibility,
     entry: &raytrace_io::compatibility::CompatibilityEntry,
 ) -> bool {
@@ -330,17 +330,19 @@ fn import_entry_needs_review(
     if matches!(entry.code.as_str(), "model" | "barrel") {
         return false;
     }
-    let source = component
-        .component
-        .and_then(|i| project.assembly.as_ref()?.components.get(i))
-        .map_or(project, |c| &c.project);
+    let part = component
+        .occurrence
+        .as_ref()
+        .and_then(|id| design.occurrence(id))
+        .and_then(|o| design.part(&o.part))
+        .or_else(|| design.lone_system());
     entry.status != CompatibilityStatus::Computed
-        || source.issues.iter().any(|i| i.code == entry.code)
+        || part.is_some_and(|p| p.issues.iter().any(|i| i.code == entry.code))
 }
 
 impl App {
     pub(super) fn import_notification(&mut self, ui: &mut egui::Ui) {
-        let report = self.project.compatibility_report();
+        let report = self.design.compatibility_report();
         let entries: Vec<_> = report
             .components
             .iter()
@@ -348,7 +350,7 @@ impl App {
             .flat_map(|c| {
                 c.entries
                     .iter()
-                    .filter(|e| import_entry_needs_review(&self.project, c, e))
+                    .filter(|e| import_entry_needs_review(&self.design, c, e))
             })
             .collect();
         if !entries.is_empty() {
@@ -468,9 +470,7 @@ mod tests {
         assert!(text_rect(&out, "読込レポート").is_none());
         for blocking in [false, true] {
             app.details = None;
-            app.project.assembly.as_mut().unwrap().components[0]
-                .project
-                .issues = vec![raytrace_io::project::Issue {
+            app.design.occurrence_part_mut(0).unwrap().issues = vec![design::Issue {
                 code: "unsupported_test".into(),
                 message: "読込の確認が必要です".into(),
                 blocking,
@@ -500,16 +500,12 @@ mod tests {
         install(&ctx);
         ctx.style_mut_of(egui::Theme::Light, |s| s.animation_time = 0.0);
         let mut app = App::demo();
-        for source in &mut app.project.assembly.as_mut().unwrap().components[0]
-            .project
-            .scene
-            .sources
-        {
+        for source in &mut app.design.occurrence_part_mut(0).unwrap().scene.sources {
             source.medium = 1;
             source.count = 4;
         }
-        app.project.refresh_assembly().unwrap();
-        let scene = app.project.trace_scene().unwrap();
+        app.recompile();
+        let scene = app.design.trace_scene().unwrap();
         let prepared = scene.clone().prepare().unwrap();
         let rays = prepared.generate_rays().unwrap();
         let report = trace(&prepared, &rays, TraceOptions::default());
@@ -519,16 +515,10 @@ mod tests {
             display_percent(report.diagnostics[0].weight * 100.0 / report.budget.launched),
             scene.surfaces[report.diagnostics[0].surface.unwrap()].name
         );
-        let before = serde_json::to_value(&app.project).unwrap();
+        let before = serde_json::to_value(&app.design).unwrap();
         app.result = Some(ResultView {
             revision: app.history.revision,
-            calculation: RunContext::capture(
-                &app.project,
-                &scene,
-                None,
-                1,
-                TraceOptions::default(),
-            ),
+            calculation: RunContext::capture(&app.design, &scene, None, 1, TraceOptions::default()),
             scene,
             report,
             seconds: 0.1,
@@ -589,6 +579,6 @@ mod tests {
         assert_eq!(app.view, View::Layout);
         assert_eq!(app.component, 1);
         assert_eq!(app.details, None);
-        assert_eq!(before, serde_json::to_value(&app.project).unwrap());
+        assert_eq!(before, serde_json::to_value(&app.design).unwrap());
     }
 }

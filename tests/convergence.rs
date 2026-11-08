@@ -1,7 +1,7 @@
 use raytrace_rs::{
     convergence::{self, ConvergencePlan},
+    design::{self, Design},
     model::Scene,
-    project::Project,
     record::RunRecord,
     trace::DetectorMap,
     validation,
@@ -53,7 +53,7 @@ fn convergence_varies_one_axis_at_a_time_and_saves_replayable_conditions() {
     for s in &mut scene.sources {
         s.count = 16;
     }
-    Project::new(scene).save(&model).unwrap();
+    design::save(&Design::from_scene(scene), &model).unwrap();
     let plan = ConvergencePlan {
         ray_counts: vec![16, 32],
         seeds: vec![91, 93],
@@ -97,7 +97,7 @@ fn invalid_axes_fail_before_tracing_and_case_errors_are_retained() {
     let model = dir.join("model.json");
     let scene: Scene =
         serde_json::from_str(include_str!("../examples/sequential_lens.json")).unwrap();
-    Project::new(scene).save(&model).unwrap();
+    design::save(&Design::from_scene(scene), &model).unwrap();
     let mut plan = ConvergencePlan {
         ray_counts: vec![0],
         save_runs: false,

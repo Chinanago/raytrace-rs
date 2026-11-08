@@ -66,6 +66,13 @@ def owned_step_box():
     return "ISO-10303-21;\nHEADER;FILE_DESCRIPTION(('Owned test'),'2;1');FILE_NAME('owned.step','',(''),(''),'raytrace','','');FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));ENDSEC;\nDATA;\n" + "".join(f"#{i}={r};\n" for i,r in enumerate(records,1)) + "ENDSEC;END-ISO-10303-21;\n"
 
 
+def scene_of(design):
+    """The scene of the only part of a design that holds one system."""
+    if len(design["parts"]) != 1 or len(design["occurrences"]) != 1:
+        raise ValueError("Expected a design with one part and one occurrence")
+    return design["parts"][0]["scene"]
+
+
 def check(archive, output):
     if os.name != "nt":
         raise ValueError("This acceptance check targets Windows")
@@ -130,16 +137,16 @@ def check(archive, output):
         # A fresh native file verifies parsing and source-file-independent replay.
         native = root / "owned.zmx"
         native.write_text("MODE SEQ\nUNIT MM\nENPD 2\nWAVM 1 .55 1\nSURF 0\nTYPE STANDARD\nDISZ INFINITY\nSURF 1\nTYPE STANDARD\nSTOP\nDIAM 1\nDISZ 10\nSURF 2\nTYPE STANDARD\nDIAM 2\nDISZ 0\n", encoding="utf-8")
-        run("raytrace-rs", "inspect", f"model.path={native}", "output=owned.project.json")
-        project = record("owned.project.json")
-        project["scene"]["surfaces"][-1]["pose"]["translation_mm"][2] = 12.0
-        (root / "moved.project.json").write_text(json.dumps(project), encoding="utf-8")
+        run("raytrace-rs", "inspect", f"model.path={native}", "output=owned.design.json")
+        design = record("owned.design.json")
+        scene_of(design)["surfaces"][-1]["pose"]["translation_mm"][2] = 12.0
+        (root / "moved.design.json").write_text(json.dumps(design), encoding="utf-8")
         native.unlink()
-        run("raytrace-rs", "trace", "model.path=moved.project.json", "export_zmx=moved.zmx", "threads:=1", "output=moved.run.json")
+        run("raytrace-rs", "trace", "model.path=moved.design.json", "export_zmx=moved.zmx", "threads:=1", "output=moved.run.json")
         run("raytrace-rs", "trace", "model.path=moved.zmx", "threads:=1", "output=native.run.json")
         if abs(record("native.run.json")["report"]["budget"]["detected"] - 1.0) > 1e-10:
             raise ValueError("Native roundtrip lost power")
-        (root / "moved.project.json").unlink()
+        (root / "moved.design.json").unlink()
         (root / "moved.zmx").unlink()
         run("raytrace-rs", "replay", "record.path=moved.run.json", "threads:=2", "output=replay.run.json")
         if record("moved.run.json")["report"] != record("replay.run.json")["report"]:
@@ -156,19 +163,19 @@ def check(archive, output):
         cache_dir = destination / "runtime" / "cad_cache"
         if cache_dir.exists() and list(cache_dir.iterdir()):
             raise ValueError("STEP acceptance needs an empty conversion cache")
-        run("raytrace-rs", "inspect", f"model.path={cad}", "output=cad.project.json")
-        project = record("cad.project.json")
-        if project["scene"]["surfaces"][0]["shape"]["type"] != "triangle_mesh":
+        run("raytrace-rs", "inspect", f"model.path={cad}", "output=cad.design.json")
+        design = record("cad.design.json")
+        if scene_of(design)["surfaces"][0]["shape"]["type"] != "triangle_mesh":
             raise ValueError("Native STEP import produced no mesh")
         caches = list(cache_dir.glob("*_native_v1.json"))
         if len(caches) != 1:
             raise ValueError("Native STEP cache was not created")
         caches[0].write_text('{"format":"corrupt"}', encoding="ascii")
         run("raytrace-rs", "inspect", f"model.path={cad}", "output=cad.recovered.json")
-        if record("cad.recovered.json")["scene"] != project["scene"]:
+        if scene_of(record("cad.recovered.json")) != scene_of(design):
             raise ValueError("Corrupt STEP cache recovery changed geometry")
-        project["scene"]["surfaces"][0]["pose"]["translation_mm"][0] = 0.25
-        (root / "cad.moved.json").write_text(json.dumps(project), encoding="utf-8")
+        scene_of(design)["surfaces"][0]["pose"]["translation_mm"][0] = 0.25
+        (root / "cad.moved.json").write_text(json.dumps(design), encoding="utf-8")
         csv = root / "cad.rays.csv"
         csv.write_text("id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium\n0,0,0,-5,0,0,1,1,.55,0\n", encoding="ascii")
         for original in [step,catalog,cad,*caches]:

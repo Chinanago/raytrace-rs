@@ -42,33 +42,39 @@ impl App {
             });
         });
         ui.add_space(10.0);
-        let markers: Vec<_> = self
-            .project
-            .assembly
-            .as_ref()
-            .map(|a| {
-                a.components
-                    .iter()
-                    .enumerate()
-                    .map(|(i, c)| PartMarker {
-                        index: i,
-                        label: format!("{} {}", i + 1, kind_label(c.kind)),
-                        position: c.pose.translation_mm,
-                        enabled: c.enabled,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        let markers: Vec<_> = if self.design.is_assembly() {
+            self.design
+                .occurrences
+                .iter()
+                .enumerate()
+                .map(|(i, o)| PartMarker {
+                    index: i,
+                    label: format!(
+                        "{} {}",
+                        i + 1,
+                        kind_label(
+                            self.design
+                                .part(&o.part)
+                                .map_or(PartKind::Optic, |p| p.kind)
+                        )
+                    ),
+                    position: o.pose.translation_mm,
+                    enabled: o.enabled,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         // Geometry always comes from the editor; rays belong to a completed revision.
         let paths = visible_paths(self.result.as_ref(), self.stale, self.show_rays);
         let placement = draw_paths(
             ui,
-            &self.project.scene,
+            &self.compiled.scene,
             paths,
             self.projection,
             (ui.available_height() - 30.0).max(120.0),
             &markers,
-            if self.project.assembly.is_some() {
+            if self.design.is_assembly() {
                 self.component
             } else {
                 self.selected
@@ -83,13 +89,8 @@ impl App {
             }
             self.component = index;
             if delta.norm() > 0.0 {
-                if let Some(c) = self
-                    .project
-                    .assembly
-                    .as_mut()
-                    .and_then(|a| a.components.get_mut(index))
-                {
-                    c.pose.translation_mm = c.pose.translation_mm + delta;
+                if let Some(o) = self.design.occurrences.get_mut(index) {
+                    o.pose.translation_mm = o.pose.translation_mm + delta;
                 }
                 self.refresh_components();
             }
@@ -517,7 +518,7 @@ mod tests {
     fn drag_handle_changes_the_component_in_the_selected_projection() {
         let ctx = egui::Context::default();
         install(&ctx);
-        let scene = assembly::empty_scene("drag check");
+        let scene = design::empty_scene("drag check");
         let markers = [
             PartMarker {
                 index: 0,
@@ -595,7 +596,7 @@ mod tests {
         for _ in 0..3 {
             frame(&mut app, &ctx, vec![]);
         }
-        let original = serde_json::to_value(&app.project).unwrap();
+        let original = serde_json::to_value(&app.design).unwrap();
         let p = Pos2::new(850.0, 250.0);
         frame(
             &mut app,
@@ -640,7 +641,7 @@ mod tests {
         );
         let panned = serde_json::to_value(&app.camera).unwrap();
         assert_ne!(zoomed["views"][0]["center"], panned["views"][0]["center"]);
-        assert_eq!(original, serde_json::to_value(&app.project).unwrap());
+        assert_eq!(original, serde_json::to_value(&app.design).unwrap());
         assert!(!app.history.can_undo());
         app.camera.request = Some(CameraRequest::All);
         frame(&mut app, &ctx, vec![]);

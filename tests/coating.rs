@@ -1,8 +1,8 @@
 use raytrace_rs::{
     coating::parse_zemax,
+    design,
     math::V3,
     model::{Mode, Ray, Scene},
-    project::Project,
     trace::{TraceOptions, trace},
 };
 use serde_json::{Value, json};
@@ -120,7 +120,7 @@ fn native_zmx_coating_is_saved_with_results_and_uncoated_override_is_explicit() 
     let path = dir.join("lens.zmx");
     std::fs::write(&path,"MODE SEQ\nUNIT MM\nCOFN TEST.DAT\nWAVM 1 0.55 1\nSURF 0\n DISZ INFINITY\nSURF 1\n TYPE STANDARD\n DISZ 5\n COAT MYCOAT\nSURF 2\n TYPE STANDARD\n DISZ 0\n").unwrap();
     std::fs::write(dir.join("TEST.DAT"), "IDEAL MYCOAT 0.7 0.1\n").unwrap();
-    let mut p = Project::open(&path, &[]).unwrap();
+    let mut p = design::open(&path, &[]).unwrap();
     assert!(p.trace_scene().is_ok());
     let report = p.compatibility_report();
     assert!(
@@ -130,16 +130,16 @@ fn native_zmx_coating_is_saved_with_results_and_uncoated_override_is_explicit() 
             .any(|e| e.code == "coating_model")
     );
     let json_path = dir.join("project.json");
-    p.save(&json_path).unwrap();
+    design::save(&p, &json_path).unwrap();
     std::fs::remove_file(dir.join("TEST.DAT")).unwrap();
-    let saved = Project::open(&json_path, &[]).unwrap();
+    let saved = design::open(&json_path, &[]).unwrap();
     let trace_scene = saved.trace_scene().unwrap().prepare().unwrap();
     let traced = trace(&trace_scene, &[ray()], TraceOptions::default());
     near(traced.budget.detected, 0.7);
     near(traced.budget.surface_absorbed, 0.2);
-    p.allow_uncoated = true;
+    p.conditions.allow_uncoated = true;
     assert!(p.trace_scene().unwrap().surfaces[0].coating.is_none());
-    assert!(Project::open(&path, &[]).unwrap().trace_scene().is_err());
+    assert!(design::open(&path, &[]).unwrap().trace_scene().is_err());
 }
 
 #[test]

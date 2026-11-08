@@ -1824,6 +1824,7 @@ version = "0.11.0"
 dependencies = [
  "rayon",
  "raytrace-core",
+ "raytrace-doc",
  "raytrace-io",
  "schemars",
  "serde",
@@ -1900,6 +1901,7 @@ dependencies = [
  "image",
  "rayon",
  "raytrace-core",
+ "raytrace-doc",
  "raytrace-formats",
  "schemars",
  "serde",

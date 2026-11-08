@@ -1,9 +1,9 @@
-//! Optical projects, persistence and result exports.
-pub mod assembly;
+//! Design files, calculation records, external-format imports and result exports.
 pub mod cad;
-pub mod compatibility;
+pub use raytrace_doc::compatibility;
+pub mod design;
 pub mod export;
-pub mod project;
+mod legacy;
 pub mod record;
 pub mod storage;
 pub mod zemax;
