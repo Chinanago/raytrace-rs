@@ -18,10 +18,10 @@ cargo build --release --locked --workspace --bins
 GUIなしで使う場合は `cargo build --release --locked -p raytrace-cli` でビルドします。
 
 ```powershell
-./target/release/raytrace-rs.exe examples/sequential_lens.json --threads 4 --output results/lens.json
-cargo run --release --locked -p raytrace-cli -- examples/sequential_lens.json --threads 4 --output results/lens.json
+./target/release/raytrace-rs.exe trace model.path=examples/sequential_lens.json threads:=4 output=results/lens.json
+cargo run --release --locked -p raytrace-cli -- trace model.path=examples/sequential_lens.json threads:=4 output=results/lens.json
 cargo run --release --example assembly_demo -- results/assembly_demo.json
-./target/release/raytrace-rs.exe results/assembly_demo.json --threads 4 --output results/assembly_trace.json
+./target/release/raytrace-rs.exe trace model.path=results/assembly_demo.json threads:=4 output=results/assembly_trace.json
 ```
 
 ## GUI・Rustの基盤
@@ -232,12 +232,12 @@ Cargo workspaceとして、`crates/` 以下の6クレートに分けています
 
 計算とファイル操作の入口は `raytrace_app::engine` です。`Request` は `command` で操作を選ぶJSONで、`trace`・`replay`・`inspect`・`open`・`scan`・`resume_scan`・`convergence`・`save_project`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version` を持ちます。`engine::execute_with` が `Outcome` または `EngineError`（固定の `code` と日本語の `message`）を返し、`engine::respond` がCLIの応答 `{ok, command, result, error}` にまとめます。
 
-CLIのオプションは同じリクエストへの変換で、`raytrace-rs run` はリクエストJSONを直接実行します。GUIは同じリクエストを作り、作業スレッドで `execute_with` に渡します。中止は `TraceControl`、走査の進捗は `Progress` のコールバックで受け取ります。GUIはモデルの編集・光路図の描画・スクリーン表示の後処理を担い、追跡・読込・保存・書出しは直接呼びません。GUIのプレビュー光路（各光源の先頭から64本）、合計200万光線の上限、計算記録を開いたときの表示用光路もエンジンのオプションです。
+CLIに独自のオプションはありません。`raytrace-rs COMMAND a.b=文字列 a.b:=JSON` の引数をリクエストのフィールドとして組み立て、`raytrace-rs run` はリクエストJSONを直接実行します。どちらも同じ検証を通り、`COMMAND --help` はスキーマから生成します。そのため、CLIで使える操作とフィールドは `Request` の定義だけで決まり、引数の処理を個別に保守する必要がありません。GUIは同じリクエストを作り、作業スレッドで `execute_with` に渡します。中止は `TraceControl`、走査の進捗は `Progress` のコールバックで受け取ります。GUIはモデルの編集・光路図の描画・スクリーン表示の後処理を担い、追跡・読込・保存・書出しは直接呼びません。GUIのプレビュー光路（各光源の先頭から64本）、合計200万光線の上限、計算記録を開いたときの表示用光路もエンジンのオプションです。
 
 モデル・計算記録・計画・応答の型は `schemars` でJSON Schemaを導出します。下位クレートでは `schema` 機能で有効にし、`raytrace-app` は常に有効です。スキーマは `schemas/` にコミットし、型を変えたら次のコマンドで更新します。`tests/engine.rs` が古いスキーマを検出します。各クレートの `Error::code()` は応答の `error.code` に使う固定の識別子です。
 
 ```powershell
-cargo run -q --locked -p raytrace-cli -- --schema all --output schemas
+cargo run -q --locked -p raytrace-cli -- schema output=schemas
 ```
 
 ライブラリのPNG出力には `--features png` を指定します。SPCDの文字列解析は `Spectrum::parse_spcd`、ファイルの読込・文字コード判定は `raytrace_rs::zemax::read_spcd` を使います。

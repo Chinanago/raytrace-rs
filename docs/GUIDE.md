@@ -81,8 +81,8 @@ GUIの「光量の内訳 → 追跡の診断」から、未解決・媒質不整
 計算中は完了した発射光線数を表示し、「中止」で停止できます。単発計算では前回の完了結果を保持します。走査は完了したケースを保存し、計算途中だったケースを未完了へ戻します。「走査記録を開く… → 未完了のケースを再開」で続行でき、完了・失敗が確定したケースを維持します。走査記録は同じソフトの版で再開します。各ケースは合計200万光線、計画全体は256ケースが上限です。
 
 ```powershell
-./raytrace-rs.exe --scan examples/sequential_lens.json --plan scan_plan.json --output results/focus_scan
-./raytrace-rs.exe --resume-scan results/focus_scan
+./raytrace-rs.exe scan model.path=examples/sequential_lens.json plan:=@scan_plan.json output=results/focus_scan
+./raytrace-rs.exe resume_scan directory=results/focus_scan
 ```
 
 `scan_plan.json` の例です。部品番号・面番号・軸番号は0から始まり、軸0/1/2はX/Y/Zです。`rays_per_source: null` は元の本数を使います。
@@ -104,7 +104,7 @@ GUIの「光量の内訳 → 追跡の診断」から、未解決・媒質不整
 
 タイトルの点印は未保存の編集を表し、タイトルにカーソルを合わせると現在の保存先を確認できます。「ファイル → 最近開いたファイル」から読み直せます。計算記録JSONも「開く…」で配置と結果を表示できます。
 
-明示入力の光線を含む記録では、GUIは保存済みの結果を表示し、「モデル光源で計算」で光源定義からの計算へ切り替えます。保存した入力光線を固定して再計算する場合はCLIの `--replay` を使います。
+明示入力の光線を含む記録では、GUIは保存済みの結果を表示し、「モデル光源で計算」で光源定義からの計算へ切り替えます。保存した入力光線を固定して再計算する場合はCLIの `replay` を使います。
 
 Windowsでは設定・CADキャッシュ・GUI走査記録を `%LOCALAPPDATA%/Raytrace` に保存します。`RAYTRACE_DATA_DIR` で保存先を変更できます。プロジェクト・計算結果・スクリーンの出力先は保存時に指定します。
 
@@ -113,19 +113,19 @@ Windowsでは設定・CADキャッシュ・GUI走査記録を `%LOCALAPPDATA%/Ra
 CLIの計算結果とGUIの「ファイル → 計算結果を保存…」は、計算時点のプロジェクト・実際に使った光学系・光源条件・ソフトの版・追跡上限を結果と一緒に保存します。CSV入力では発射光線そのものを含み、元のCSVを開き直さずに再計算できます。
 
 ```powershell
-./raytrace-rs.exe examples/sequential_lens.json --rays-per-source 1024 --output results/lens_run.json
-./raytrace-rs.exe --replay results/lens_run.json --threads 4 --output results/lens_replay.json
+./raytrace-rs.exe trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 output=results/lens_run.json
+./raytrace-rs.exe replay record.path=results/lens_run.json threads:=4 output=results/lens_replay.json
 ```
 
-計算記録の形式は `raytrace-run-v1`、CLI出力の `schema_version` は2です。既存の `report`・光量比・ベンチマーク欄に `calculation` を追加しています。再計算では出力先・スレッド数・繰返し回数・保存する光線情報を指定でき、記録した光学条件を維持します。GUIの光路表示用サンプルは計算記録から除き、再計算時に `--paths N` で指定できます。配置の編集にはプロジェクトJSONを使います。
+計算記録の形式は `raytrace-run-v1`、`schema_version` は2です（`schema name=run`）。既存の `report`・光量比・ベンチマーク欄に `calculation` を追加しています。再計算では出力先・スレッド数・繰返し回数・保存する光線情報を指定でき、記録した光学条件を維持します。GUIの光路表示用サンプルは計算記録から除き、再計算時に `paths:=N` で指定できます。配置の編集にはプロジェクトJSONを使います。
 
 ## 収束確認
 
 光線数・seed・画素数・CAD分割精度を変えた計算を一括実行できます。既定は各光源256／1024／4096本、seed 42／43、64角画素、CAD分割精度0.02 mmです。
 
 ```powershell
-./raytrace-rs.exe --convergence examples/sequential_lens.json --output results/lens_convergence
-./raytrace-rs.exe --convergence model.zmx --plan plan.json --output results/cad_convergence
+./raytrace-rs.exe convergence model.path=examples/sequential_lens.json output=results/lens_convergence
+./raytrace-rs.exe convergence model.path=model.zmx plan:=@plan.json output=results/cad_convergence
 ```
 
 計画JSONの例です。空配列の `ray_counts`・`seeds`・`pixels` は元の設定を維持します。指定したseedは先頭光源へ割り当て、以後の光源は順に+1します。
@@ -143,7 +143,7 @@ CLIの計算結果とGUIの「ファイル → 計算結果を保存…」は、
 
 `convergence.json` に受光量、光量収支、半値幅、画素寸法、三角形数、追跡時間、各ケースのエラーを保存します。ほかの条件を揃え、光線数・画素数の最大値、CAD分割精度の最小値、最初のseedをそれぞれ比較先とします。分布の差は、最大64角の共通画素へ面積比で集約した光量のL1差を、発射基準光量に対する割合で示します。細かい画素内の分布は一様と仮定した比較です。差分は感度の確認値で、収束の自動判定は行いません。
 
-CAD分割精度を比較する場合はSTEP参照を持つ元のZMXを指定します。保存済みJSONのメッシュは、その保存時の分割を使います。`save_runs: true` ではケースごとの計算記録も保存し、`--replay` で再計算できます。各ケースは合計200万光線、計画全体は256ケースが上限です。
+CAD分割精度を比較する場合はSTEP参照を持つ元のZMXを指定します。保存済みJSONのメッシュは、その保存時の分割を使います。`save_runs: true` ではケースごとの計算記録も保存し、`replay` で再計算できます。各ケースは合計200万光線、計画全体は256ケースが上限です。
 
 ## 光源サンプリング
 
@@ -173,25 +173,30 @@ CAD分割精度を比較する場合はSTEP参照を持つ元のZMXを指定し�
 
 ## コマンドライン
 
-CLIの本体はJSONリクエストを受け取るエンジンです。GUIも同じエンジンにリクエストを渡して計算・読込・保存を行います。オプション形式で指定した場合も、同じリクエストに変換して実行します。
+CLIの本体はJSONリクエストを受け取るエンジンです。GUIも同じエンジンにリクエストを渡して計算・読込・保存を行います。CLIに独自のオプションはなく、引数はリクエストJSONのフィールドをそのまま指定します。
 
 ```powershell
-./raytrace-rs.exe examples/sequential_lens.json --threads 4 --output results/lens.json
-./raytrace-rs.exe examples/integrator_rod.json --threads 4 --output results/rod.json
-./raytrace-rs.exe lens.zmx --inspect --output results/lens.raytrace.json
-./raytrace-rs.exe source.zmx --wavelength-um 0.465 --rays-per-source 4096 --sampling sobol --output results/source.json
+./raytrace-rs.exe trace model.path=examples/sequential_lens.json threads:=4 output=results/lens.json
+./raytrace-rs.exe inspect model.path=lens.zmx output=results/lens.raytrace.json
+./raytrace-rs.exe trace model.path=source.zmx overrides.wavelength_um:=0.465 overrides.rays_per_source:=4096 overrides.sampling=sobol output=results/source.json
 ```
 
-| オプション | 用途 |
+| 書き方 | 意味 |
 |---|---|
-| `--mode sequential` / `non_sequential` | 追跡方式を上書き |
-| `--sampling sobol` / `pseudorandom` | 全光源のサンプリング方式を上書き |
-| `--rays-per-source N` | 各光源の本数を上書き |
-| `--rays-csv INPUT.csv` | 発射位置・方向・重み・波長を指定した光線を入力 |
-| `--terminals` / `--paths N` | 終端光線／入力順で先頭N本の発射光線の光路を保存 |
-| `--repeat N` | 同じ光線をN回追跡し、処理時間の中央値を出力 |
-| `--inspect` | ZMXを読み込み、追跡せずにプロジェクトへ保存 |
-| `--schema NAME` | JSONスキーマを出力（`all --output DIR` で全件） |
+| `a.b=文字列` | フィールド `a.b` に文字列を入れる（パスなど） |
+| `a.b:=JSON` | 数値・真偽値・配列などのJSONを入れる（`threads:=4`、`terminals:=true`） |
+| `a.b:=@FILE.json` | ファイルの中身をJSONとして入れる（`plan:=@scan_plan.json`） |
+
+`raytrace-rs --help` でコマンドの一覧、`raytrace-rs trace --help` でそのコマンドのフィールド・型・既定値・説明を表示します。どちらもスキーマから生成するため、書かれている内容がそのまま使えるフィールドです。スキーマにないフィールドは `invalid_request` になります。よく使う `trace` のフィールドは次の通りです。
+
+| フィールド | 用途 |
+|---|---|
+| `model.path` | `.zmx`・プロジェクトJSON・光学系JSONのパス（`model.scene:=@...` でインライン指定も可） |
+| `output` | 計算記録の保存先。省略すると保存せず、応答の概要だけを返します |
+| `overrides.mode` / `sampling` / `rays_per_source` / `wavelength_um` / `ignore_coatings` | 追跡方式・サンプリング・各光源の本数・単色波長・未コート計算の上書き |
+| `rays.csv` | 発射位置・方向・重み・波長を指定した光線CSV |
+| `terminals` / `paths` | 終端光線／入力順で先頭N本の発射光線の光路を保存 |
+| `threads` / `repeat` / `warmup` | スレッド数、同じ光線の繰返し回数（中央値を出力）、計測前のウォームアップ |
 
 ### JSONの入出力
 
@@ -204,27 +209,27 @@ CLIの本体はJSONリクエストを受け取るエンジンです。GUIも同�
 
 失敗時は終了コード1です。`error.code` は `io`・`invalid_json`・`invalid_request`・`usage`・`invalid_scene`・`zmx`・`plan`・`limit`・`cases_failed`・`cancelled` などの固定の識別子で、`error.message` は日本語の説明です。走査や収束確認で一部のケースが失敗した場合は、`result` と `cases_failed` の両方を返します。追跡の `result` には光量収支の割合・検出器ごとの割合・収支誤差・警告、`inspect` には `traceable` と互換性レポートを含みます。詳しい結果は `output` のファイルを読みます。
 
-`run` でJSONリクエストを直接実行できます。`-` は標準入力で、複数のリクエストを続けて渡すと、それぞれの応答を1行ずつ返します。
+`run` でJSONリクエストを直接実行できます。`-` は標準入力で、複数のリクエストを続けて渡すと、それぞれの応答を1行ずつ返します。引数の形式と `run` は同じリクエストになります。
 
 ```powershell
 ./raytrace-rs.exe run request.json
 '{"command":"trace","model":{"path":"examples/sequential_lens.json"},"overrides":{"rays_per_source":1024},"output":"results/lens.json"}' | ./raytrace-rs.exe run -
 ```
 
-`model` はファイルパス `{"path": ...}`、プロジェクトJSON `{"project": {...}}`、光学系JSON `{"scene": {...}}` のいずれかで指定します。`include_record: true` を付けると、計算記録そのものを `result.record` に含めます。コマンドは `trace`・`replay`・`inspect`・`open`・`scan`・`resume_scan`・`convergence`・`save_project`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version` です。
+`include_record:=true` を付けると、計算記録そのものを `result.record` に含めます。コマンドは `trace`・`replay`・`inspect`・`open`・`scan`・`resume_scan`・`convergence`・`save_project`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version` です。
 
-形式はリポジトリの [schemas/](../schemas/) と `--schema` で確認できます。
+形式はリポジトリの [schemas/](../schemas/) にあり、`raytrace-rs schema name=scene` で応答の `result.schema` として、`schema name=scene output=scene.schema.json` でファイルとして取得できます。`schema output=DIR` は全件を書き出します。
 
 | スキーマ | 内容 |
 |---|---|
-| `request` / `response` | `run` のリクエストと標準出力の応答 |
+| `request` / `response` | リクエストと標準出力の応答 |
 | `scene` | 光学系モデル（`examples/*.json` と同じ形式） |
-| `project` | プロジェクトJSON（GUIの保存・`--inspect` の出力） |
-| `run` | 計算記録（追跡・再計算の出力） |
+| `project` | プロジェクトJSON（GUIの保存・`inspect` の出力） |
+| `run` | 計算記録（`trace`・`replay` の出力） |
 | `scan_plan` / `scan` | 走査の計画と `scan.json` |
 | `convergence_plan` / `convergence` | 収束確認の計画と `convergence.json` |
 
-処理時間は、モデルの光源を使う場合は光線生成・追跡・集計を含みます。CSVや明示入力光線を保存した記録を使う場合は、追跡・集計を含みます。モデルの読込・準備、ファイル入出力、描画は計測から除きます。オプション形式の追跡と再計算は計測前にウォームアップを1回行い、`run` では `"warmup": true` で同じ動作になります。結果の `benchmark.timed_scope` に実際の計測範囲を保存します。
+処理時間は、モデルの光源を使う場合は光線生成・追跡・集計を含みます。CSVや明示入力光線を保存した記録を使う場合は、追跡・集計を含みます。モデルの読込・準備、ファイル入出力、描画は計測から除きます。`warmup:=true` で計測前にウォームアップを1回行います。結果の `benchmark.timed_scope` に実際の計測範囲を保存します。
 
 ## カタログとSTEPの読込
 

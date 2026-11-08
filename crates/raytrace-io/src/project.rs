@@ -86,7 +86,7 @@ impl Project {
             .map_err(|e| crate::Error::json(Some(path.to_path_buf()), e))?;
         if value.get("format").is_some() {
             if value["format"] == crate::record::RUN_FORMAT {
-                return Err(crate::Error::Project("計算記録は raytrace-rs --replay で再計算できます。配置の編集にはプロジェクトJSONを開いてください".into()));
+                return Err(crate::Error::Project("計算記録は replay コマンドで再計算できます。配置の編集にはプロジェクトJSONを開いてください".into()));
             }
             let mut project: Self = serde_json::from_value(value)
                 .map_err(|e| crate::Error::json(Some(path.to_path_buf()), e))?;

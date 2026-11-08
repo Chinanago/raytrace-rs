@@ -19,24 +19,35 @@ The baseline below is **v0.11.0**. For another installed version, use its matchi
 
 The Windows ZIP runs without Rust or OpticStudio installed. If a source build is needed, run `cargo build --release --locked -p raytrace-cli` from the checkout for the CLI, or `cargo build --release --locked --workspace --bins` for CLI and GUI together. Windows is the verified distribution platform for v0.11.0.
 
-## JSON engine (builds whose `--help` lists `run`)
+## Command forms by version
 
-Newer builds run every operation as a JSON request; the GUI sends the same requests. Classic options are translated into requests, so both forms behave identically.
+Check `--help` first. v0.11.0 uses the options shown in the PowerShell examples below. Newer builds (`--help` lists commands such as `trace` and `run`) have no options of their own: every argument sets a field of a JSON request, and the GUI sends the same requests.
 
-- stdout carries exactly one JSON line per request: `{"ok": true, "command": ..., "result": {...}}` or `{"ok": false, "command": ..., "error": {"code": ..., "message": ...}}`. Exit code 1 on failure. Human text, warnings and scan progress go to stderr.
-- `raytrace-rs run REQUEST.json` or `raytrace-rs run -` (stdin, several requests in a row) executes requests directly. `model` is `{"path": ...}`, `{"project": {...}}` or `{"scene": {...}}`; `include_record: true` returns the full calculation record in `result.record`.
-- `raytrace-rs --schema request|response|scene|project|run|scan_plan|scan|convergence_plan|convergence` prints the JSON Schema; the package's `schemas/` folder holds the same files. Prefer the schemas over source code when writing models, plans and requests.
+- `raytrace-rs COMMAND field=text field:=JSON field:=@file.json`; dotted names reach nested fields (`overrides.rays_per_source:=1024`). `raytrace-rs COMMAND --help` lists that command's fields, types, defaults and descriptions, generated from the schema. Unknown fields fail with `invalid_request`.
+- `raytrace-rs run REQUEST.json` or `raytrace-rs run -` (stdin, several requests in a row) executes the same requests as JSON. `model` is `{"path": ...}`, `{"project": {...}}` or `{"scene": {...}}`; `include_record` returns the full calculation record in `result.record`.
+- stdout carries exactly one JSON line per request: `{"ok": true, "command": ..., "result": {...}}` or `{"ok": false, "command": ..., "error": {"code": ..., "message": ...}}`. Exit code 1 on failure. Human text, warnings and scan progress go to stderr. Without `output`, `trace` and `replay` save nothing and return only the summary.
+- `raytrace-rs schema name=scene` returns a JSON Schema in `result.schema` (names: request, response, scene, project, run, scan_plan, scan, convergence_plan, convergence); `schema output=DIR` writes all of them. The package's `schemas/` folder holds the same files. Prefer the schemas over source code when writing models, plans and requests.
 - `error.code` values are stable identifiers such as `io`, `invalid_json`, `invalid_request`, `usage`, `invalid_scene`, `invalid_ray`, `zmx`, `agf`, `step`, `plan`, `limit`, `cases_failed` and `cancelled`; `message` is Japanese.
-- Classic-option traces and replays include one untimed warmup; a `run` request does so only with `"warmup": true`. Results are identical either way.
+
+| v0.11.0 | Newer builds |
+|---|---|
+| `MODEL --output RUN.json` | `trace model.path=MODEL output=RUN.json` |
+| `--rays-per-source N`, `--sampling S`, `--mode M`, `--wavelength-um W`, `--ignore-coatings` | `overrides.rays_per_source:=N`, `overrides.sampling=S`, `overrides.mode=M`, `overrides.wavelength_um:=W`, `overrides.ignore_coatings:=true` |
+| `--rays-csv FILE`, `--terminals`, `--paths N`, `--threads N`, `--repeat N` | `rays.csv=FILE`, `terminals:=true`, `paths:=N`, `threads:=N`, `repeat:=N` (add `warmup:=true` to match the old benchmark timing) |
+| `MODEL --inspect --output P.json`, `--export-zmx Z` | `inspect model.path=MODEL output=P.json`, `export_zmx=Z` |
+| `--replay RUN.json --output NEW.json` | `replay record.path=RUN.json output=NEW.json` |
+| `--scan MODEL --plan PLAN --output DIR`, `--resume-scan DIR` | `scan model.path=MODEL plan:=@PLAN output=DIR`, `resume_scan directory=DIR` |
+| `--convergence MODEL --plan PLAN --output DIR` | `convergence model.path=MODEL plan:=@PLAN output=DIR` |
 
 ```bash
-echo '{"command":"inspect","model":{"path":"lens.zmx"}}' | raytrace-rs run -
-echo '{"command":"trace","model":{"path":"examples/sequential_lens.json"},"overrides":{"rays_per_source":1024,"sampling":"sobol"},"threads":4,"output":"results/lens.json"}' | raytrace-rs run -
+raytrace-rs inspect model.path=lens.zmx
+raytrace-rs trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 overrides.sampling=sobol threads:=4 output=results/lens.json
+echo '{"command":"replay","record":{"path":"results/lens.json"},"output":"results/lens_replay.json"}' | raytrace-rs run -
 ```
 
-## First run from an extracted Windows ZIP
+## First run from an extracted Windows ZIP (v0.11.0 options)
 
-Run these PowerShell commands from the extracted application folder. The examples include dispersive materials and explicitly set 1024 rays per source, Sobol sampling and four threads. Those are example parameters; omitted overrides retain model settings, and an omitted thread count uses the runtime's default. Set paths and options for the current task.
+Run these PowerShell commands from the extracted application folder; for newer builds convert the options with the table above. The examples include dispersive materials and explicitly set 1024 rays per source, Sobol sampling and four threads. Those are example parameters; omitted overrides retain model settings, and an omitted thread count uses the runtime's default. Set paths and options for the current task.
 
 ```powershell
 $rtRoot = (Get-Location).Path
@@ -70,7 +81,7 @@ CLI lengths are **mm**, wavelengths **μm**; GUI wavelengths are **nm**. `--wave
 
 ## Fixed rays, replay and parameter work
 
-`--rays-csv` reads:
+Explicit rays (`--rays-csv`, or `rays.csv=` in newer builds) read:
 `id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium`.
 Check medium indices against the effective scene. `--terminals` saves terminal rays; `--paths N` saves paths for the first N launch rays in input order. Large path collections increase output size.
 

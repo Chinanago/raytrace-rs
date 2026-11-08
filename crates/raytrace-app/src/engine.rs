@@ -1,10 +1,10 @@
 //! JSON request/response entry point shared by the CLI and the GUI.
 //!
-//! Every calculation and file operation is one [`Request`]. The CLI reads requests as
-//! JSON (`raytrace-rs run REQUEST.json`) or builds them from its options; the GUI builds
-//! the same values in memory. [`execute`] runs a request and [`respond`] wraps the outcome
-//! in the [`Response`] envelope printed by the CLI. `raytrace-rs --schema request` and
-//! `--schema response` describe both formats.
+//! Every calculation and file operation is one [`Request`]. The CLI turns its arguments
+//! into a request generically (`raytrace-rs COMMAND field=value ...` or `run REQUEST.json`);
+//! the GUI builds the same values in memory. [`execute`] runs a request and [`respond`]
+//! wraps the outcome in the [`Response`] envelope printed by the CLI. The `schema`
+//! command (`raytrace-rs schema name=request`) describes both formats.
 mod run;
 
 use crate::{convergence, scan};
@@ -30,8 +30,8 @@ use std::{collections::BTreeMap, fs, path::Path, path::PathBuf};
 pub enum Request {
     /// Report the software version.
     Version,
-    /// Return one JSON Schema.
-    Schema { name: SchemaName },
+    /// Return one JSON Schema, or write schemas to files.
+    Schema(SchemaRequest),
     /// Load a project, ZMX, calculation record or scan directory and return it.
     Open(OpenRequest),
     /// Load a model, report its compatibility and optionally save it as project JSON.
@@ -61,7 +61,7 @@ impl Request {
     pub fn command(&self) -> &'static str {
         match self {
             Self::Version => "version",
-            Self::Schema { .. } => "schema",
+            Self::Schema(_) => "schema",
             Self::Open(_) => "open",
             Self::Inspect(_) => "inspect",
             Self::Trace(_) => "trace",
@@ -83,9 +83,9 @@ impl Request {
 pub enum ModelInput {
     /// `.zmx`, project JSON or scene JSON file.
     Path(PathBuf),
-    /// Inline project JSON (the `--schema project` format).
+    /// Inline project JSON (the `schema name=project` format).
     Project(Box<Project>),
-    /// Inline scene JSON (the `--schema scene` format, as in `examples/*.json`).
+    /// Inline scene JSON (the `schema name=scene` format, as in `examples/*.json`).
     Scene(Box<Scene>),
 }
 
@@ -140,6 +140,7 @@ pub struct OpenRequest {
 #[serde(deny_unknown_fields)]
 pub struct InspectRequest {
     pub model: ModelInput,
+    /// Extra AGF catalog folders for ZMX import.
     #[serde(default)]
     pub catalogs: Vec<PathBuf>,
     /// Save the imported project JSON here.
@@ -161,6 +162,7 @@ pub struct InspectRequest {
 #[serde(deny_unknown_fields)]
 pub struct TraceRequest {
     pub model: ModelInput,
+    /// Extra AGF catalog folders for ZMX import.
     #[serde(default)]
     pub catalogs: Vec<PathBuf>,
     /// Explicit launch rays; omitted uses the model sources.
@@ -192,7 +194,7 @@ pub struct TraceRequest {
     /// Also export the effective model as ZMX before tracing.
     #[serde(default)]
     pub export_zmx: Option<PathBuf>,
-    /// Save the calculation record (the `--schema run` format) here.
+    /// Save the calculation record (the `schema name=run` format) here.
     #[serde(default)]
     pub output: Option<PathBuf>,
     /// Return the full calculation record in the result.
@@ -227,6 +229,7 @@ pub struct ReplayRequest {
 #[serde(deny_unknown_fields)]
 pub struct ScanRequest {
     pub model: ModelInput,
+    /// Extra AGF catalog folders for ZMX import.
     #[serde(default)]
     pub catalogs: Vec<PathBuf>,
     pub plan: scan::ScanPlan,
@@ -248,8 +251,9 @@ pub struct ResumeScanRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConvergenceRequest {
-    /// Model file; CAD deflection comparisons need the original STEP-referencing ZMX.
-    pub model: PathBuf,
+    /// Model file (`model.path`); CAD deflection comparisons need the original
+    /// STEP-referencing ZMX, because each case re-reads it.
+    pub model: ModelInput,
     #[serde(default)]
     pub plan: convergence::ConvergencePlan,
     /// Directory for `convergence.json` and the case records.
@@ -276,6 +280,7 @@ pub struct SaveRunRequest {
 #[serde(deny_unknown_fields)]
 pub struct ExportZmxRequest {
     pub model: ModelInput,
+    /// Extra AGF catalog folders for ZMX import.
     #[serde(default)]
     pub catalogs: Vec<PathBuf>,
     pub output: PathBuf,
@@ -299,7 +304,18 @@ pub struct ExportScreenRequest {
     pub roi: Option<ScreenRoi>,
 }
 
-/// Names accepted by the `schema` command and `raytrace-rs --schema NAME`.
+/// `name` alone returns that schema; with `output` it is written to that file.
+/// `output` alone writes every schema as `<name>.schema.json` into that directory.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SchemaRequest {
+    #[serde(default)]
+    pub name: Option<SchemaName>,
+    #[serde(default)]
+    pub output: Option<PathBuf>,
+}
+
+/// Names accepted by the `schema` command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SchemaName {
@@ -345,11 +361,6 @@ impl SchemaName {
             Self::ConvergencePlan => "convergence_plan",
             Self::Convergence => "convergence",
         }
-    }
-    /// Accepts `scan_plan` and `scan-plan`.
-    pub fn parse(name: &str) -> Option<Self> {
-        let name = name.replace('-', "_");
-        Self::ALL.into_iter().find(|s| s.as_str() == name)
     }
 }
 
@@ -534,7 +545,7 @@ pub fn execute_json(text: &str) -> Response {
         Err(error) => respond(
             "unknown",
             Err(EngineError::invalid(format!(
-                "リクエストJSONが不正です（--schema request を確認してください）: {error}"
+                "リクエストJSONが不正です（schema name=request を確認してください）: {error}"
             ))),
         ),
     }
@@ -590,9 +601,7 @@ pub fn execute_with(
         Request::Version => Ok(Outcome::Version {
             version: env!("CARGO_PKG_VERSION").into(),
         }),
-        Request::Schema { name } => Ok(Outcome::Schema {
-            schema: schema(name),
-        }),
+        Request::Schema(r) => schemas(r),
         Request::Open(r) => open(r).map(Outcome::Opened),
         Request::Inspect(r) => inspect(r).map(Outcome::Inspected),
         Request::Trace(r) => run::trace(r, control).map(Outcome::Traced),
@@ -600,7 +609,7 @@ pub fn execute_with(
         Request::Scan(r) => {
             if r.output.join("scan.json").exists() {
                 return Err(EngineError::invalid(
-                    "走査の出力先は既に存在します。resume_scanまたは新しいディレクトリを指定してください",
+                    "走査の出力先は既に存在します。resume_scan で再開するか、新しいディレクトリを指定してください",
                 ));
             }
             let project = load(r.model, &r.catalogs)?;
@@ -612,7 +621,12 @@ pub fn execute_with(
             run_scan(manifest, r.directory, r.include_manifest, control, progress)
         }
         Request::Convergence(r) => {
-            let report = convergence::run(&r.model, &r.plan, &r.output)?;
+            let ModelInput::Path(model) = r.model else {
+                return Err(EngineError::invalid(
+                    "収束確認のモデルはファイル（model.path）で指定してください",
+                ));
+            };
+            let report = convergence::run(&model, &r.plan, &r.output)?;
             Ok(Outcome::Converged(ConvergenceResult {
                 output: r.output.join("convergence.json"),
                 cases: report.cases.len(),
@@ -773,6 +787,34 @@ fn export_screen(r: ExportScreenRequest) -> Result<PathBuf, EngineError> {
         .map_err(|e| raytrace_io::Error::json(Some(path.clone()), e))?;
     fs::write(&path, bytes).map_err(|e| EngineError::io(&path, e))?;
     Ok(r.output)
+}
+
+fn schemas(r: SchemaRequest) -> Result<Outcome, EngineError> {
+    let render = |name: SchemaName| {
+        serde_json::to_string_pretty(&schema(name)).expect("schemas serialize") + "\n"
+    };
+    match (r.name, r.output) {
+        (Some(name), None) => Ok(Outcome::Schema {
+            schema: schema(name),
+        }),
+        (Some(name), Some(output)) => {
+            create_parent(&output)?;
+            fs::write(&output, render(name)).map_err(|e| EngineError::io(&output, e))?;
+            Ok(Outcome::Saved { output })
+        }
+        (None, Some(output)) => {
+            fs::create_dir_all(&output).map_err(|e| EngineError::io(&output, e))?;
+            for name in SchemaName::ALL {
+                let path = output.join(format!("{}.schema.json", name.as_str()));
+                fs::write(&path, render(name)).map_err(|e| EngineError::io(&path, e))?;
+            }
+            Ok(Outcome::Saved { output })
+        }
+        (None, None) => Err(EngineError::invalid(format!(
+            "name か output を指定してください。name: {}",
+            SchemaName::ALL.map(SchemaName::as_str).join(", ")
+        ))),
+    }
 }
 
 fn schema(name: SchemaName) -> schemars::Schema {

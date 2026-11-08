@@ -26,35 +26,28 @@ Rustがあれば、どのOSでも `cargo install --git https://github.com/Chinan
 
 ## コマンドラインで使う
 
-ZIPの展開先で実行します（Linuxでは `./raytrace-rs`）。
+ZIPの展開先で実行します（Linuxでは `./raytrace-rs`）。引数はリクエストJSONのフィールドをそのまま書きます（`a.b=文字列`、`a.b:=数値などのJSON`、`a.b:=@ファイル`）。
 
 ```powershell
-# サンプルを計算して結果をJSONに保存
-./raytrace-rs.exe examples/sequential_lens.json --output results/lens.json
+# サンプルを計算して計算記録を保存
+./raytrace-rs.exe trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 output=results/lens.json
 
 # ZMXを読み込んで、計算できるか確認（追跡はしない）
-./raytrace-rs.exe lens.zmx --inspect --output results/lens.project.json
+./raytrace-rs.exe inspect model.path=lens.zmx
 
-# 保存した結果を同じ条件で再計算
-./raytrace-rs.exe --replay results/lens.json --output results/lens_replay.json
+# 保存した計算記録を同じ条件で再計算
+./raytrace-rs.exe replay record.path=results/lens.json output=results/lens_replay.json
 ```
 
-よく使うオプション：
+`./raytrace-rs.exe --help` でコマンドの一覧、`./raytrace-rs.exe trace --help` で使えるフィールドと説明が出ます。どちらもJSONスキーマから生成しているので、CLIに独自のオプションはありません。
 
-| オプション | 内容 |
-|---|---|
-| `--rays-per-source N` | 光源ごとの光線数 |
-| `--wavelength-um 0.465` | 波長（μm）を1つに固定 |
-| `--mode sequential` / `non_sequential` | 追跡方式 |
-| `--threads N` | 使うスレッド数 |
-
-結果は標準出力に1行のJSONで返ります（`"ok"`・`"result"`、失敗時は `"error"`）。読みやすい表示は標準エラーに出ます。JSONのリクエストを直接渡すこともできます。
+結果は標準出力に1行のJSONで返ります（`"ok"`・`"result"`、失敗時は `"error"`）。読みやすい表示は標準エラーに出ます。同じリクエストをJSONで渡すこともできます。
 
 ```bash
 echo '{"command":"trace","model":{"path":"examples/sequential_lens.json"},"output":"results/lens.json"}' | ./raytrace-rs run -
 ```
 
-GUIも同じJSONリクエストで計算しています。入出力の形式は [schemas/](schemas/) にあり、`--schema request` などでも出力できます。全オプションは `--help`、パラメーター走査（`--scan`）や収束確認（`--convergence`）は[操作ガイド](docs/GUIDE.md#コマンドライン)にあります。長さはmm、CLIの波長はμmです。
+GUIも同じJSONリクエストで計算しています。入出力の形式は [schemas/](schemas/) にあります。パラメーター走査（`scan`）や収束確認（`convergence`）は[操作ガイド](docs/GUIDE.md#コマンドライン)にあります。長さはmm、波長はμmです。
 
 ## AIエージェントで使う
 

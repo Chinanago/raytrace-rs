@@ -202,7 +202,7 @@
       ]
     },
     "ConvergencePlan": {
-      "description": "Plan for `raytrace-rs --convergence MODEL --plan PLAN.json`. Every combination is traced.",
+      "description": "`plan` of the `convergence` command. Every combination is traced.",
       "type": "object",
       "properties": {
         "allow_uncoated": {

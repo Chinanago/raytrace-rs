@@ -45,21 +45,19 @@ fn cli_replays_generated_and_csv_runs_without_the_original_inputs() {
         }
         fs::write(dir.join("input.json"), serde_json::to_vec(&scene).unwrap()).unwrap();
         let mut args = vec![
-            "input.json",
-            "--threads",
-            "2",
-            "--terminals",
-            "--paths",
-            "8",
-            "--output",
-            "run.json",
+            "trace",
+            "model.path=input.json",
+            "threads:=2",
+            "terminals:=true",
+            "paths:=8",
+            "output=run.json",
         ];
         if explicit {
             fs::write(
                 dir.join("rays.csv"),
                 "id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium\n7,0.1,-0.2,0,0.00123,-0.00321,1,0.3,0.45,0\n9,-0.1,0.2,0,-0.001,0.002,1,0.7,0.635,0\n",
             ).unwrap();
-            args.extend(["--rays-csv", "rays.csv"]);
+            args.push("rays.csv=rays.csv");
         }
         let first = cli(&args);
         assert!(
@@ -80,12 +78,10 @@ fn cli_replays_generated_and_csv_runs_without_the_original_inputs() {
             fs::remove_file(dir.join("rays.csv")).unwrap();
         }
         let replay = cli(&[
-            "--replay",
-            "run.json",
-            "--threads",
-            "1",
-            "--output",
-            "replay.json",
+            "replay",
+            "record.path=run.json",
+            "threads:=1",
+            "output=replay.json",
         ]);
         assert!(
             replay.status.success(),
@@ -100,12 +96,12 @@ fn cli_replays_generated_and_csv_runs_without_the_original_inputs() {
             replayed["calculation"]["scene"]
         );
         assert!(
-            !cli(&["--replay", "run.json", "--wavelength-um", "0.55"])
+            !cli(&["replay", "record.path=run.json", "wavelength_um:=0.55"])
                 .status
                 .success()
         );
         assert!(
-            !cli(&["--replay", "run.json", "--output", "run.json"])
+            !cli(&["replay", "record.path=run.json", "output=run.json"])
                 .status
                 .success()
         );

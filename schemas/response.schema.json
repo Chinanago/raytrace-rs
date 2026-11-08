@@ -656,7 +656,7 @@
       ]
     },
     "ConvergencePlan": {
-      "description": "Plan for `raytrace-rs --convergence MODEL --plan PLAN.json`. Every combination is traced.",
+      "description": "`plan` of the `convergence` command. Every combination is traced.",
       "type": "object",
       "properties": {
         "allow_uncoated": {
@@ -2690,7 +2690,7 @@
       ]
     },
     "ScanPlan": {
-      "description": "Plan for `raytrace-rs --scan MODEL --plan PLAN.json`. At most 256 cases.",
+      "description": "`plan` of the `scan` command. At most 256 cases.",
       "type": "object",
       "properties": {
         "links": {

@@ -17,7 +17,7 @@
       ]
     },
     {
-      "description": "Return one JSON Schema.",
+      "description": "Return one JSON Schema, or write schemas to files.",
       "type": "object",
       "properties": {
         "command": {
@@ -25,12 +25,27 @@
           "const": "schema"
         },
         "name": {
-          "$ref": "#/$defs/SchemaName"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SchemaName"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         }
       },
+      "additionalProperties": false,
       "required": [
-        "command",
-        "name"
+        "command"
       ]
     },
     {
@@ -70,6 +85,7 @@
       "type": "object",
       "properties": {
         "catalogs": {
+          "description": "Extra AGF catalog folders for ZMX import.",
           "type": "array",
           "default": [],
           "items": {
@@ -128,6 +144,7 @@
       "type": "object",
       "properties": {
         "catalogs": {
+          "description": "Extra AGF catalog folders for ZMX import.",
           "type": "array",
           "default": [],
           "items": {
@@ -165,7 +182,7 @@
           "$ref": "#/$defs/ModelInput"
         },
         "output": {
-          "description": "Save the calculation record (the `--schema run` format) here.",
+          "description": "Save the calculation record (the `schema name=run` format) here.",
           "type": [
             "string",
             "null"
@@ -315,6 +332,7 @@
       "type": "object",
       "properties": {
         "catalogs": {
+          "description": "Extra AGF catalog folders for ZMX import.",
           "type": "array",
           "default": [],
           "items": {
@@ -384,8 +402,8 @@
           "default": false
         },
         "model": {
-          "description": "Model file; CAD deflection comparisons need the original STEP-referencing ZMX.",
-          "type": "string"
+          "description": "Model file (`model.path`); CAD deflection comparisons need the original\nSTEP-referencing ZMX, because each case re-reads it.",
+          "$ref": "#/$defs/ModelInput"
         },
         "output": {
           "description": "Directory for `convergence.json` and the case records.",
@@ -475,6 +493,7 @@
       "type": "object",
       "properties": {
         "catalogs": {
+          "description": "Extra AGF catalog folders for ZMX import.",
           "type": "array",
           "default": [],
           "items": {
@@ -978,7 +997,7 @@
       ]
     },
     "ConvergencePlan": {
-      "description": "Plan for `raytrace-rs --convergence MODEL --plan PLAN.json`. Every combination is traced.",
+      "description": "`plan` of the `convergence` command. Every combination is traced.",
       "type": "object",
       "properties": {
         "allow_uncoated": {
@@ -1721,7 +1740,7 @@
           ]
         },
         {
-          "description": "Inline project JSON (the `--schema project` format).",
+          "description": "Inline project JSON (the `schema name=project` format).",
           "type": "object",
           "properties": {
             "project": {
@@ -1734,7 +1753,7 @@
           ]
         },
         {
-          "description": "Inline scene JSON (the `--schema scene` format, as in `examples/*.json`).",
+          "description": "Inline scene JSON (the `schema name=scene` format, as in `examples/*.json`).",
           "type": "object",
           "properties": {
             "scene": {
@@ -2646,7 +2665,7 @@
       ]
     },
     "ScanPlan": {
-      "description": "Plan for `raytrace-rs --scan MODEL --plan PLAN.json`. At most 256 cases.",
+      "description": "`plan` of the `scan` command. At most 256 cases.",
       "type": "object",
       "properties": {
         "links": {
@@ -2760,7 +2779,7 @@
       ]
     },
     "SchemaName": {
-      "description": "Names accepted by the `schema` command and `raytrace-rs --schema NAME`.",
+      "description": "Names accepted by the `schema` command.",
       "oneOf": [
         {
           "type": "string",

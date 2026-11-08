@@ -8,7 +8,7 @@ Rust製の幾何光学レイトレーサーです。ZMX・JSONの光学系を読
 
 - 長さはmm、CLIとJSONの波長はμm、GUIの波長入力はnmです。
 - Cargo workspaceの6クレートで、依存方向は `core ← formats ← io ← app ← {cli, gui}` です。
-- **計算と読込・保存はすべて `raytrace_app::engine` のJSONリクエストを通します。** CLIは引数を `engine::Request` に変換するだけ、GUIもリクエストを作って `engine::execute_with` に渡すだけです。新しい操作は、まず `Request` にコマンドを足してからCLI・GUIにつなぎます。
+- **計算と読込・保存はすべて `raytrace_app::engine` のJSONリクエストを通します。** CLIは `COMMAND a.b=文字列 a.b:=JSON` の引数を汎用的に `engine::Request` へ組み立てるだけで、オプションごとの処理を持ちません。GUIもリクエストを作って `engine::execute_with` に渡すだけです。新しい操作やフィールドは `Request` に足せば、CLIの引数と `--help` には自動で現れます。CLIに専用のオプションを足さないでください。
 
 | クレート | 役割 |
 |---|---|
@@ -16,9 +16,9 @@ Rust製の幾何光学レイトレーサーです。ZMX・JSONの光学系を読
 | `crates/raytrace-formats` | ZMX／AGF／SPCD・STEPの入出力（プロジェクトモデルに依存しない） |
 | `crates/raytrace-io` | `Project`・組立・計算記録・互換性レポート・出力 |
 | `crates/raytrace-app` | JSONエンジン（`src/engine.rs`・`src/engine/run.rs`）、パラメーター走査・収束確認・検証ケース |
-| `crates/raytrace-cli` | CLI `raytrace-rs`。引数→リクエストの変換と応答の出力だけ（`src/main.rs`） |
+| `crates/raytrace-cli` | CLI `raytrace-rs`。独自のオプションはなく、引数をリクエストのフィールドに組み立てて応答を出力するだけ（`src/main.rs`） |
 | `crates/raytrace-gui` | egui製GUI `raytrace-gui`。編集・描画・表示の後処理とリクエストの作成 |
-| `schemas/` | `--schema all` が生成するJSONスキーマ（コミット対象） |
+| `schemas/` | `schema output=schemas` が生成するJSONスキーマ（コミット対象） |
 | 直下の `src/lib.rs` | 各クレートを再公開する `raytrace_rs` クレート。`tests/` と `examples/` もここに属する |
 
 ## コマンド
@@ -42,7 +42,8 @@ cargo clippy --locked -p raytrace-gui --all-targets --target x86_64-pc-windows-m
 CLIの動作確認：
 
 ```bash
-cargo run --locked -p raytrace-cli -- examples/sequential_lens.json --rays-per-source 256 --output results/lens.json
+cargo run --locked -p raytrace-cli -- trace model.path=examples/sequential_lens.json overrides.rays_per_source:=256 output=results/lens.json
+cargo run -q --locked -p raytrace-cli -- trace --help
 echo '{"command":"version"}' | cargo run -q --locked -p raytrace-cli -- run -
 ```
 
@@ -57,8 +58,8 @@ echo '{"command":"version"}' | cargo run -q --locked -p raytrace-cli -- run -
 - 計算核は集計順を固定しています。SIMD経路・BVH・小分け生成は従来経路と**全レポートが一致する**ことをテストで確認しているため、計算核を変えるときはこの一致を崩さないでください。
 - 新しいファイルをコミットするときは `scripts/check_publish.py` の許可リストに追加します。対象外は `src/`・`tests/` の `.rs` と `crates/*/src/**/*.rs`・`crates/*/Cargo.toml` だけです。追加しないとCIの「Check publication contents」が失敗します。`git add` 後に `python3 scripts/check_publish.py` で確認できます。
 - ZMX・AGF・STEP・CSV・画像・JSONなどは `.gitignore` で除外しています。利用者の光学データや、元のZMXを埋め込むプロジェクト・計算記録JSONはコミットしません。同梱するJSONは `examples/` の自作サンプル4件だけです。
-- リクエスト・応答・モデルの型を変えたら `cargo run -q --locked -p raytrace-cli -- --schema all --output schemas` でスキーマを再生成してコミットします。`tests/engine.rs` が古いスキーマを検出します。
-- CLIのオプションを変えたら、`crates/raytrace-cli/src/main.rs` の `HELP`、`docs/GUIDE.md` の「コマンドライン」、`skills/raytrace-rs/references/workflows.md` を合わせて更新します。利用者から見える機能の変更は `docs/FEATURES.md`・`docs/GUIDE.md` にも反映します。
+- リクエスト・応答・モデルの型を変えたら `cargo run -q --locked -p raytrace-cli -- schema output=schemas` でスキーマを再生成してコミットします。`tests/engine.rs` が古いスキーマを検出します。
+- リクエストのコマンドやフィールドを変えたら、`docs/GUIDE.md` の「コマンドライン」と `skills/raytrace-rs/references/workflows.md` の例を合わせて更新します。利用者から見える機能の変更は `docs/FEATURES.md`・`docs/GUIDE.md` にも反映します。
 - コミットメッセージは英語の命令形で、変更内容を1行目に書きます（`git log` を参照）。
 
 ## 光学計算を実行するとき

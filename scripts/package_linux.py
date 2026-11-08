@@ -78,9 +78,9 @@ def smoke(path, name, version):
             raise ValueError(f"Unexpected version: {reported}")
         for example in EXAMPLES:
             stem = Path(example).stem
-            run(cli, example, "--rays-per-source", 256, "--threads", 2,
-                "--output", f"results/{stem}.json", cwd=root)
-        run(cli, "--replay", "results/sequential_lens.json", "--output", "results/replay.json", cwd=root)
+            run(cli, "trace", f"model.path={example}", "overrides.rays_per_source:=256",
+                "threads:=2", f"output=results/{stem}.json", cwd=root)
+        run(cli, "replay", "record.path=results/sequential_lens.json", "output=results/replay.json", cwd=root)
         requests = "\n".join(json.dumps(r) for r in [
             {"command": "version"},
             {"command": "inspect", "model": {"path": "examples/integrator_rod.json"}},

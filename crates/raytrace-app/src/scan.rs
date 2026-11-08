@@ -174,7 +174,7 @@ pub fn linear_values(start: f64, end: f64, count: usize) -> Result<Vec<f64>> {
         })
         .collect())
 }
-/// Plan for `raytrace-rs --scan MODEL --plan PLAN.json`. At most 256 cases.
+/// `plan` of the `scan` command. At most 256 cases.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct ScanPlan {

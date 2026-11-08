@@ -16,7 +16,7 @@ The CLI runs models and writes calculation records. The GUI provides component p
 
 ## Load and calculate
 
-- If `--help` lists `run`, the CLI is a JSON engine: stdout is one JSON response per request (`ok`, `result`, or `error.code`/`error.message`), `raytrace-rs run -` accepts JSON requests, and `--schema NAME` prints the input/output schemas. The workflow reference describes the format.
+- Check `--help`. v0.11.0 takes options such as `--inspect` and `--replay`. Newer builds take request fields instead (`raytrace-rs trace model.path=lens.zmx overrides.rays_per_source:=1024`), print one JSON response per request on stdout, accept JSON with `raytrace-rs run -`, and describe every field with `raytrace-rs COMMAND --help` and `raytrace-rs schema name=NAME`. The workflow reference maps the old options to fields.
 - Load `.zmx` or project JSON. `--inspect` imports and saves without tracing, and prints a compatibility report distinguishing used definitions, preserved-only data, required conditions and unsupported entries. Trace compatibility depends on those entries, even if parsing succeeds.
 - ZMX imports resolve AGF materials and referenced STEP geometry. The workflow reference describes their search locations. Import diagnostics identify missing dependencies and unsupported definitions.
 - Sequential mode follows the prescribed surface order, transmission and explicit mirrors; TIR terminates the ray. Non-sequential mode follows nearest hits and splits Fresnel reflection/transmission branches. Assembly projects use non-sequential tracing.

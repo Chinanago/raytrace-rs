@@ -9,7 +9,7 @@ use raytrace_io::{project::Project, record::RunContext};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path, time::Instant};
 
-/// Plan for `raytrace-rs --convergence MODEL --plan PLAN.json`. Every combination is traced.
+/// `plan` of the `convergence` command. Every combination is traced.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct ConvergencePlan {

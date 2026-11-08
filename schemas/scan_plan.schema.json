@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ScanPlan",
-  "description": "Plan for `raytrace-rs --scan MODEL --plan PLAN.json`. At most 256 cases.",
+  "description": "`plan` of the `scan` command. At most 256 cases.",
   "type": "object",
   "properties": {
     "links": {
