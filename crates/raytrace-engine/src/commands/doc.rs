@@ -257,14 +257,23 @@ fn doc_set(
         )));
     }
     let (path, summary) = session.edit(r.expected_revision, |design| {
-        let mut json = to_json(design)?;
-        let (target, path) = pointer::resolve(&mut json, &segments, true)?;
-        *target = r.value;
-        let next: Design = serde_json::from_value(json).map_err(|e| {
-            EngineError::invalid(format!(
-                "{path} を書き換えた文書が設計文書として読めません（schema.get name=design を確認してください）: {e}"
-            ))
-        })?;
+        // An edit inside one part or placement only needs that element as JSON, which keeps
+        // a drag of a part cheap in a document with large meshes. Whatever the fast way
+        // cannot do (or rejects) goes the general way, which also words the errors.
+        let (next, path) = match edit_element(design, &segments, &r.value) {
+            Some(edited) => edited,
+            None => {
+                let mut json = to_json(design)?;
+                let (target, path) = pointer::resolve(&mut json, &segments, true)?;
+                *target = r.value;
+                let next: Design = serde_json::from_value(json).map_err(|e| {
+                    EngineError::invalid(format!(
+                        "{path} を書き換えた文書が設計文書として読めません（schema.get name=design を確認してください）: {e}"
+                    ))
+                })?;
+                (next, path)
+            }
+        };
         if next.format != design.format
             || next.next_id != design.next_id
             || ids(&next) != ids(design)
@@ -277,6 +286,51 @@ fn doc_set(
         Ok((next, (path, summary)))
     })?;
     Ok(DocSetResult { path, summary })
+}
+
+/// Edit one place inside `/parts/<part>/...` or `/occurrences/<occurrence>/...` by changing
+/// only the JSON of that element. `None` when the pointer is not of that form, does not
+/// resolve, or the result is not valid; the general path then reports why.
+fn edit_element(design: &Design, segments: &[String], value: &Value) -> Option<(Design, String)> {
+    let [list, element, rest @ ..] = segments else {
+        return None;
+    };
+    if rest.is_empty() {
+        return None;
+    }
+    fn index<T>(items: &[T], element: &str, id: impl Fn(&T) -> &str) -> Option<usize> {
+        match element.strip_prefix('@') {
+            Some(wanted) => items.iter().position(|item| id(item) == wanted),
+            None => element.parse().ok().filter(|i| *i < items.len()),
+        }
+    }
+    fn edited<T: serde::Serialize + serde::de::DeserializeOwned>(
+        item: &T,
+        rest: &[String],
+        value: &Value,
+    ) -> Option<(T, String)> {
+        let mut json = serde_json::to_value(item).ok()?;
+        let (target, path) = pointer::resolve(&mut json, rest, true).ok()?;
+        *target = value.clone();
+        Some((serde_json::from_value(json).ok()?, path))
+    }
+    let mut next = design.clone();
+    let (prefix, path) = match list.as_str() {
+        "parts" => {
+            let i = index(&design.parts, element, |p| p.id.as_str())?;
+            let (part, path) = edited(&design.parts[i], rest, value)?;
+            next.parts[i] = part;
+            (format!("/parts/{i}"), path)
+        }
+        "occurrences" => {
+            let i = index(&design.occurrences, element, |o| o.id.as_str())?;
+            let (occurrence, path) = edited(&design.occurrences[i], rest, value)?;
+            next.occurrences[i] = occurrence;
+            (format!("/occurrences/{i}"), path)
+        }
+        _ => return None,
+    };
+    Some((next, format!("{prefix}{path}")))
 }
 
 fn doc_replace(

@@ -1062,3 +1062,54 @@ fn a_session_adopts_the_result_of_work_done_on_another_thread() {
     assert_eq!(undo_depth(&mut session), 0);
     assert_eq!(session.log().base.unwrap().command, "doc.open");
 }
+
+#[test]
+fn an_edit_inside_one_element_gives_the_document_the_whole_json_would() {
+    let build = || {
+        let mut session = Session::new();
+        ok(&mut session, "doc.new", json!({}));
+        ok(&mut session, "component.add", json!({"kind": "rod"}));
+        ok(&mut session, "component.add", json!({"kind": "detector"}));
+        session
+    };
+    let mut edited = build();
+    let mut replaced = build();
+    let mut json = document(&mut edited);
+    let occurrence = json["occurrences"][0]["id"].as_str().unwrap().to_string();
+    let part = json["parts"][0]["id"].as_str().unwrap().to_string();
+    json["parts"][0]["rod"]["width_mm"] = json!(7.5);
+    json["occurrences"][0]["pose"]["translation_mm"] = json!([1.0, 2.0, 3.0]);
+    json["occurrences"][1]["name"] = json!("moved");
+    for (path, value) in [
+        (format!("/parts/@{part}/rod/width_mm"), json!(7.5)),
+        (
+            format!("/occurrences/@{occurrence}/pose/translation_mm"),
+            json!([1.0, 2.0, 3.0]),
+        ),
+        ("/occurrences/1/name".to_string(), json!("moved")),
+    ] {
+        let result = ok(
+            &mut edited,
+            "doc.set",
+            json!({"path": path, "value": value}),
+        );
+        let applied = result["path"].as_str().unwrap();
+        assert!(
+            applied.starts_with("/parts/0/") || applied.starts_with("/occurrences/"),
+            "{applied}"
+        );
+    }
+    ok(&mut replaced, "doc.replace", json!({"design": json}));
+    assert_eq!(design_text(&edited), design_text(&replaced));
+    // An edit that makes the element unreadable is refused and leaves the document alone.
+    let before = design_text(&edited);
+    assert_eq!(
+        error_code(
+            &mut edited,
+            "doc.set",
+            json!({"path": "/parts/0/rod/width_mm", "value": "wide"})
+        ),
+        "invalid_request"
+    );
+    assert_eq!(design_text(&edited), before);
+}
