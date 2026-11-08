@@ -117,7 +117,7 @@ def main():
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for source, destination in FILES.items():
             data = (ROOT / source).read_bytes()
-            if source.endswith(".json") and embedded_document(json.loads(data)):
+            if source.startswith("examples/") and embedded_document(json.loads(data)):
                 raise ValueError("An example contains an embedded original document")
             archive.writestr(f"{name}/{destination}", data)
             hashes[destination] = hashlib.sha256(data).hexdigest()
