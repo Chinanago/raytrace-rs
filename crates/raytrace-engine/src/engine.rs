@@ -21,7 +21,7 @@ use raytrace_io::{
 };
 pub use run::{Benchmark, RunOutput, SurfacePercent};
 use serde::{Deserialize, Serialize};
-use std::{any::Any, collections::BTreeMap, fs, path::Path, path::PathBuf};
+use std::{any::Any, collections::BTreeMap, fs, path::Path, path::PathBuf, sync::Arc};
 
 /// An optical model given by file path or inline JSON. Exactly one key.
 ///
@@ -45,6 +45,11 @@ pub enum ModelInput {
 pub enum RecordInput {
     Path(PathBuf),
     Record(Box<RunRecord>),
+    /// A record that the caller already holds (in-process callers only; never in JSON).
+    /// It is used as it is, without copying or validating it again.
+    #[serde(skip)]
+    #[schemars(skip)]
+    Shared(Arc<RunRecord>),
 }
 
 /// Explicit launch rays instead of the model sources. Exactly one key.
@@ -488,6 +493,23 @@ pub struct SessionStatus {
     pub catalogs: Vec<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub document: Option<DocSummary>,
+    /// The latest calculation record, which the `analysis.*` commands use when `run` is
+    /// omitted. Absent until `analysis.trace`, `run.replay` or `run.open` has run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run: Option<RunStatus>,
+}
+
+/// The latest calculation record of a session (`session.status`).
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
+pub struct RunStatus {
+    /// Revision of the document the record was computed from. Absent for a record that was
+    /// opened from a file, replayed, or computed from a `model` given to the command.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<u64>,
+    /// The document has changed since the record was computed.
+    pub stale: bool,
+    /// Number of screens (detectors) in the record.
+    pub detectors: usize,
 }
 
 /// One committed change of the session: the command and the parameters it ran with.
@@ -904,15 +926,24 @@ pub(crate) fn load(model: ModelInput, catalogs: &[PathBuf]) -> Result<Design, En
 pub(crate) fn load_record(
     record: RecordInput,
 ) -> Result<(RunRecord, Option<PathBuf>), EngineError> {
+    let (record, path) = load_shared_record(record)?;
+    Ok((Arc::unwrap_or_clone(record), path))
+}
+
+/// [`load_record`] that keeps a record shared: a `Shared` input is not copied.
+pub(crate) fn load_shared_record(
+    record: RecordInput,
+) -> Result<(Arc<RunRecord>, Option<PathBuf>), EngineError> {
     match record {
-        RecordInput::Path(path) => Ok((RunRecord::open(&path)?, Some(path))),
+        RecordInput::Path(path) => Ok((Arc::new(RunRecord::open(&path)?), Some(path))),
         RecordInput::Record(record) => {
             if record.format != RUN_FORMAT {
                 return Err(raytrace_io::Error::Record("未対応の計算記録形式です".into()).into());
             }
             record.calculation.scene.clone().prepare()?;
-            Ok((*record, None))
+            Ok((Arc::new(*record), None))
         }
+        RecordInput::Shared(record) => Ok((record, None)),
     }
 }
 

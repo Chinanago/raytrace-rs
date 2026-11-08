@@ -6,6 +6,7 @@
 //! let version = session.run(commands::APP_VERSION, Default::default()).unwrap();
 //! assert!(!version.version.is_empty());
 //! ```
+pub mod analysis;
 pub mod command;
 pub mod commands;
 pub mod convergence;

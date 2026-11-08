@@ -181,7 +181,7 @@ pub struct ScreenRoi {
     pub minimum_mm: [f64; 2],
     pub maximum_mm: [f64; 2],
 }
-#[derive(Clone, Debug, serde::Serialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RoiIntegral {
     pub percent_of_reference: f64,

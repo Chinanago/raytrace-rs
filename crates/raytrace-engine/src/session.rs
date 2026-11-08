@@ -10,10 +10,13 @@
 //! its history within [`HistoryLimits`]. The committed changes are recorded as
 //! [`LogEntry`]s, so the same document can be rebuilt by running them in a new session.
 use crate::{
-    engine::{DocSummary, EngineError, LogEntry, SessionLog, SessionStatus},
+    engine::{DocSummary, EngineError, LogEntry, RunStatus, SessionLog, SessionStatus},
     footprint,
 };
-use raytrace_io::design::{self, Design};
+use raytrace_io::{
+    design::{self, Design},
+    record::RunRecord,
+};
 use std::{path::PathBuf, sync::Arc};
 
 /// How much undo history a session keeps. The oldest steps are dropped first; the newest
@@ -73,6 +76,16 @@ struct Pending {
     group: Option<String>,
 }
 
+/// The latest calculation record of a session and the document revision it was computed from.
+#[derive(Clone, Debug)]
+pub struct LatestRun {
+    pub record: Arc<RunRecord>,
+    /// The session revision of the document the record was computed from. `None` when the
+    /// record does not come from the session document: a record opened from a file, a replay,
+    /// or a trace of a `model` given to the command.
+    pub revision: Option<u64>,
+}
+
 /// A document under edit. Create one per front end (the CLI makes one per process, or per
 /// `run` stream), then call commands with [`Session::execute`] or [`Session::call`].
 #[derive(Clone, Debug, Default)]
@@ -95,6 +108,8 @@ pub struct Session {
     open_group: Option<String>,
     pending: Option<Pending>,
     catalogs: Vec<PathBuf>,
+    /// The latest calculation record; only this one is kept.
+    run: Option<LatestRun>,
 }
 
 impl Session {
@@ -132,6 +147,24 @@ impl Session {
     /// AGF catalog folders used when a command imports a ZMX without its own.
     pub fn catalogs(&self) -> &[PathBuf] {
         &self.catalogs
+    }
+
+    /// The latest calculation record (`analysis.trace`, `run.replay` or `run.open`), which the
+    /// `analysis.*` commands use when they are given no `run`.
+    pub fn latest_run(&self) -> Option<&LatestRun> {
+        self.run.as_ref()
+    }
+    /// Keep `record` as the latest calculation record, replacing the previous one.
+    /// `revision` is the revision of the document it was computed from, if any.
+    pub fn set_latest_run(&mut self, record: Arc<RunRecord>, revision: Option<u64>) {
+        self.run = Some(LatestRun { record, revision });
+    }
+    /// The latest record was computed from a document that has changed since.
+    pub fn run_is_stale(&self) -> bool {
+        self.run
+            .as_ref()
+            .and_then(|run| run.revision)
+            .is_some_and(|revision| revision != self.revision)
     }
 
     /// Reject a command that was prepared for another revision.
@@ -214,15 +247,22 @@ impl Session {
 
     /// Take over the document, history and log of `other`: a session that opened the
     /// document, or edited a copy of this one ([`Clone`]), on another thread. The revision
-    /// keeps rising.
+    /// keeps rising; the latest calculation record of `other` comes along.
     pub fn adopt(&mut self, other: Session) {
         let revision = (self.revision + 1).max(other.revision);
         let catalogs = std::mem::take(&mut self.catalogs);
+        let other_revision = other.revision;
         *self = other;
         if self.catalogs.is_empty() {
             self.catalogs = catalogs;
         }
         self.revision = revision;
+        // A record computed from the document that is adopted stays current.
+        if let Some(run) = &mut self.run
+            && run.revision == Some(other_revision)
+        {
+            run.revision = Some(revision);
+        }
     }
 
     /// Change the document. `build` receives the current document and returns the new one (and
@@ -358,6 +398,11 @@ impl Session {
             undo_bytes: self.undo_bytes(),
             catalogs: self.catalogs.clone(),
             document: self.design.as_deref().map(DocSummary::of),
+            run: self.run.as_ref().map(|run| RunStatus {
+                revision: run.revision,
+                stale: self.run_is_stale(),
+                detectors: run.record.report.detectors.len(),
+            }),
         }
     }
 }

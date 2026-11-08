@@ -377,8 +377,8 @@ pub fn launched_power(report: &Report) -> Option<f64> {
     (power.is_finite() && power > 0.0).then_some(power)
 }
 
-/// Each `report.budget` entry as a percentage of `reference`, by field name.
-pub fn budget_percent(report: &Report, reference: f64) -> Result<BTreeMap<String, f64>> {
+/// Each `report.budget` entry as a weight, by field name.
+pub fn budget_weights(report: &Report) -> Result<BTreeMap<String, f64>> {
     let budget =
         serde_json::to_value(&report.budget).map_err(|e| raytrace_io::Error::json(None, e))?;
     Ok(budget
@@ -386,15 +386,35 @@ pub fn budget_percent(report: &Report, reference: f64) -> Result<BTreeMap<String
         .map(|entries| {
             entries
                 .iter()
-                .map(|(key, value)| {
-                    (
-                        key.clone(),
-                        100.0 * value.as_f64().unwrap_or(0.0) / reference,
-                    )
-                })
+                .map(|(key, value)| (key.clone(), value.as_f64().unwrap_or(0.0)))
                 .collect()
         })
         .unwrap_or_default())
+}
+
+/// Each `report.budget` entry as a percentage of `reference`, by field name.
+pub fn budget_percent(report: &Report, reference: f64) -> Result<BTreeMap<String, f64>> {
+    Ok(budget_weights(report)?
+        .into_iter()
+        .map(|(key, weight)| (key, 100.0 * weight / reference))
+        .collect())
+}
+
+/// `(accounted - launched) / launched` of the power budget.
+pub fn closure_error(report: &Report, reference: f64) -> f64 {
+    (report.budget.accounted() - reference) / reference
+}
+
+/// Weight the trace could not resolve, as a percentage of `reference`: numerical failures,
+/// medium mismatches, branches cut off and interaction-limit stops. Every report of
+/// unresolved weight (convergence studies, `analysis.budget`) uses this one definition.
+pub fn unresolved_percent(report: &Report, reference: f64) -> f64 {
+    100.0
+        * (report.budget.numerical_failure
+            + report.budget.medium_mismatch
+            + report.budget.branch_cutoff
+            + report.budget.interaction_limit)
+        / reference
 }
 
 /// Detected weight as a percentage of `reference`.
@@ -402,9 +422,14 @@ pub fn detected_percent(report: &Report, reference: f64) -> f64 {
     100.0 * report.budget.detected / reference
 }
 
+/// Integrated power of one detector.
+pub fn received_weight(map: &DetectorMap) -> f64 {
+    map.weights.iter().sum::<f64>()
+}
+
 /// Integrated power of one detector as a percentage of `reference`.
 pub fn received_percent(map: &DetectorMap, reference: f64) -> f64 {
-    100.0 * map.weights.iter().sum::<f64>() / reference
+    100.0 * received_weight(map) / reference
 }
 
 /// Integrated power of every detector by name, as percentages of `reference`.

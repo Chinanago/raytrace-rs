@@ -916,6 +916,100 @@
       ]
     },
     {
+      "title": "analysis.budget",
+      "description": "光量収支（基準光量比、収支誤差、未解決分、スクリーンごとの受光、面ごとの到達）を返す",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "analysis.budget"
+          ]
+        },
+        "run": {
+          "description": "計算記録（ファイルのパスかインライン）。省略するとセッションの直近の計算結果を使う",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecordInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "title": "analysis.screen",
+      "description": "スクリーンの受光・ピーク・X/Y断面と半値幅・ROIの積分を返す（設定: detector, cursor_mm, roi, include_profiles）",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "analysis.screen"
+          ]
+        },
+        "cursor_mm": {
+          "description": "Local-mm position of the X/Y slices (nearest pixel row and column); omitted: through the brightest pixel.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "detector": {
+          "description": "The screen to analyse; omitted uses the first one.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DetectorRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "include_profiles": {
+          "description": "Also return the pixel values along the X and Y slices.",
+          "type": "boolean",
+          "default": false
+        },
+        "roi": {
+          "description": "Rectangle to integrate (local mm); edge pixels count by the area they share.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScreenRoi"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run": {
+          "description": "計算記録（ファイルのパスかインライン）。省略するとセッションの直近の計算結果を使う",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecordInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    {
       "title": "study.scan",
       "description": "パラメーター走査を新しいディレクトリに実行する（旧名: scan）",
       "type": "object",
@@ -1715,6 +1809,20 @@
         "pixels",
         "half_extent_mm",
         "weights"
+      ]
+    },
+    "DetectorRef": {
+      "description": "Which screen of the record: its zero-based index in `report.detectors`, or its name.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        {
+          "description": "A name as `analysis.budget` lists it. Text that is no name but a whole number counts\nas an index, so `detector=1` works on the command line.",
+          "type": "string"
+        }
       ]
     },
     "DiagnosticOverflow": {

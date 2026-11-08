@@ -27,6 +27,7 @@ use raytrace_core::model::Scene;
 use raytrace_io::design::Design;
 use std::{fs, path::PathBuf, sync::Arc};
 
+pub use crate::analysis::{ANALYSIS_BUDGET, ANALYSIS_SCREEN};
 pub use analysis::{ANALYSIS_TRACE, RUN_EXPORT_SCREEN, RUN_OPEN, RUN_REPLAY, RUN_SAVE};
 pub use component::{COMPONENT_ADD, COMPONENT_DUPLICATE, COMPONENT_REMOVE};
 pub use doc::{
@@ -71,6 +72,7 @@ pub(crate) fn all() -> Vec<CommandSpec> {
     commands.extend(doc::specs());
     commands.extend(component::specs());
     commands.extend(analysis::specs());
+    commands.extend(crate::analysis::specs());
     commands.extend(study::specs());
     commands.extend(history::specs());
     commands

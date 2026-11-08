@@ -48,6 +48,25 @@ pub struct SurfacePercent {
     pub geometric_miss: f64,
 }
 
+impl SurfacePercent {
+    /// The encounter totals of every surface of `report` as percentages of `reference`.
+    pub fn of_report(report: &Report, reference: f64) -> Vec<Self> {
+        report
+            .surfaces
+            .iter()
+            .map(|s| Self {
+                name: s.name.clone(),
+                incident: 100.0 * s.incident_weight / reference,
+                transmitted: 100.0 * s.transmitted_weight / reference,
+                reflected: 100.0 * s.reflected_weight / reference,
+                absorbed: 100.0 * s.absorbed_weight / reference,
+                detected: 100.0 * s.detected_weight / reference,
+                geometric_miss: 100.0 * s.geometric_miss_weight / reference,
+            })
+            .collect()
+    }
+}
+
 /// Calculation record written by `trace` and `replay`.
 /// `replay` reruns `calculation` with the recorded optical conditions.
 #[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
@@ -87,6 +106,12 @@ struct Calculation {
     preview_paths: usize,
 }
 
+/// A finished calculation: the summary for the caller and the record for the session.
+pub(crate) struct Traced {
+    pub result: TraceResult,
+    pub record: RunRecord,
+}
+
 /// Trace `design`, the model of the request (or the session document). `model_path` is the file
 /// it came from, which `output` must not overwrite.
 pub(crate) fn trace(
@@ -94,7 +119,7 @@ pub(crate) fn trace(
     mut design: Design,
     model_path: Option<PathBuf>,
     control: &TraceControl,
-) -> Result<TraceResult, EngineError> {
+) -> Result<Traced, EngineError> {
     let o = r.overrides;
     pipeline::configure_design(
         &mut design,
@@ -164,7 +189,7 @@ pub(crate) fn trace(
     finish(output, r.output, r.export_zmx, r.include_record)
 }
 
-pub(crate) fn replay(r: ReplayRequest, control: &TraceControl) -> Result<TraceResult, EngineError> {
+pub(crate) fn replay(r: ReplayRequest, control: &TraceControl) -> Result<Traced, EngineError> {
     let (record, path) = load_record(r.record)?;
     reject_overwrite(r.output.as_deref(), path.as_deref())?;
     let mut options = record.calculation.trace_options;
@@ -257,19 +282,7 @@ fn run(c: Calculation, control: &TraceControl) -> Result<RunOutput, EngineError>
     }
     let budget_percent_of_reference = pipeline::budget_percent(&report, reference)?;
     let detector_percent_of_reference = pipeline::detector_percents(&report, reference);
-    let surface_encounter_percent_of_reference = report
-        .surfaces
-        .iter()
-        .map(|s| SurfacePercent {
-            name: s.name.clone(),
-            incident: 100.0 * s.incident_weight / reference,
-            transmitted: 100.0 * s.transmitted_weight / reference,
-            reflected: 100.0 * s.reflected_weight / reference,
-            absorbed: 100.0 * s.absorbed_weight / reference,
-            detected: 100.0 * s.detected_weight / reference,
-            geometric_miss: 100.0 * s.geometric_miss_weight / reference,
-        })
-        .collect();
+    let surface_encounter_percent_of_reference = SurfacePercent::of_report(&report, reference);
     Ok(RunOutput {
         format: RUN_FORMAT.into(),
         schema_version: 2,
@@ -280,7 +293,7 @@ fn run(c: Calculation, control: &TraceControl) -> Result<RunOutput, EngineError>
         budget_percent_of_reference,
         detector_percent_of_reference,
         surface_encounter_percent_of_reference,
-        relative_budget_closure_error: (report.budget.accounted() - reference) / reference,
+        relative_budget_closure_error: pipeline::closure_error(&report, reference),
         benchmark,
         report,
     })
@@ -291,7 +304,7 @@ fn finish(
     output: Option<PathBuf>,
     exported_zmx: Option<PathBuf>,
     include_record: bool,
-) -> Result<TraceResult, EngineError> {
+) -> Result<Traced, EngineError> {
     if let Some(path) = &output {
         create_parent(path)?;
         let bytes = serde_json::to_vec_pretty(&record)
@@ -310,7 +323,7 @@ fn finish(
     {
         warnings.push("未解決の光線重みがあります。計算記録のnumerical_failure・medium_mismatch・interaction_limitを確認してください。".into());
     }
-    Ok(TraceResult {
+    let mut result = TraceResult {
         output,
         exported_zmx,
         reference_plane: record.scene.reference_plane.clone(),
@@ -325,7 +338,30 @@ fn finish(
         median_seconds: record.trace_seconds,
         worker_threads: record.benchmark.worker_threads,
         warnings,
-        record: include_record.then(|| Box::new(record)),
+        record: None,
+    };
+    // The session keeps the record for the analyses. Only a caller that asked for the full
+    // record in the result pays for a second copy of it.
+    let kept = if include_record {
+        let kept = RunRecord {
+            format: record.format.clone(),
+            calculation: record.calculation.clone(),
+            trace_seconds: record.trace_seconds,
+            report: record.report.clone(),
+        };
+        result.record = Some(Box::new(record));
+        kept
+    } else {
+        RunRecord {
+            format: record.format,
+            calculation: record.calculation,
+            trace_seconds: record.trace_seconds,
+            report: record.report,
+        }
+    };
+    Ok(Traced {
+        result,
+        record: kept,
     })
 }
 

@@ -320,12 +320,8 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
                         row.reference_plane = scene.reference_plane.clone();
                         row.detected_percent =
                             pipeline::detected_percent(&report, row.reference_weight);
-                        row.unresolved_percent = 100.0
-                            * (report.budget.numerical_failure
-                                + report.budget.medium_mismatch
-                                + report.budget.branch_cutoff
-                                + report.budget.interaction_limit)
-                            / row.reference_weight;
+                        row.unresolved_percent =
+                            pipeline::unresolved_percent(&report, row.reference_weight);
                         let mut coarse = Vec::new();
                         for map in &report.detectors {
                             let stats = pipeline::detector_stats(map, row.reference_weight)?;

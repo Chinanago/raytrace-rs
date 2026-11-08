@@ -52,25 +52,33 @@ fn analysis_trace(
     mut r: TraceRequest,
     context: &mut Context<'_>,
 ) -> Result<TraceResult, EngineError> {
+    let from_session = r.model.is_none();
     let model = resolve_model(session, r.model.take(), &r.catalogs)?;
-    run::trace(
+    // A trace of the session document is current while the session stays at this revision;
+    // a trace of a model given to the command has no revision.
+    let revision = from_session.then(|| session.revision());
+    let traced = run::trace(
         r,
         Arc::unwrap_or_clone(model.design),
         model.path,
         context.control,
-    )
+    )?;
+    session.set_latest_run(Arc::new(traced.record), revision);
+    Ok(traced.result)
 }
 
 fn run_replay(
-    _: &mut Session,
+    session: &mut Session,
     r: ReplayRequest,
     context: &mut Context<'_>,
 ) -> Result<TraceResult, EngineError> {
-    run::replay(r, context.control)
+    let traced = run::replay(r, context.control)?;
+    session.set_latest_run(Arc::new(traced.record), None);
+    Ok(traced.result)
 }
 
 fn run_open(
-    _: &mut Session,
+    session: &mut Session,
     r: RunOpenRequest,
     _: &mut Context<'_>,
 ) -> Result<RunOpened, EngineError> {
@@ -78,6 +86,7 @@ fn run_open(
     if r.viewer_paths {
         record.report.paths = run::viewer_paths(&record)?;
     }
+    session.set_latest_run(Arc::new(record.clone()), None);
     Ok(RunOpened {
         record: Box::new(record),
     })

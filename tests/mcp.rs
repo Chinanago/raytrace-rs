@@ -216,6 +216,8 @@ fn a_session_over_stdio() {
     let ids: Vec<_> = commands.iter().map(|c| c["id"].as_str().unwrap()).collect();
     for id in [
         "analysis.trace",
+        "analysis.budget",
+        "analysis.screen",
         "doc.open",
         "doc.set",
         "session.undo",

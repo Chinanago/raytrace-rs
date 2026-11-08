@@ -5,7 +5,7 @@ pub use raytrace_core::{
 };
 pub use raytrace_doc as doc;
 pub use raytrace_engine::{
-    command, commands, convergence, engine, pipeline, scan, session, validation,
+    analysis, command, commands, convergence, engine, pipeline, scan, session, validation,
 };
 pub use raytrace_io::{cad, compatibility, design, export, record, storage, zemax};
 
