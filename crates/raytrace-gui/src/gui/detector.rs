@@ -2,6 +2,7 @@ use super::components::short_name;
 
 const FWHM_HELP: &str = "赤破線：各断面の最大値の50%とその交点。画素中心の値を線形補間。複数の山がある場合は主ピーク周囲の幅です。";
 use super::*;
+use raytrace_app::engine::{ExportScreenRequest, Outcome, RecordInput, Request};
 use raytrace_core::screen::Profile;
 
 impl App {
@@ -9,41 +10,30 @@ impl App {
         let Some(r) = &self.result else {
             return;
         };
-        let Some(map) = r.report.detectors.get(self.detector).cloned() else {
+        if r.report.detectors.get(self.detector).is_none() {
             self.error = Some("出力するスクリーンがありません".into());
             return;
-        };
+        }
         let dir = dir.to_path_buf();
-        let reference = r.report.budget.launched;
-        let plane = r.scene.reference_plane.clone();
-        let cursor = self.screen_display.cursor_mm;
-        let roi = self.screen_display.roi;
-        let display = raytrace_io::export::DisplaySettings {
-            peak_normalized: self.screen_display.normalization == ScreenNormalization::Peak,
-            square_root: self.screen_display.scale == ScreenScale::SquareRoot,
-            maximum_percent: self.screen_display.maximum_percent,
-        };
-        let conditions = serde_json::json!({"calculation_software_version":r.calculation.software_version,"model":r.scene.name,"wavelengths_um":r.calculation.launch_wavelengths_um,
-            "input_rays":r.calculation.input_count(),"sources":r.scene.sources,"pupils":r.calculation.pupils,"trace_settings":r.scene.settings,"display":display});
-        let (tx, rx) = mpsc::channel();
-        self.job = Some(rx);
+        let request = Request::ExportScreen(ExportScreenRequest {
+            record: RecordInput::Record(Box::new(r.record(false))),
+            detector: self.detector,
+            output: dir,
+            display: raytrace_io::export::DisplaySettings {
+                peak_normalized: self.screen_display.normalization == ScreenNormalization::Peak,
+                square_root: self.screen_display.scale == ScreenScale::SquareRoot,
+                maximum_percent: self.screen_display.maximum_percent,
+            },
+            cursor_mm: self.screen_display.cursor_mm,
+            roi: self.screen_display.roi,
+        });
         self.status = "スクリーンを書き出し中…".into();
-        let context = ctx.clone();
-        std::thread::spawn(move || {
-            let result = (|| -> Result<PathBuf, String> {
-                raytrace_io::export::write_screen(&dir, &map, &plane, reference, display)
-                    .map_err(|e| e.to_string())?;
-                raytrace_io::export::write_postprocessing(&dir, &map, reference, cursor, roi)
-                    .map_err(|e| e.to_string())?;
-                std::fs::write(
-                    dir.join("conditions.json"),
-                    serde_json::to_vec_pretty(&conditions).map_err(|e| e.to_string())?,
-                )
-                .map_err(|e| e.to_string())?;
-                Ok(dir)
-            })();
-            let _ = tx.send(Job::Exported(result));
-            context.request_repaint();
+        self.submit(ctx, request, false, None, |result| {
+            Job::Exported(match result {
+                Ok(Outcome::Saved { output }) => Ok(output),
+                Ok(_) => Err("書出し以外の結果が返されました".into()),
+                Err(e) => Err(e.message),
+            })
         });
     }
 

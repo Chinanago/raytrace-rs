@@ -1,122 +1,101 @@
 use super::*;
-use raytrace_core::trace::{TraceOptions, trace, trace_generated_controlled};
+use raytrace_app::{
+    engine::{self, EngineError, ModelInput, Outcome, Overrides, Progress, Request, TraceRequest},
+    scan::ScanManifest,
+};
+use raytrace_io::record::{RUN_FORMAT, RunRecord};
+
+impl ResultView {
+    fn new(revision: u64, record: engine::RunOutput) -> Self {
+        Self {
+            revision,
+            calculation: record.calculation,
+            scene: record.scene,
+            report: record.report,
+            seconds: record.trace_seconds,
+            texture: None,
+            screen: None,
+            roi_cache: None,
+        }
+    }
+    /// The calculation record for saving or export; `paths` are the viewer samples.
+    pub(super) fn record(&self, keep_paths: bool) -> RunRecord {
+        let mut report = self.report.clone();
+        if !keep_paths {
+            // Viewer paths use reindexed sample IDs; archive the actual calculation.
+            report.paths.clear();
+        }
+        RunRecord {
+            format: RUN_FORMAT.into(),
+            calculation: self.calculation.clone(),
+            trace_seconds: self.seconds,
+            report,
+        }
+    }
+}
 
 impl App {
+    /// Run one engine request off the UI thread; `finish` turns its outcome into a job
+    /// message. Cancellable requests expose their control to the cancel button.
+    pub(super) fn submit(
+        &mut self,
+        ctx: &egui::Context,
+        request: Request,
+        cancellable: bool,
+        progress: Option<mpsc::Sender<Box<ScanManifest>>>,
+        finish: impl FnOnce(Result<Outcome, EngineError>) -> Job + Send + 'static,
+    ) {
+        let (tx, rx) = mpsc::channel();
+        self.job = Some(rx);
+        let control = Arc::new(TraceControl::default());
+        if cancellable {
+            self.control = Some(control.clone());
+        }
+        let context = ctx.clone();
+        std::thread::spawn(move || {
+            let mut report = |p: Progress<'_>| {
+                if let (Progress::Scan(m), Some(progress)) = (p, &progress) {
+                    let _ = progress.send(Box::new(m.clone()));
+                    context.request_repaint();
+                }
+            };
+            let result = engine::execute_with(request, &control, &mut report);
+            let _ = tx.send(finish(result));
+            context.request_repaint();
+        });
+    }
+
     pub(super) fn run(&mut self, ctx: &egui::Context) {
         self.commit_edit();
         let revision = self.history.revision;
-        let mut scene = match self.project.trace_scene() {
-            Ok(s) => s,
-            Err(e) => {
-                self.error = Some(e.to_string());
-                return;
-            }
-        };
-        if let Some(limit) = self.preview_limit {
-            for source in &mut scene.sources {
-                source.count = source.count.min(limit);
-            }
-        }
-        let threads = self.threads;
-        let control = Arc::new(TraceControl::default());
-        self.control = Some(control.clone());
-        let project_snapshot = self.project.clone();
-        let (tx, rx) = mpsc::channel();
-        let context = ctx.clone();
-        self.job = Some(rx);
         self.status = "光線を追跡中…".into();
-        std::thread::spawn(move || {
-            let result = (|| -> Result<Option<Box<ResultView>>, String> {
-                let total: u128 = scene.sources.iter().map(|s| s.count as u128).sum();
-                if total == 0 || total > 2_000_000 {
-                    return Err("光線数は合計1〜2,000,000本で指定してください".into());
-                }
-                if control.cancel.load(Ordering::Relaxed) {
-                    return Ok(None);
-                }
-                let pool = rayon::ThreadPoolBuilder::new()
-                    .num_threads(threads)
-                    .build()
-                    .map_err(|e| e.to_string())?;
-                let prepared = scene.clone().prepare().map_err(|e| e.to_string())?;
-                if control.cancel.load(Ordering::Relaxed) {
-                    return Ok(None);
-                }
-                let started = Instant::now();
-                let Some(mut report) = pool
-                    .install(|| {
-                        trace_generated_controlled(&prepared, TraceOptions::default(), &control)
-                    })
-                    .map_err(|e| e.to_string())?
-                else {
-                    return Ok(None);
-                };
-                let seconds = started.elapsed().as_secs_f64();
-                let power = report.budget.launched;
-                if !power.is_finite() || power <= 0.0 {
-                    return Err("発射基準光量は正の有限値で指定してください".into());
-                }
-                let generator = prepared.ray_generator().map_err(|e| e.to_string())?;
-                let n = generator.len().min(64);
-                // Each source contributes a prefix; striding a Sobol sequence destroys its balance.
-                let mut preview = Vec::with_capacity(n);
-                let mut layer = 0;
-                while preview.len() < n {
-                    let mut offset = 0;
-                    for source in &scene.sources {
-                        if layer < source.count {
-                            preview.push(Ray {
-                                id: preview.len() as u64,
-                                ..generator
-                                    .rays(offset + layer..offset + layer + 1)
-                                    .next()
-                                    .unwrap()
-                                    .map_err(|e| e.to_string())?
-                            });
-                        }
-                        offset += source.count;
-                        if preview.len() == n {
-                            break;
-                        }
-                    }
-                    layer += 1;
-                }
-                report.paths = pool
-                    .install(|| {
-                        trace(
-                            &prepared,
-                            &preview,
-                            TraceOptions {
-                                keep_terminals: false,
-                                path_launch_count: n as u64,
-                            },
-                        )
-                    })
-                    .paths;
-                Ok(Some(Box::new(ResultView {
-                    revision,
-                    calculation: RunContext::capture(
-                        &project_snapshot,
-                        &scene,
-                        None,
-                        threads,
-                        TraceOptions::default(),
-                    ),
-                    scene,
-                    report,
-                    seconds,
-                    texture: None,
-                    screen: None,
-                    roi_cache: None,
-                })))
-            })();
-            let message = match result {
-                Ok(Some(result)) => Job::Traced(Ok(result)),
-                Ok(None) => Job::Cancelled,
-                Err(error) => Job::Traced(Err(error)),
-            };
-            let _ = tx.send(message);
-            context.request_repaint();
+        let request = Request::Trace(TraceRequest {
+            model: ModelInput::Project(Box::new(self.project.clone())),
+            catalogs: Vec::new(),
+            rays: None,
+            overrides: Overrides {
+                max_rays_per_source: self.preview_limit,
+                ..Overrides::default()
+            },
+            threads: Some(self.threads),
+            repeat: 1,
+            warmup: false,
+            terminals: false,
+            paths: 0,
+            preview_paths: 64,
+            max_total_rays: Some(2_000_000),
+            export_zmx: None,
+            output: None,
+            include_record: true,
+        });
+        self.submit(ctx, request, true, None, move |result| match result {
+            Ok(Outcome::Traced(t)) => match t.record {
+                Some(record) => Job::Traced(Ok(Box::new(ResultView::new(revision, *record)))),
+                None => Job::Traced(Err("計算記録が返されませんでした".into())),
+            },
+            Ok(_) => Job::Traced(Err("追跡以外の結果が返されました".into())),
+            Err(e) if e.code == "cancelled" => Job::Cancelled,
+            Err(e) => Job::Traced(Err(e.message)),
         });
     }
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
@@ -209,66 +188,4 @@ impl App {
             }
         }
     }
-}
-
-pub(super) fn record_viewer_paths(
-    record: &raytrace_io::record::RunRecord,
-) -> Result<Vec<raytrace_core::trace::PathEvent>, String> {
-    let scene = &record.calculation.scene;
-    let rays = match &record.calculation.input {
-        raytrace_io::record::LaunchInput::Explicit { rays } => rays
-            .iter()
-            .take(64)
-            .enumerate()
-            .map(|(id, r)| Ray {
-                id: id as u64,
-                ..*r
-            })
-            .collect::<Vec<_>>(),
-        raytrace_io::record::LaunchInput::Generated { .. } => {
-            let mut preview = scene.clone();
-            for s in &mut preview.sources {
-                s.count = s.count.min(64);
-            }
-            let generated = preview
-                .clone()
-                .prepare()
-                .map_err(|e| e.to_string())?
-                .generate_rays()
-                .map_err(|e| e.to_string())?;
-            let total = generated.len().min(64);
-            let mut rays = Vec::with_capacity(total);
-            let mut layer = 0;
-            while rays.len() < total {
-                let mut offset = 0;
-                for (i, s) in preview.sources.iter().enumerate() {
-                    if layer < s.count && rays.len() < total {
-                        rays.push(Ray {
-                            id: rays.len() as u64,
-                            weight: scene.sources[i].total_weight / scene.sources[i].count as f64,
-                            ..generated[offset + layer]
-                        });
-                    }
-                    offset += s.count;
-                }
-                layer += 1;
-            }
-            rays
-        }
-    };
-    let mut geometry = scene.clone();
-    for s in &mut geometry.surfaces {
-        if let Interaction::Detector { pixels } = &mut s.interaction {
-            *pixels = [1, 1];
-        }
-    }
-    Ok(trace(
-        &geometry.prepare().map_err(|e| e.to_string())?,
-        &rays,
-        TraceOptions {
-            keep_terminals: false,
-            path_launch_count: rays.len() as u64,
-        },
-    )
-    .paths)
 }

@@ -1,4 +1,7 @@
 use super::*;
+use raytrace_app::engine::{
+    Document, ModelInput, OpenRequest, Outcome, Request, ResumeScanRequest, ScanRequest,
+};
 use raytrace_app::scan::{
     Parameter, ParameterLink, ScanAxis, ScanCase, ScanManifest, ScanPlan, linear_values,
 };
@@ -29,7 +32,7 @@ pub(super) struct Study {
     pub root: PathBuf,
     pub directory: Option<PathBuf>,
     pub manifest: Option<ScanManifest>,
-    progress: Option<Receiver<Vec<ScanCase>>>,
+    progress: Option<Receiver<Box<ScanManifest>>>,
     metric: usize,
     detector: usize,
 }
@@ -184,24 +187,25 @@ impl App {
     }
     pub(super) fn poll_study(&mut self) {
         if let Some(rx) = &self.study.progress {
-            while let Ok(cases) = rx.try_recv() {
-                if let Some(m) = &mut self.study.manifest {
-                    m.cases = cases;
-                }
+            while let Ok(manifest) = rx.try_recv() {
+                self.study.manifest = Some(*manifest);
             }
         }
     }
     fn launch_study(&mut self, ctx: &egui::Context, resume: bool) {
         self.commit_edit();
-        let prepared = (|| -> Result<(ScanManifest, PathBuf), String> {
+        let prepared = (|| -> Result<(Request, PathBuf), String> {
             if resume {
-                return Ok((
-                    self.study
-                        .manifest
-                        .clone()
-                        .ok_or("走査記録を開いてください")?,
-                    self.study.directory.clone().ok_or("保存先がありません")?,
-                ));
+                self.study
+                    .manifest
+                    .as_ref()
+                    .ok_or("走査記録を開いてください")?;
+                let directory = self.study.directory.clone().ok_or("保存先がありません")?;
+                let request = Request::ResumeScan(ResumeScanRequest {
+                    directory: directory.clone(),
+                    include_manifest: true,
+                });
+                return Ok((request, directory));
             }
             let parameter = self
                 .study
@@ -249,7 +253,6 @@ impl App {
                 threads: self.threads,
                 rays_per_source: (!self.study.use_current).then_some(self.study.rays),
             };
-            let manifest = ScanManifest::new(&self.project, plan).map_err(|e| e.to_string())?;
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
@@ -258,33 +261,33 @@ impl App {
             if dir.exists() {
                 return Err("同名の走査記録があります。新しい保存先を指定してください".into());
             }
-            Ok((manifest, dir))
+            let request = Request::Scan(ScanRequest {
+                model: ModelInput::Project(Box::new(self.project.clone())),
+                catalogs: Vec::new(),
+                plan,
+                output: dir.clone(),
+                include_manifest: true,
+            });
+            Ok((request, dir))
         })();
         match prepared {
-            Ok((manifest, dir)) => self.spawn_study(manifest, dir, ctx),
+            Ok((request, dir)) => self.spawn_study(request, dir, ctx),
             Err(error) => self.error = Some(error),
         }
     }
-    fn spawn_study(&mut self, mut manifest: ScanManifest, dir: PathBuf, ctx: &egui::Context) {
-        self.study.manifest = Some(manifest.clone());
-        self.study.directory = Some(dir.clone());
-        let (tx, rx) = mpsc::channel();
-        let (ptx, prx) = mpsc::channel();
-        self.study.progress = Some(prx);
-        self.job = Some(rx);
-        let control = Arc::new(TraceControl::default());
-        self.control = Some(control.clone());
-        let context = ctx.clone();
+    fn spawn_study(&mut self, request: Request, dir: PathBuf, ctx: &egui::Context) {
+        self.study.directory = Some(dir);
+        let (progress, rx) = mpsc::channel();
+        self.study.progress = Some(rx);
         self.status = "パラメーターを走査中…".into();
-        std::thread::spawn(move || {
-            let result = manifest
-                .execute(&dir, &control, |m| {
-                    let _ = ptx.send(m.cases.clone());
-                    context.request_repaint();
-                })
-                .map(|_| Box::new(manifest));
-            let _ = tx.send(Job::Scanned(result.map_err(|e| e.to_string())));
-            context.request_repaint();
+        self.submit(ctx, request, true, Some(progress), |result| {
+            Job::Scanned(match result {
+                Ok(Outcome::Scanned(s)) => s
+                    .manifest
+                    .ok_or_else(|| "走査記録が返されませんでした".into()),
+                Ok(_) => Err("走査以外の結果が返されました".into()),
+                Err(e) => Err(e.message),
+            })
         });
     }
     fn open_study(&mut self, ctx: &egui::Context) {
@@ -296,18 +299,19 @@ impl App {
         }
     }
     pub(super) fn open_study_path(&mut self, dir: PathBuf, ctx: &egui::Context) {
-        let (tx, rx) = mpsc::channel();
-        self.job = Some(rx);
         self.study.directory = Some(dir.clone());
         self.study.manifest = None;
-        let context = ctx.clone();
-        std::thread::spawn(move || {
-            let _ = tx.send(Job::Scanned(
-                ScanManifest::open(&dir)
-                    .map(Box::new)
-                    .map_err(|e| e.to_string()),
-            ));
-            context.request_repaint();
+        let request = Request::Open(OpenRequest {
+            path: dir,
+            catalogs: Vec::new(),
+            viewer_paths: false,
+        });
+        self.submit(ctx, request, false, None, |result| {
+            Job::Scanned(match result {
+                Ok(Outcome::Opened(Document::Scan { manifest })) => Ok(manifest),
+                Ok(_) => Err("走査記録のフォルダーを指定してください".into()),
+                Err(e) => Err(e.message),
+            })
         });
     }
     pub(super) fn adopt_record(&mut self, record: RunRecord) {

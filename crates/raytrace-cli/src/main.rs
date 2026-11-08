@@ -312,8 +312,8 @@ fn print(stdout: &mut impl Write, response: &engine::Response) {
 /// Run one request, print its response line and the human summary. Returns success.
 fn perform(request: Request, stdout: &mut impl Write) -> bool {
     let command = request.command();
-    let mut progress = |p: Progress<'_>| match p {
-        Progress::Scan(m) => {
+    let mut progress = |p: Progress<'_>| {
+        if let Progress::Scan(m) = p {
             let done = m
                 .cases
                 .iter()

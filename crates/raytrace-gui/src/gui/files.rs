@@ -1,5 +1,8 @@
-use super::jobs::record_viewer_paths;
 use super::*;
+use raytrace_app::engine::{
+    self, Document, ExportZmxRequest, ModelInput, OpenRequest, Outcome, Request,
+    SaveProjectRequest, SaveRunRequest,
+};
 
 impl App {
     pub(super) fn toolbar(&mut self, ui: &mut egui::Ui) {
@@ -131,8 +134,12 @@ impl App {
                 .add_filter("Raytrace", &["json"])
                 .save_file()
             {
-                match self.project.save(&path) {
-                    Ok(()) => {
+                let request = Request::SaveProject(SaveProjectRequest {
+                    project: Box::new(self.project.clone()),
+                    output: path.clone(),
+                });
+                match engine::execute(request) {
+                    Ok(_) => {
                         self.mark_saved();
                         self.path = Some(path);
                         self.remember_path();
@@ -153,12 +160,13 @@ impl App {
                 .add_filter("Raytrace calculation", &["json"])
                 .save_file()
             {
-                let r = self.result.as_ref().unwrap();
-                let mut report = r.report.clone();
-                // Viewer paths use reindexed sample IDs; archive the actual calculation.
-                report.paths.clear();
-                match r.calculation.save(&report, r.seconds, &path) {
-                    Ok(()) => self.status = "計算時の条件と結果を保存しました".into(),
+                let record = self.result.as_ref().unwrap().record(false);
+                let request = Request::SaveRun(SaveRunRequest {
+                    record: Box::new(record),
+                    output: path,
+                });
+                match engine::execute(request) {
+                    Ok(_) => self.status = "計算時の条件と結果を保存しました".into(),
                     Err(e) => self.error = Some(e.to_string()),
                 }
             }
@@ -198,8 +206,13 @@ impl App {
                 .add_filter("Zemax", &["zmx"])
                 .save_file()
             {
-                match zemax::export(&self.project, &path) {
-                    Ok(()) => self.status = "ZMXを書き出しました".into(),
+                let request = Request::ExportZmx(ExportZmxRequest {
+                    model: ModelInput::Project(Box::new(self.project.clone())),
+                    catalogs: Vec::new(),
+                    output: path,
+                });
+                match engine::execute(request) {
+                    Ok(_) => self.status = "ZMXを書き出しました".into(),
                     Err(e) => self.error = Some(e.to_string()),
                 }
             }
@@ -285,48 +298,36 @@ impl App {
     }
 
     pub(super) fn add_file(&mut self, path: PathBuf, kind: ComponentKind, ctx: &egui::Context) {
-        let (tx, rx) = mpsc::channel();
-        let catalogs = self.catalogs.clone();
-        let context = ctx.clone();
         self.status = "部品を読込中…".into();
-        self.job = Some(rx);
-        std::thread::spawn(move || {
-            let result = Project::open(&path, &catalogs)
-                .map(Box::new)
-                .map_err(|e| e.to_string());
-            let _ = tx.send(Job::Added(kind, result));
-            context.request_repaint();
+        let request = Request::Open(OpenRequest {
+            path,
+            catalogs: self.catalogs.clone(),
+            viewer_paths: false,
+        });
+        self.submit(ctx, request, false, None, move |result| {
+            Job::Added(
+                kind,
+                match result {
+                    Ok(Outcome::Opened(Document::Project { project })) => Ok(project),
+                    Ok(_) => Err("部品にはZMXまたはプロジェクトJSONを指定してください".into()),
+                    Err(e) => Err(e.message),
+                },
+            )
         });
     }
     pub(super) fn load(&mut self, path: PathBuf, ctx: &egui::Context) {
-        let (tx, rx) = mpsc::channel();
-        let catalogs = self.catalogs.clone();
-        let context = ctx.clone();
         self.status = "ファイルを読込中…".into();
         self.loading_path = Some(path.clone());
-        self.job = Some(rx);
-        std::thread::spawn(move || {
-            let result = Project::open(&path, &catalogs)
-                .map(Box::new)
-                .map_err(|e| e.to_string());
-            let message = if result
-                .as_ref()
-                .err()
-                .is_some_and(|e| e.starts_with("計算記録は"))
-            {
-                Job::LoadedRun(
-                    raytrace_io::record::RunRecord::open(&path)
-                        .map_err(|e| e.to_string())
-                        .and_then(|mut record| {
-                            record.report.paths = record_viewer_paths(&record)?;
-                            Ok(Box::new(record))
-                        }),
-                )
-            } else {
-                Job::Loaded(result)
-            };
-            let _ = tx.send(message);
-            context.request_repaint();
+        let request = Request::Open(OpenRequest {
+            path,
+            catalogs: self.catalogs.clone(),
+            viewer_paths: true,
+        });
+        self.submit(ctx, request, false, None, |result| match result {
+            Ok(Outcome::Opened(Document::Project { project })) => Job::Loaded(Ok(project)),
+            Ok(Outcome::Opened(Document::Run { record })) => Job::LoadedRun(Ok(record)),
+            Ok(_) => Job::Loaded(Err("走査記録は「走査記録を開く…」から開いてください".into())),
+            Err(e) => Job::Loaded(Err(e.message)),
         });
     }
 }

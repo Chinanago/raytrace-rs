@@ -1,5 +1,6 @@
 use super::*;
 use crate::gui::detector::{draw_detector_map, draw_profile, screen_color};
+use raytrace_app::engine;
 
 impl App {
     pub(in crate::gui) fn load_comparison(&mut self, ctx: &egui::Context) {
@@ -38,7 +39,15 @@ impl App {
             let result = (|| -> Result<Vec<Comparison>, String> {
                 let mut images = Vec::new();
                 for (path, label, detector) in request {
-                    let r = RunRecord::open(&path).map_err(|e| e.to_string())?;
+                    let request = Request::Open(OpenRequest {
+                        path,
+                        catalogs: Vec::new(),
+                        viewer_paths: false,
+                    });
+                    let r = match engine::execute(request).map_err(|e| e.message)? {
+                        Outcome::Opened(Document::Run { record }) => record,
+                        _ => return Err("比較には計算記録を指定してください".into()),
+                    };
                     let map = r
                         .report
                         .detectors

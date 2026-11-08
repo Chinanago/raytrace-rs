@@ -10,7 +10,6 @@ use raytrace_io::{
     assembly::{self, Component, ComponentKind},
     project::Project,
     record::RunContext,
-    zemax,
 };
 use std::{
     path::PathBuf,

@@ -513,6 +513,7 @@ coded_error!(crate::Error, raytrace_io::Error, raytrace_core::Error);
 
 /// Progress reported while a request runs. Ray progress of single traces is in
 /// [`TraceControl::completed`] and [`TraceControl::total`].
+#[non_exhaustive]
 pub enum Progress<'a> {
     /// The scan manifest after each case changes state.
     Scan(&'a scan::ScanManifest),
