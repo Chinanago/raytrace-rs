@@ -25,7 +25,7 @@ The CLI runs models and writes calculation records. The GUI provides component p
 
 ## Save, compare and inspect
 
-- Save assemblies as project JSON. For individual-model ZMX export, check the installed version's export restrictions.
+- Save assemblies as design JSON (project JSON in builds before the design document; newer builds open both). For individual-model ZMX export, check the installed version's export restrictions.
 - `--replay` reruns recorded optical conditions. `--scan` and `--convergence` use the plan schemas documented in the guide; `--resume-scan` resumes a saved scan directory.
 - CLI percentage fields use the launch-weight sum as their denominator. `reference_weight` and `scene.reference_plane` describe that normalization. GUI peak normalization changes the display while retaining original detector powers.
 - Budget fields distinguish detected power, misses, absorption, untraced reflection and unresolved/cutoff weight. Closure includes accounted unresolved power, and surface totals include repeated encounters. See the workflow reference for exact field meanings and timing scope.

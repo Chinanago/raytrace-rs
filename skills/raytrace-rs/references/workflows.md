@@ -15,7 +15,7 @@ The baseline below is **v0.11.0**. For another installed version, use its matchi
 | Physics, supported inputs and restrictions | `docs/FEATURES.md` | [Features](https://github.com/Chinanago/raytrace-rs/blob/v0.11.0/docs/FEATURES.md) |
 | Import, placement, sources, screens, scans, convergence and replay | `docs/GUIDE.md` | [Guide](https://github.com/Chinanago/raytrace-rs/blob/v0.11.0/docs/GUIDE.md) |
 | Build, test or modify the application | `docs/DEVELOPMENT.md` | [Development](https://github.com/Chinanago/raytrace-rs/blob/v0.11.0/docs/DEVELOPMENT.md) |
-| Model examples and exact schemas | `schemas/*.schema.json` (newer builds), `examples/*.json`, `crates/raytrace-io/src/project.rs`, `crates/raytrace-io/src/assembly.rs`, `crates/raytrace-core/src/model.rs` | [Examples](https://github.com/Chinanago/raytrace-rs/tree/v0.11.0/examples) |
+| Model examples and exact schemas | `schemas/*.schema.json` (newer builds), `examples/*.json`, `crates/raytrace-doc/src/design.rs` (newer builds; older: `crates/raytrace-io/src/project.rs`, `crates/raytrace-io/src/assembly.rs`), `crates/raytrace-core/src/model.rs` | [Examples](https://github.com/Chinanago/raytrace-rs/tree/v0.11.0/examples) |
 
 The Windows ZIP runs without Rust or OpticStudio installed. If a source build is needed, run `cargo build --release --locked -p raytrace-cli` from the checkout for the CLI, or `cargo build --release --locked --workspace --bins` for CLI and GUI together. Windows is the verified distribution platform for v0.11.0.
 
@@ -24,10 +24,11 @@ The Windows ZIP runs without Rust or OpticStudio installed. If a source build is
 Check `--help` first. v0.11.0 uses the options shown in the PowerShell examples below. Newer builds (`--help` lists commands such as `trace` and `run`) have no options of their own: every argument sets a field of a JSON request, and the GUI sends the same requests.
 
 - `raytrace-rs COMMAND field=text field:=JSON field:=@file.json`; dotted names reach nested fields (`overrides.rays_per_source:=1024`). `raytrace-rs COMMAND --help` lists that command's fields, types, defaults and descriptions, generated from the schema. Unknown fields fail with `invalid_request`.
-- `raytrace-rs run REQUEST.json` or `raytrace-rs run -` (stdin, several requests in a row) executes the same requests as JSON. `model` is `{"path": ...}`, `{"project": {...}}` or `{"scene": {...}}`; `include_record` returns the full calculation record in `result.record`.
+- `raytrace-rs run REQUEST.json` or `raytrace-rs run -` (stdin, several requests in a row) executes the same requests as JSON. `model` is `{"path": ...}`, `{"design": {...}}` or `{"scene": {...}}` (builds before the design document used `{"project": {...}}`); `include_record` returns the full calculation record in `result.record`.
 - stdout carries exactly one JSON line per request: `{"ok": true, "command": ..., "result": {...}}` or `{"ok": false, "command": ..., "error": {"code": ..., "message": ...}}`. Exit code 1 on failure. Human text, warnings and scan progress go to stderr. Without `output`, `trace` and `replay` save nothing and return only the summary.
-- `raytrace-rs schema name=scene` returns a JSON Schema in `result.schema` (names: request, response, scene, project, run, scan_plan, scan, convergence_plan, convergence); `schema output=DIR` writes all of them. The package's `schemas/` folder holds the same files. Prefer the schemas over source code when writing models, plans and requests.
-- `error.code` values are stable identifiers such as `io`, `invalid_json`, `invalid_request`, `usage`, `invalid_scene`, `invalid_ray`, `zmx`, `agf`, `step`, `plan`, `limit`, `cases_failed` and `cancelled`; `message` is Japanese.
+- `raytrace-rs schema name=scene` returns a JSON Schema in `result.schema` (names: request, response, scene, design, run, scan_plan, scan, convergence_plan, convergence; builds before the design document call `design` `project`); `schema output=DIR` writes all of them. The package's `schemas/` folder holds the same files. Prefer the schemas over source code when writing models, plans and requests.
+- Scan plans in builds with the design document name components by occurrence id and surfaces by name: `{"type": "component_position", "occurrence": "rod-4", "axis": 2}`, `{"type": "rod_size", "occurrence": "rod-4", "axis": 2}`, `{"type": "surface_position", "surface": "screen", "axis": 2}` (add `occurrence` to address a surface of a placed part). Read the ids from `inspect ... include_design:=true` or the saved design JSON. Earlier builds used `component`/`surface` indices, and their scan records cannot be resumed.
+- `error.code` values are stable identifiers such as `io`, `invalid_json`, `invalid_request`, `usage`, `invalid_scene`, `invalid_ray`, `design` (newer builds), `zmx`, `agf`, `step`, `plan`, `limit`, `cases_failed` and `cancelled`; `message` is Japanese.
 
 | v0.11.0 | Newer builds |
 |---|---|
@@ -75,7 +76,7 @@ Read the printed report and saved project. Import entries distinguish definition
 
 AGF catalogs are searched beside the input ZMX and, on Windows, under `%USERPROFILE%\Documents\Zemax\Glasscat`. The GUI can add catalog folders. Preserve resolvable STEP references; placing referenced STEP files beside the ZMX is supported. Check declared catalogs and resolved materials.
 
-For GUI assembly: new optical system → add source ZMX → add lens ZMX → add rod → add screen → place components → calculate → inspect screens. Save a project JSON. v0.11.0 supports assembly JSON and individual-model ZMX editing/export; assembly-to-ZMX export is unavailable.
+For GUI assembly: new optical system → add source ZMX → add lens ZMX → add rod → add screen → place components → calculate → inspect screens. Save the design JSON (`save_design`; the format `raytrace-design-v1` holds parts and occurrences with stable ids such as `rod-4`, and builds before the design document saved `raytrace-project-v1` to `v3`, which newer builds still open). v0.11.0 supports assembly JSON and individual-model ZMX editing/export; assembly-to-ZMX export is unavailable.
 
 CLI lengths are **mm**, wavelengths **μm**; GUI wavelengths are **nm**. `--wavelength-um 0.465` explicitly replaces the source spectrum with 465 nm. Omitting that override retains the model's spectrum.
 

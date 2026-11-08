@@ -13,7 +13,7 @@ cargo build --release --locked --workspace --bins
 ./target/release/raytrace-gui.exe
 ```
 
-ビルド後は `Raytraceを起動.cmd` からも起動できます。GUIは光源・レンズ・ロッド・スクリーンの組立サンプルで開きます。「ファイル → 開く…」またはドラッグ＆ドロップで `.zmx` やJSONプロジェクトを読み込み、「計算する」で追跡します。
+ビルド後は `Raytraceを起動.cmd` からも起動できます。GUIは光源・レンズ・ロッド・スクリーンの組立サンプルで開きます。「ファイル → 開く…」またはドラッグ＆ドロップで `.zmx` や設計JSON（旧プロジェクトJSONも可）を読み込み、「計算する」で追跡します。
 
 GUIなしで使う場合は `cargo build --release --locked -p raytrace-cli` でビルドします。
 
@@ -215,22 +215,23 @@ Rustは各界面でS/P反射率を独立に平均します。OpticStudioは偏�
 
 ## リポジトリ構成
 
-Cargo workspaceとして、`crates/` 以下の6クレートに分けています。
+Cargo workspaceとして、`crates/` 以下の7クレートに分けています。
 
 - `raytrace-core`: 数学・形状・光源生成・光線追跡・コーティング・分散・スクリーン解析の計算核です。ファイル形式やGUIには依存しません。
 - `raytrace-formats`: ZMX／AGF／SPCD・STEPの入出力とCADキャッシュの保存先を扱います。
-- `raytrace-io`: `project`、`assembly`、`record`、`compatibility` と、設定の保存・スクリーン出力を扱います。従来のZMX・CAD入出力のパスもここから使えます。
+- `raytrace-doc`: 設計文書（L2）です。部品（`Part`）と配置（`Occurrence`）の木、安定したID、展開（`Design::compile`）、組立の編集補助、互換性レポートを持ちます。ファイル・時刻・環境に触れず、外部形式を知りません（元のZMXなどは `Provenance` に不透明なJSONとして保管します）。
+- `raytrace-io`: 設計文書のファイル形式（`design`：開く・保存・旧プロジェクト形式からの移行）、`record`、ZMX書出し、設定の保存・スクリーン出力を扱います。従来のZMX・CAD入出力のパスもここから使えます。
 - `raytrace-app`: JSONエンジン（`engine`）と、パラメーター走査・収束確認・検証ケースのワークフローを扱います。
 - `raytrace-cli`: コマンドライン用の `raytrace-rs` 実行ファイルです。引数をエンジンのリクエストへ変換し、応答をJSONで出力します。PNG出力も有効にします。
 - `raytrace-gui`: デスクトップ用の `raytrace-gui` 実行ファイルです。PNG出力も有効にします。
 
-依存方向は `core ← formats ← io ← app ← {cli, gui}` で、各層は必要な下位層を参照します。リポジトリ直下の `raytrace-rs` はcore・io・appのモジュールを再公開する窓口で、既存の `raytrace_rs::model` などのパスを使えます。`tests/` と `examples/` も直下に残しています。
+依存方向は `core ← {formats, doc} ← io ← app ← {cli, gui}` で、各層は必要な下位層を参照します。リポジトリ直下の `raytrace-rs` はcore・doc・io・appのモジュールを再公開する窓口で、既存の `raytrace_rs::model` などのパスを使えます。`tests/` と `examples/` も直下に残しています。
 
-`raytrace-formats` はプロジェクトモデルに依存せず、ZMXの読込結果と書出し用の参照を形式側の型で受け渡します。`raytrace-io` がこれを `Project` に接続することで、ファイル形式とプロジェクトの相互参照を避けています。公開順もcore・formats・io・appの順です。
+`raytrace-formats` と `raytrace-doc` は互いを知りません。formatsはZMXの読込結果と書出し用の参照を形式側の型で受け渡し、docは元のZMXを不透明な `Provenance` として持ちます。`raytrace-io` がこの2つを接続し（ZMXを1部品の設計に変換し、書出しで型に戻す）、ファイル形式と設計文書の相互参照を避けています。公開順もcore・formats・doc・io・appの順です。
 
 ### JSONエンジン
 
-計算とファイル操作の入口は `raytrace_app::engine` です。`Request` は `command` で操作を選ぶJSONで、`trace`・`replay`・`inspect`・`open`・`scan`・`resume_scan`・`convergence`・`save_project`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version` を持ちます。`engine::execute_with` が `Outcome` または `EngineError`（固定の `code` と日本語の `message`）を返し、`engine::respond` がCLIの応答 `{ok, command, result, error}` にまとめます。
+計算とファイル操作の入口は `raytrace_app::engine` です。`Request` は `command` で操作を選ぶJSONで、`trace`・`replay`・`inspect`・`open`・`scan`・`resume_scan`・`convergence`・`save_design`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version` を持ちます。`engine::execute_with` が `Outcome` または `EngineError`（固定の `code` と日本語の `message`）を返し、`engine::respond` がCLIの応答 `{ok, command, result, error}` にまとめます。
 
 CLIに独自のオプションはありません。`raytrace-rs COMMAND a.b=文字列 a.b:=JSON` の引数をリクエストのフィールドとして組み立て、`raytrace-rs run` はリクエストJSONを直接実行します。どちらも同じ検証を通り、`COMMAND --help` はスキーマから生成します。そのため、CLIで使える操作とフィールドは `Request` の定義だけで決まり、引数の処理を個別に保守する必要がありません。GUIは同じリクエストを作り、作業スレッドで `execute_with` に渡します。中止は `TraceControl`、走査の進捗は `Progress` のコールバックで受け取ります。GUIはモデルの編集・光路図の描画・スクリーン表示の後処理を担い、追跡・読込・保存・書出しは直接呼びません。GUIのプレビュー光路（各光源の先頭から64本）、合計200万光線の上限、計算記録を開いたときの表示用光路もエンジンのオプションです。
 

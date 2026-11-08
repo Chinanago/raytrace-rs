@@ -85,11 +85,11 @@ GUIの「光量の内訳 → 追跡の診断」から、未解決・媒質不整
 ./raytrace-rs.exe resume_scan directory=results/focus_scan
 ```
 
-`scan_plan.json` の例です。部品番号・面番号・軸番号は0から始まり、軸0/1/2はX/Y/Zです。`rays_per_source: null` は元の本数を使います。
+`scan_plan.json` の例です。部品は配置のID（`design` の `occurrences[].id`。`inspect` の出力JSONで確認できます）、面は部品の中の面の名前で指定します。軸番号は0から始まり、軸0/1/2はX/Y/Zです。`rays_per_source: null` は元の本数を使います。
 
 ```json
 {
-  "parameter": { "type": "surface_position", "surface": 2, "axis": 2 },
+  "parameter": { "type": "surface_position", "surface": "screen", "axis": 2 },
   "values": [65.0, 68.5, 72.0],
   "secondary": { "parameter": { "type": "wavelength" }, "values": [0.45, 0.635] },
   "links": [],
@@ -98,7 +98,7 @@ GUIの「光量の内訳 → 追跡の診断」から、未解決・媒質不整
 }
 ```
 
-組立モデルには `component_position`・`component_rotation`（`component`・`axis`）、`rod_size`（`component`・`axis`：幅X／幅Y／長さ）を指定します。単体モデルは `surface_position`・`surface_rotation`（`surface`・`axis`）、波長は `{ "type": "wavelength" }` です。
+組立モデルには `component_position`・`component_rotation`（`occurrence`・`axis`）、`rod_size`（`occurrence`・`axis`：幅X／幅Y／長さ。ロッド部品の寸法）を指定します。例：`{ "type": "component_position", "occurrence": "rod-4", "axis": 2 }`。移動・回転のない単体モデルは `surface_position`・`surface_rotation`（`surface`・`axis`）で面の位置・傾きを指定します。組立の部品の面は `occurrence` を加えて指定できます。波長は `{ "type": "wavelength" }` です。前の版の走査記録（`raytrace-scan-v1`）は再開できません。走査をやり直してください。
 
 ## 保存先
 
@@ -106,11 +106,11 @@ GUIの「光量の内訳 → 追跡の診断」から、未解決・媒質不整
 
 明示入力の光線を含む記録では、GUIは保存済みの結果を表示し、「モデル光源で計算」で光源定義からの計算へ切り替えます。保存した入力光線を固定して再計算する場合はCLIの `replay` を使います。
 
-Windowsでは設定・CADキャッシュ・GUI走査記録を `%LOCALAPPDATA%/Raytrace` に保存します。`RAYTRACE_DATA_DIR` で保存先を変更できます。プロジェクト・計算結果・スクリーンの出力先は保存時に指定します。
+Windowsでは設定・CADキャッシュ・GUI走査記録を `%LOCALAPPDATA%/Raytrace` に保存します。`RAYTRACE_DATA_DIR` で保存先を変更できます。設計・計算結果・スクリーンの出力先は保存時に指定します。
 
 ## 計算記録と再計算
 
-CLIの計算結果とGUIの「ファイル → 計算結果を保存…」は、計算時点のプロジェクト・実際に使った光学系・光源条件・ソフトの版・追跡上限を結果と一緒に保存します。CSV入力では発射光線そのものを含み、元のCSVを開き直さずに再計算できます。
+CLIの計算結果とGUIの「ファイル → 計算結果を保存…」は、計算時点の設計文書・実際に使った光学系・光源条件・ソフトの版・追跡上限を結果と一緒に保存します。CSV入力では発射光線そのものを含み、元のCSVを開き直さずに再計算できます。
 
 ```powershell
 ./raytrace-rs.exe trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 output=results/lens_run.json
@@ -191,7 +191,7 @@ CLIの本体はJSONリクエストを受け取るエンジンです。GUIも同�
 
 | フィールド | 用途 |
 |---|---|
-| `model.path` | `.zmx`・プロジェクトJSON・光学系JSONのパス（`model.scene:=@...` でインライン指定も可） |
+| `model.path` | `.zmx`・設計JSON（旧プロジェクトJSONも可）・光学系JSONのパス（`model.design:=@...`・`model.scene:=@...` でインライン指定も可） |
 | `output` | 計算記録の保存先。省略すると保存せず、応答の概要だけを返します |
 | `overrides.mode` / `sampling` / `rays_per_source` / `wavelength_um` / `ignore_coatings` | 追跡方式・サンプリング・各光源の本数・単色波長・未コート計算の上書き |
 | `rays.csv` | 発射位置・方向・重み・波長を指定した光線CSV |
@@ -207,7 +207,7 @@ CLIの本体はJSONリクエストを受け取るエンジンです。GUIも同�
 {"ok":false,"command":"trace","error":{"code":"io","message":"lens.zmx の入出力に失敗しました: ..."}}
 ```
 
-失敗時は終了コード1です。`error.code` は `io`・`invalid_json`・`invalid_request`・`usage`・`invalid_scene`・`zmx`・`plan`・`limit`・`cases_failed`・`cancelled` などの固定の識別子で、`error.message` は日本語の説明です。走査や収束確認で一部のケースが失敗した場合は、`result` と `cases_failed` の両方を返します。追跡の `result` には光量収支の割合・検出器ごとの割合・収支誤差・警告、`inspect` には `traceable` と互換性レポートを含みます。詳しい結果は `output` のファイルを読みます。
+失敗時は終了コード1です。`error.code` は `io`・`invalid_json`・`invalid_request`・`usage`・`invalid_scene`・`design`・`zmx`・`plan`・`limit`・`cases_failed`・`cancelled` などの固定の識別子で、`error.message` は日本語の説明です。走査や収束確認で一部のケースが失敗した場合は、`result` と `cases_failed` の両方を返します。追跡の `result` には光量収支の割合・検出器ごとの割合・収支誤差・警告、`inspect` には `traceable` と互換性レポートを含みます。詳しい結果は `output` のファイルを読みます。
 
 `run` でJSONリクエストを直接実行できます。`-` は標準入力で、複数のリクエストを続けて渡すと、それぞれの応答を1行ずつ返します。引数の形式と `run` は同じリクエストになります。
 
@@ -216,7 +216,7 @@ CLIの本体はJSONリクエストを受け取るエンジンです。GUIも同�
 '{"command":"trace","model":{"path":"examples/sequential_lens.json"},"overrides":{"rays_per_source":1024},"output":"results/lens.json"}' | ./raytrace-rs.exe run -
 ```
 
-`include_record:=true` を付けると、計算記録そのものを `result.record` に含めます。コマンドは `trace`・`replay`・`inspect`・`open`・`scan`・`resume_scan`・`convergence`・`save_project`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version` です。
+`include_record:=true` を付けると、計算記録そのものを `result.record` に含めます。コマンドは `trace`・`replay`・`inspect`・`open`・`scan`・`resume_scan`・`convergence`・`save_design`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version` です。
 
 形式はリポジトリの [schemas/](../schemas/) にあり、`raytrace-rs schema name=scene` で応答の `result.schema` として、`schema name=scene output=scene.schema.json` でファイルとして取得できます。`schema output=DIR` は全件を書き出します。
 
@@ -224,7 +224,7 @@ CLIの本体はJSONリクエストを受け取るエンジンです。GUIも同�
 |---|---|
 | `request` / `response` | リクエストと標準出力の応答 |
 | `scene` | 光学系モデル（`examples/*.json` と同じ形式） |
-| `project` | プロジェクトJSON（GUIの保存・`inspect` の出力） |
+| `design` | 設計文書JSON `raytrace-design-v1`（GUIの保存・`inspect` の出力。部品と配置の一覧） |
 | `run` | 計算記録（`trace`・`replay` の出力） |
 | `scan_plan` / `scan` | 走査の計画と `scan.json` |
 | `convergence_plan` / `convergence` | 収束確認の計画と `convergence.json` |
@@ -237,7 +237,7 @@ CLIの本体はJSONリクエストを受け取るエンジンです。GUIも同�
 
 STEPの初回読込・曲面の展開・メッシュ生成はRustで処理します。ZMXが参照するSTEPを同じフォルダーに置いて読み込んでください。既定の分割精度は0.02 mmで、元ファイルの単位を自動換算します。単一の閉じたソリッドが対象です。対応する面形式は[機能一覧](FEATURES.md)にあります。
 
-変換結果はデータ保存先の `cad_cache` に保存します。元データ・精度・変換処理の版が変わると再生成します。保存したJSONプロジェクトと計算記録はメッシュを含むため、元のSTEPを使わず再計算できます。CADの精度は、分割精度を細かくしたときの交点・受光量・分布の収束で確認してください。
+変換結果はデータ保存先の `cad_cache` に保存します。元データ・精度・変換処理の版が変わると再生成します。保存した設計JSONと計算記録はメッシュを含むため、元のSTEPを使わず再計算できます。CADの精度は、分割精度を細かくしたときの交点・受光量・分布の収束で確認してください。
 
 ## サンプル
 
