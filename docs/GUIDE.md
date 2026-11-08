@@ -81,11 +81,11 @@ GUIの「光量の内訳 → 追跡の診断」から、未解決・媒質不整
 計算中は完了した発射光線数を表示し、「中止」で停止できます。単発計算では前回の完了結果を保持します。走査は完了したケースを保存し、計算途中だったケースを未完了へ戻します。「走査記録を開く… → 未完了のケースを再開」で続行でき、完了・失敗が確定したケースを維持します。走査記録は同じソフトの版で再開します。各ケースは合計200万光線、計画全体は256ケースが上限です。
 
 ```powershell
-./raytrace-rs.exe scan model.path=examples/sequential_lens.json plan:=@scan_plan.json output=results/focus_scan
-./raytrace-rs.exe resume_scan directory=results/focus_scan
+./raytrace-rs.exe study.scan model.path=examples/sequential_lens.json plan:=@scan_plan.json output=results/focus_scan
+./raytrace-rs.exe study.resume directory=results/focus_scan
 ```
 
-`scan_plan.json` の例です。部品は配置のID（`design` の `occurrences[].id`。`inspect` の出力JSONで確認できます）、面は部品の中の面の名前で指定します。軸番号は0から始まり、軸0/1/2はX/Y/Zです。`rays_per_source: null` は元の本数を使います。
+`scan_plan.json` の例です。部品は配置のID（`design` の `occurrences[].id`。`doc.inspect` の出力JSONで確認できます）、面は部品の中の面の名前で指定します。軸番号は0から始まり、軸0/1/2はX/Y/Zです。`rays_per_source: null` は元の本数を使います。
 
 ```json
 {
@@ -113,19 +113,19 @@ Windowsでは設定・CADキャッシュ・GUI走査記録を `%LOCALAPPDATA%/Ra
 CLIの計算結果とGUIの「ファイル → 計算結果を保存…」は、計算時点の設計文書・実際に使った光学系・光源条件・ソフトの版・追跡上限を結果と一緒に保存します。CSV入力では発射光線そのものを含み、元のCSVを開き直さずに再計算できます。
 
 ```powershell
-./raytrace-rs.exe trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 output=results/lens_run.json
-./raytrace-rs.exe replay record.path=results/lens_run.json threads:=4 output=results/lens_replay.json
+./raytrace-rs.exe analysis.trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 output=results/lens_run.json
+./raytrace-rs.exe run.replay record.path=results/lens_run.json threads:=4 output=results/lens_replay.json
 ```
 
-計算記録の形式は `raytrace-run-v1`、`schema_version` は2です（`schema name=run`）。既存の `report`・光量比・ベンチマーク欄に `calculation` を追加しています。再計算では出力先・スレッド数・繰返し回数・保存する光線情報を指定でき、記録した光学条件を維持します。GUIの光路表示用サンプルは計算記録から除き、再計算時に `paths:=N` で指定できます。配置の編集にはプロジェクトJSONを使います。
+計算記録の形式は `raytrace-run-v1`、`schema_version` は2です（`schema.get name=run`）。既存の `report`・光量比・ベンチマーク欄に `calculation` を追加しています。再計算では出力先・スレッド数・繰返し回数・保存する光線情報を指定でき、記録した光学条件を維持します。GUIの光路表示用サンプルは計算記録から除き、再計算時に `paths:=N` で指定できます。配置の編集にはプロジェクトJSONを使います。
 
 ## 収束確認
 
 光線数・seed・画素数・CAD分割精度を変えた計算を一括実行できます。既定は各光源256／1024／4096本、seed 42／43、64角画素、CAD分割精度0.02 mmです。
 
 ```powershell
-./raytrace-rs.exe convergence model.path=examples/sequential_lens.json output=results/lens_convergence
-./raytrace-rs.exe convergence model.path=model.zmx plan:=@plan.json output=results/cad_convergence
+./raytrace-rs.exe study.convergence model.path=examples/sequential_lens.json output=results/lens_convergence
+./raytrace-rs.exe study.convergence model.path=model.zmx plan:=@plan.json output=results/cad_convergence
 ```
 
 計画JSONの例です。空配列の `ray_counts`・`seeds`・`pixels` は元の設定を維持します。指定したseedは先頭光源へ割り当て、以後の光源は順に+1します。
@@ -173,12 +173,12 @@ CAD分割精度を比較する場合はSTEP参照を持つ元のZMXを指定し�
 
 ## コマンドライン
 
-CLIの本体はJSONリクエストを受け取るエンジンです。GUIも同じエンジンにリクエストを渡して計算・読込・保存を行います。CLIに独自のオプションはなく、引数はリクエストJSONのフィールドをそのまま指定します。
+CLIの本体は、コマンドの登録表とセッションを持つエンジンです。GUIも同じコマンドを呼んで計算・読込・保存を行います。CLIに独自のオプションはなく、コマンド名は `<領域>.<動作>` 形式のID、引数はそのコマンドのパラメーター（リクエストJSONのフィールド）をそのまま指定します。
 
 ```powershell
-./raytrace-rs.exe trace model.path=examples/sequential_lens.json threads:=4 output=results/lens.json
-./raytrace-rs.exe inspect model.path=lens.zmx output=results/lens.raytrace.json
-./raytrace-rs.exe trace model.path=source.zmx overrides.wavelength_um:=0.465 overrides.rays_per_source:=4096 overrides.sampling=sobol output=results/source.json
+./raytrace-rs.exe analysis.trace model.path=examples/sequential_lens.json threads:=4 output=results/lens.json
+./raytrace-rs.exe doc.inspect model.path=lens.zmx output=results/lens.raytrace.json
+./raytrace-rs.exe analysis.trace model.path=source.zmx overrides.wavelength_um:=0.465 overrides.rays_per_source:=4096 overrides.sampling=sobol output=results/source.json
 ```
 
 | 書き方 | 意味 |
@@ -187,45 +187,95 @@ CLIの本体はJSONリクエストを受け取るエンジンです。GUIも同�
 | `a.b:=JSON` | 数値・真偽値・配列などのJSONを入れる（`threads:=4`、`terminals:=true`） |
 | `a.b:=@FILE.json` | ファイルの中身をJSONとして入れる（`plan:=@scan_plan.json`） |
 
-`raytrace-rs --help` でコマンドの一覧、`raytrace-rs trace --help` でそのコマンドのフィールド・型・既定値・説明を表示します。どちらもスキーマから生成するため、書かれている内容がそのまま使えるフィールドです。スキーマにないフィールドは `invalid_request` になります。よく使う `trace` のフィールドは次の通りです。
+`raytrace-rs --help` でコマンドの一覧（`command.list`）、`raytrace-rs analysis.trace --help` でそのコマンドのフィールド・型・既定値・説明（`command.describe`）を表示します。どちらもコマンドのスキーマから生成するため、書かれている内容がそのまま使えるフィールドです。スキーマにないフィールドは `invalid_request` になります。
+
+### コマンド一覧
+
+| ID | 種類 | 内容 |
+|---|---|---|
+| `app.version` | 問い合わせ | 版を返す |
+| `command.list` / `command.describe` | 問い合わせ | コマンドの一覧／入力・出力スキーマ |
+| `schema.get` | 問い合わせ | JSONスキーマを返す（`output` でファイルに書き出す） |
+| `doc.new` / `doc.open` | 変更 | 空の組立／ZMX・設計JSON・光学系JSONを開いてセッションの文書にする |
+| `doc.get` / `doc.inspect` | 問い合わせ | 文書（またはJSON Pointerで指した一部）／互換性レポート |
+| `doc.save` / `doc.export_zmx` | 問い合わせ | 設計JSONの保存／ZMXの書出し |
+| `doc.set` / `doc.replace` | 変更 | 文書の1か所の書換え／全体の置換 |
+| `component.add` / `component.remove` / `component.duplicate` | 変更 | 部品の追加（ファイル・ロッド・スクリーン）／削除／複製 |
+| `analysis.trace` | 長い計算 | 追跡して計算記録を返す |
+| `run.replay` / `run.open` / `run.save` / `run.export_screen` | 長い計算・問い合わせ | 計算記録の再計算／読込／保存／スクリーンの書出し |
+| `study.scan` / `study.resume` / `study.convergence` / `study.open` | 長い計算・問い合わせ | 走査／再開／収束確認／走査ディレクトリの読込 |
+| `session.undo` / `session.redo` / `session.status` | 変更・問い合わせ | 取り消し／やり直し／版番号と履歴の状態 |
+
+以前の短い名前は、非推奨の別名として引き続き使えます。応答の `command` には、指定した名前がそのまま入ります。
+
+| 別名（非推奨） | 現在のID | 別名（非推奨） | 現在のID |
+|---|---|---|---|
+| `version` | `app.version` | `scan` | `study.scan` |
+| `schema` | `schema.get` | `resume_scan` | `study.resume` |
+| `inspect` | `doc.inspect` | `convergence` | `study.convergence` |
+| `trace` | `analysis.trace` | `save_design` | `doc.save` |
+| `replay` | `run.replay` | `save_run` | `run.save` |
+| `export_zmx` | `doc.export_zmx` | `export_screen` | `run.export_screen` |
+| `open` | `doc.open`（計算記録は `run.open`、走査ディレクトリは `study.open`） | | |
+
+よく使う `analysis.trace` のフィールドは次の通りです。
 
 | フィールド | 用途 |
 |---|---|
-| `model.path` | `.zmx`・設計JSON（旧プロジェクトJSONも可）・光学系JSONのパス（`model.design:=@...`・`model.scene:=@...` でインライン指定も可） |
+| `model.path` | `.zmx`・設計JSON（旧プロジェクトJSONも可）・光学系JSONのパス（`model.design:=@...`・`model.scene:=@...` でインライン指定も可）。省略するとセッションの文書 |
 | `output` | 計算記録の保存先。省略すると保存せず、応答の概要だけを返します |
 | `overrides.mode` / `sampling` / `rays_per_source` / `wavelength_um` / `ignore_coatings` | 追跡方式・サンプリング・各光源の本数・単色波長・未コート計算の上書き |
 | `rays.csv` | 発射位置・方向・重み・波長を指定した光線CSV |
 | `terminals` / `paths` | 終端光線／入力順で先頭N本の発射光線の光路を保存 |
 | `threads` / `repeat` / `warmup` | スレッド数、同じ光線の繰返し回数（中央値を出力）、計測前のウォームアップ |
 
+### セッションで文書を編集する
+
+`run` は、続けて渡したリクエストを**1つのセッション**で実行します。`doc.open` で開いた文書は、`model` を省略したコマンドの対象になり、`doc.set` などの変更コマンドで書き換え、`session.undo` で取り消せます。コマンドラインの1回の呼び出しは新しいセッションなので、その場合は従来どおり `model` を指定します。`model` を指定したコマンドは、セッションの文書を変えずにそのモデルだけを扱います。
+
+```bash
+cat <<'EOF' | ./raytrace-rs run -
+{"command":"doc.open","path":"examples/sequential_lens.json"}
+{"command":"analysis.trace","overrides":{"rays_per_source":1024},"output":"results/before.json"}
+{"command":"doc.set","path":"/parts/@system-1/scene/surfaces/2/pose/translation_mm/2","value":70.0}
+{"command":"analysis.trace","overrides":{"rays_per_source":1024},"output":"results/after.json"}
+{"command":"session.undo"}
+{"command":"doc.save","output":"results/lens.design.json"}
+EOF
+```
+
+`doc.set` は、文書（`schema.get name=design` の形式）の1か所をJSON Pointerで指定して書き換えます。配列の要素は添字のほか `@<ID>` で指定できます（`/occurrences/@rod-4/pose/translation_mm/2`、`/parts/@optic-2/scene/surfaces/0/pose`）。ID は `doc.get` や `component.add` の応答で確認します。書き換えた文書が設計文書として読み直せて、展開（コンパイル）できたときだけ変更が確定します。失敗した変更は文書・履歴・版番号を変えません。`id`・`format`・`next_id` と、部品や配置の増減は `doc.set` では変更できません（`component.add`・`component.remove`・`component.duplicate` を使います）。
+
+変更コマンドは `expected_revision` を受け付けます。セッションの版番号と一致しないときは `revision` エラーで拒否するため、GUIとエージェントが同じ文書を編集しても古い版へ上書きしません。版番号は応答の `revision` と `session.status` で確認でき、変更・取り消し・やり直しのたびに1増えます。`doc.save` はセッションの文書を保存し、`output` を省略すると開いたファイル（または前回の保存先）に上書きします。
+
 ### JSONの入出力
 
 標準出力には、リクエストごとに1行のJSONを出力します。人向けの表示とエラー文は標準エラーへ出力します。
 
 ```json
-{"ok":true,"command":"trace","result":{"output":"results/lens.json","launched_rays":2048,"detected_percent_of_reference":93.1, "...": "..."}}
-{"ok":false,"command":"trace","error":{"code":"io","message":"lens.zmx の入出力に失敗しました: ..."}}
+{"ok":true,"command":"analysis.trace","revision":0,"result":{"output":"results/lens.json","launched_rays":2048,"detected_percent_of_reference":93.1, "...": "..."}}
+{"ok":false,"command":"analysis.trace","revision":0,"error":{"code":"io","message":"lens.zmx の入出力に失敗しました: ..."}}
 ```
 
-失敗時は終了コード1です。`error.code` は `io`・`invalid_json`・`invalid_request`・`usage`・`invalid_scene`・`design`・`zmx`・`plan`・`limit`・`cases_failed`・`cancelled` などの固定の識別子で、`error.message` は日本語の説明です。走査や収束確認で一部のケースが失敗した場合は、`result` と `cases_failed` の両方を返します。追跡の `result` には光量収支の割合・検出器ごとの割合・収支誤差・警告、`inspect` には `traceable` と互換性レポートを含みます。詳しい結果は `output` のファイルを読みます。
+失敗時は終了コード1です。`error.code` は `io`・`invalid_json`・`invalid_request`・`usage`・`invalid_scene`・`design`・`zmx`・`plan`・`limit`・`cases_failed`・`cancelled`・`revision`・`no_document`・`history` などの固定の識別子で、`error.message` は日本語の説明です。`revision` はコマンド実行後のセッションの版番号です。走査や収束確認で一部のケースが失敗した場合は、`result` と `cases_failed` の両方を返します。追跡の `result` には光量収支の割合・検出器ごとの割合・収支誤差・警告、`doc.inspect` には `traceable` と互換性レポートを含みます。詳しい結果は `output` のファイルを読みます。
 
 `run` でJSONリクエストを直接実行できます。`-` は標準入力で、複数のリクエストを続けて渡すと、それぞれの応答を1行ずつ返します。引数の形式と `run` は同じリクエストになります。
 
 ```powershell
 ./raytrace-rs.exe run request.json
-'{"command":"trace","model":{"path":"examples/sequential_lens.json"},"overrides":{"rays_per_source":1024},"output":"results/lens.json"}' | ./raytrace-rs.exe run -
+'{"command":"analysis.trace","model":{"path":"examples/sequential_lens.json"},"overrides":{"rays_per_source":1024},"output":"results/lens.json"}' | ./raytrace-rs.exe run -
 ```
 
-`include_record:=true` を付けると、計算記録そのものを `result.record` に含めます。コマンドは `trace`・`replay`・`inspect`・`open`・`scan`・`resume_scan`・`convergence`・`save_design`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version` です。
+`include_record:=true` を付けると、計算記録そのものを `result.record` に含めます。
 
-形式はリポジトリの [schemas/](../schemas/) にあり、`raytrace-rs schema name=scene` で応答の `result.schema` として、`schema name=scene output=scene.schema.json` でファイルとして取得できます。`schema output=DIR` は全件を書き出します。
+形式はリポジトリの [schemas/](../schemas/) にあり、`raytrace-rs schema.get name=scene` で応答の `result.schema` として、`schema.get name=scene output=scene.schema.json` でファイルとして取得できます。`schema.get output=DIR` は全件を書き出します。`request` と `response` はコマンドの登録表から生成します。
 
 | スキーマ | 内容 |
 |---|---|
-| `request` / `response` | リクエストと標準出力の応答 |
+| `request` / `response` | リクエストと標準出力の応答（コマンドごとの入力と結果） |
 | `scene` | 光学系モデル（`examples/*.json` と同じ形式） |
-| `design` | 設計文書JSON `raytrace-design-v1`（GUIの保存・`inspect` の出力。部品と配置の一覧） |
-| `run` | 計算記録（`trace`・`replay` の出力） |
+| `design` | 設計文書JSON `raytrace-design-v1`（GUIの保存・`doc.save` の出力。部品と配置の一覧） |
+| `run` | 計算記録（`analysis.trace`・`run.replay` の出力） |
 | `scan_plan` / `scan` | 走査の計画と `scan.json` |
 | `convergence_plan` / `convergence` | 収束確認の計画と `convergence.json` |
 

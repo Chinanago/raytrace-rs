@@ -30,24 +30,24 @@ ZIPの展開先で実行します（Linuxでは `./raytrace-rs`）。引数は�
 
 ```powershell
 # サンプルを計算して計算記録を保存
-./raytrace-rs.exe trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 output=results/lens.json
+./raytrace-rs.exe analysis.trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 output=results/lens.json
 
 # ZMXを読み込んで、計算できるか確認（追跡はしない）
-./raytrace-rs.exe inspect model.path=lens.zmx
+./raytrace-rs.exe doc.inspect model.path=lens.zmx
 
 # 保存した計算記録を同じ条件で再計算
-./raytrace-rs.exe replay record.path=results/lens.json output=results/lens_replay.json
+./raytrace-rs.exe run.replay record.path=results/lens.json output=results/lens_replay.json
 ```
 
-`./raytrace-rs.exe --help` でコマンドの一覧、`./raytrace-rs.exe trace --help` で使えるフィールドと説明が出ます。どちらもJSONスキーマから生成しているので、CLIに独自のオプションはありません。
+`./raytrace-rs.exe --help` でコマンドの一覧、`./raytrace-rs.exe analysis.trace --help` で使えるフィールドと説明が出ます。どちらもコマンドのJSONスキーマから生成しているので、CLIに独自のオプションはありません。以前の短い名前（`trace`・`inspect`・`replay` など）は非推奨の別名として使えます。
 
 結果は標準出力に1行のJSONで返ります（`"ok"`・`"result"`、失敗時は `"error"`）。読みやすい表示は標準エラーに出ます。同じリクエストをJSONで渡すこともできます。
 
 ```bash
-echo '{"command":"trace","model":{"path":"examples/sequential_lens.json"},"output":"results/lens.json"}' | ./raytrace-rs run -
+echo '{"command":"analysis.trace","model":{"path":"examples/sequential_lens.json"},"output":"results/lens.json"}' | ./raytrace-rs run -
 ```
 
-GUIも同じJSONリクエストで計算しています。入出力の形式は [schemas/](schemas/) にあります。パラメーター走査（`scan`）や収束確認（`convergence`）は[操作ガイド](docs/GUIDE.md#コマンドライン)にあります。長さはmm、波長はμmです。
+`run -` に続けて渡したリクエストは1つのセッションで実行されるため、`doc.open` で開いた光学系を `doc.set` で書き換え、`model` なしで `analysis.trace` し、`session.undo` で戻すこともできます。GUIも同じコマンドで計算しています。入出力の形式は [schemas/](schemas/) にあります。パラメーター走査（`study.scan`）や収束確認（`study.convergence`）は[操作ガイド](docs/GUIDE.md#コマンドライン)にあります。長さはmm、波長はμmです。
 
 ## AIエージェントで使う
 

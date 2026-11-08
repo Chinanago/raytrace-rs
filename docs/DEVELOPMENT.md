@@ -18,10 +18,10 @@ cargo build --release --locked --workspace --bins
 GUIなしで使う場合は `cargo build --release --locked -p raytrace-cli` でビルドします。
 
 ```powershell
-./target/release/raytrace-rs.exe trace model.path=examples/sequential_lens.json threads:=4 output=results/lens.json
-cargo run --release --locked -p raytrace-cli -- trace model.path=examples/sequential_lens.json threads:=4 output=results/lens.json
+./target/release/raytrace-rs.exe analysis.trace model.path=examples/sequential_lens.json threads:=4 output=results/lens.json
+cargo run --release --locked -p raytrace-cli -- analysis.trace model.path=examples/sequential_lens.json threads:=4 output=results/lens.json
 cargo run --release --example assembly_demo -- results/assembly_demo.json
-./target/release/raytrace-rs.exe trace model.path=results/assembly_demo.json threads:=4 output=results/assembly_trace.json
+./target/release/raytrace-rs.exe analysis.trace model.path=results/assembly_demo.json threads:=4 output=results/assembly_trace.json
 ```
 
 ## GUI・Rustの基盤
@@ -221,24 +221,31 @@ Cargo workspaceとして、`crates/` 以下の7クレートに分けています
 - `raytrace-formats`: ZMX／AGF／SPCD・STEPの入出力とCADキャッシュの保存先を扱います。
 - `raytrace-doc`: 設計文書（L2）です。部品（`Part`）と配置（`Occurrence`）の木、安定したID、展開（`Design::compile`）、組立の編集補助、互換性レポートを持ちます。ファイル・時刻・環境に触れず、外部形式を知りません（元のZMXなどは `Provenance` に不透明なJSONとして保管します）。
 - `raytrace-io`: 設計文書のファイル形式（`design`：開く・保存・旧プロジェクト形式からの移行）、`record`、ZMX書出し、設定の保存・スクリーン出力を扱います。従来のZMX・CAD入出力のパスもここから使えます。
-- `raytrace-engine`: JSONエンジン（`engine`）と、パラメーター走査・収束確認・検証ケースのワークフローを扱います。
-- `raytrace-cli`: コマンドライン用の `raytrace-rs` 実行ファイルです。引数をエンジンのリクエストへ変換し、応答をJSONで出力します。PNG出力も有効にします。
+- `raytrace-engine`: セッション（`session`）、コマンド登録（`command`・`commands`）、計算パイプライン（`pipeline`）、パラメーター走査・収束確認・検証ケースのワークフローを扱います。旧 `raytrace-app` です。
+- `raytrace-cli`: コマンドライン用の `raytrace-rs` 実行ファイルです。引数をコマンドのパラメーターへ変換し、応答をJSONで出力します。PNG出力も有効にします。
 - `raytrace-gui`: デスクトップ用の `raytrace-gui` 実行ファイルです。PNG出力も有効にします。
 
-依存方向は `core ← {formats, doc} ← io ← app ← {cli, gui}` で、各層は必要な下位層を参照します。リポジトリ直下の `raytrace-rs` はcore・doc・io・appのモジュールを再公開する窓口で、既存の `raytrace_rs::model` などのパスを使えます。`tests/` と `examples/` も直下に残しています。
+依存方向は `core ← {formats, doc} ← io ← engine ← {cli, gui}` で、各層は必要な下位層を参照します。リポジトリ直下の `raytrace-rs` はcore・doc・io・engineのモジュールを再公開する窓口で、既存の `raytrace_rs::model` などのパスを使えます。`tests/` と `examples/` も直下に残しています。
 
-`raytrace-formats` と `raytrace-doc` は互いを知りません。formatsはZMXの読込結果と書出し用の参照を形式側の型で受け渡し、docは元のZMXを不透明な `Provenance` として持ちます。`raytrace-io` がこの2つを接続し（ZMXを1部品の設計に変換し、書出しで型に戻す）、ファイル形式と設計文書の相互参照を避けています。公開順もcore・formats・doc・io・appの順です。
+`raytrace-formats` と `raytrace-doc` は互いを知りません。formatsはZMXの読込結果と書出し用の参照を形式側の型で受け渡し、docは元のZMXを不透明な `Provenance` として持ちます。`raytrace-io` がこの2つを接続し（ZMXを1部品の設計に変換し、書出しで型に戻す）、ファイル形式と設計文書の相互参照を避けています。公開順もcore・formats・doc・io・engineの順です。
 
-### JSONエンジン
+### セッションとコマンド
 
-計算とファイル操作の入口は `raytrace_engine::engine` です。`Request` は `command` で操作を選ぶJSONで、`trace`・`replay`・`inspect`・`open`・`scan`・`resume_scan`・`convergence`・`save_design`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version` を持ちます。`engine::execute_with` が `Outcome` または `EngineError`（固定の `code` と日本語の `message`）を返し、`engine::respond` がCLIの応答 `{ok, command, result, error}` にまとめます。
+計算とファイル操作の入口は `raytrace_engine` の `Session` とコマンド登録（`command::registry()`）です。コマンドは `fn(&mut Session, In, &mut Context) -> Result<Out, EngineError>` の関数で、`In` は `Deserialize + JsonSchema`（`deny_unknown_fields`）、`Out` は `Serialize + JsonSchema` です。IDは `<領域>.<動作>`（`analysis.trace`、`doc.set` など）で、`commands.rs` の `all()` に `command(ハンドル, 要約, 種類, 関数)` を足すと、CLI・`command.list`・`command.describe`・スキーマ（`request`・`response`）に現れます。種類は `Query`（文書を変えない）、`Mutation`（文書を変える）、`Job`（長い計算）です。
 
-CLIに独自のオプションはありません。`raytrace-rs COMMAND a.b=文字列 a.b:=JSON` の引数をリクエストのフィールドとして組み立て、`raytrace-rs run` はリクエストJSONを直接実行します。どちらも同じ検証を通り、`COMMAND --help` はスキーマから生成します。そのため、CLIで使える操作とフィールドは `Request` の定義だけで決まり、引数の処理を個別に保守する必要がありません。GUIは同じリクエストを作り、作業スレッドで `execute_with` に渡します。中止は `TraceControl`、走査の進捗は `Progress` のコールバックで受け取ります。GUIはモデルの編集・光路図の描画・スクリーン表示の後処理を担い、追跡・読込・保存・書出しは直接呼びません。GUIのプレビュー光路（各光源の先頭から64本）、合計200万光線の上限、計算記録を開いたときの表示用光路もエンジンのオプションです。
+`Session` は開いている文書（`Arc<Design>`）、ファイルの場所、版番号、取り消し・やり直しの履歴、AGFカタログを持ちます。文書は書き換えず、変更のたびに新しい `Design` を作って検証（`design::check` ＝ 展開）してから確定し、古い文書を履歴に積み、版番号を1増やします。失敗した変更は文書も履歴も版番号も変えません。変更コマンドは `expected_revision` を受け付け、一致しなければ `revision` エラーにします。呼び出しは次の2通りで、同じ関数を実行します。
+
+- `Session::execute(id, params, &mut Context)`: パラメーターをJSONで渡し、応答の封筒 `Response`（`ok`・`command`・`revision`・`result`・`error`）を返します。CLIと `run` が使います。`execute_request` は `{"command": ID, ...}` を、`execute_text` はそのテキストを受けます。
+- `Session::call(ハンドル, 入力, &mut Context)` / `Session::run(ハンドル, 入力)`: 型付きの入力を渡し、型付きの結果を返します。JSONを経由しないため、GUIが使います。ハンドルは `commands::ANALYSIS_TRACE` のような `Cmd<In, Out>` で、入出力の型の取り違えをコンパイル時に防ぎます。
+
+文書を使うコマンドは `model`（`path`・`design`・`scene`）を省略でき、省略するとセッションの文書、指定するとそのモデルだけを扱います（セッションは変わりません）。`Context` は中止と光線進捗の `TraceControl`、走査の進捗の `Progress` のコールバックを運びます。前の短い名前は `command::ALIASES` の1つの表で現在のIDに対応づけます。
+
+CLIに独自のオプションはありません。`raytrace-rs COMMAND a.b=文字列 a.b:=JSON` の引数をコマンドのパラメーターとして組み立て、`raytrace-rs run` はリクエストJSONを1つのセッションで続けて実行します。どちらも同じ検証を通り、`--help` と `COMMAND --help` は `command.list`・`command.describe` のスキーマから生成します。そのため、CLIで使える操作とフィールドはコマンドの入力型だけで決まり、引数の処理を個別に保守する必要がありません。GUIは段階3では自分の `Design` を持ち続け、作業スレッドで新しい `Session` を作って、`model` に渡して型付きのコマンドを呼びます（編集のコマンド化は段階4）。
 
 モデル・計算記録・計画・応答の型は `schemars` でJSON Schemaを導出します。下位クレートでは `schema` 機能で有効にし、`raytrace-engine` は常に有効です。スキーマは `schemas/` にコミットし、型を変えたら次のコマンドで更新します。`tests/engine.rs` が古いスキーマを検出します。各クレートの `Error::code()` は応答の `error.code` に使う固定の識別子です。
 
 ```powershell
-cargo run -q --locked -p raytrace-cli -- schema output=schemas
+cargo run -q --locked -p raytrace-cli -- schema.get output=schemas
 ```
 
 ライブラリのPNG出力には `--features png` を指定します。SPCDの文字列解析は `Spectrum::parse_spcd`、ファイルの読込・文字コード判定は `raytrace_rs::zemax::read_spcd` を使います。

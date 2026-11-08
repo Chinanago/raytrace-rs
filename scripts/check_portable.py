@@ -128,7 +128,7 @@ def check(archive, output):
         checks.append("GUI/CLI version without development tools on PATH")
         for sample in sorted((root / "examples").glob("*.json")):
             name = sample.stem + ".run.json"
-            run("raytrace-rs", "trace", f"model.path={sample}", "overrides.rays_per_source:=256", "threads:=2", f"output={name}")
+            run("raytrace-rs", "analysis.trace", f"model.path={sample}", "overrides.rays_per_source:=256", "threads:=2", f"output={name}")
             data = record(name)
             if abs(data["relative_budget_closure_error"]) > 1e-10:
                 raise ValueError("Sample power budget failed")
@@ -137,18 +137,18 @@ def check(archive, output):
         # A fresh native file verifies parsing and source-file-independent replay.
         native = root / "owned.zmx"
         native.write_text("MODE SEQ\nUNIT MM\nENPD 2\nWAVM 1 .55 1\nSURF 0\nTYPE STANDARD\nDISZ INFINITY\nSURF 1\nTYPE STANDARD\nSTOP\nDIAM 1\nDISZ 10\nSURF 2\nTYPE STANDARD\nDIAM 2\nDISZ 0\n", encoding="utf-8")
-        run("raytrace-rs", "inspect", f"model.path={native}", "output=owned.design.json")
+        run("raytrace-rs", "doc.inspect", f"model.path={native}", "output=owned.design.json")
         design = record("owned.design.json")
         scene_of(design)["surfaces"][-1]["pose"]["translation_mm"][2] = 12.0
         (root / "moved.design.json").write_text(json.dumps(design), encoding="utf-8")
         native.unlink()
-        run("raytrace-rs", "trace", "model.path=moved.design.json", "export_zmx=moved.zmx", "threads:=1", "output=moved.run.json")
-        run("raytrace-rs", "trace", "model.path=moved.zmx", "threads:=1", "output=native.run.json")
+        run("raytrace-rs", "analysis.trace", "model.path=moved.design.json", "export_zmx=moved.zmx", "threads:=1", "output=moved.run.json")
+        run("raytrace-rs", "analysis.trace", "model.path=moved.zmx", "threads:=1", "output=native.run.json")
         if abs(record("native.run.json")["report"]["budget"]["detected"] - 1.0) > 1e-10:
             raise ValueError("Native roundtrip lost power")
         (root / "moved.design.json").unlink()
         (root / "moved.zmx").unlink()
-        run("raytrace-rs", "replay", "record.path=moved.run.json", "threads:=2", "output=replay.run.json")
+        run("raytrace-rs", "run.replay", "record.path=moved.run.json", "threads:=2", "output=replay.run.json")
         if record("moved.run.json")["report"] != record("replay.run.json")["report"]:
             raise ValueError("Saved calculation replay differs")
         checks.extend(["Native ZMX import, placement edit, JSON save, ZMX roundtrip",
@@ -163,7 +163,7 @@ def check(archive, output):
         cache_dir = destination / "runtime" / "cad_cache"
         if cache_dir.exists() and list(cache_dir.iterdir()):
             raise ValueError("STEP acceptance needs an empty conversion cache")
-        run("raytrace-rs", "inspect", f"model.path={cad}", "output=cad.design.json")
+        run("raytrace-rs", "doc.inspect", f"model.path={cad}", "output=cad.design.json")
         design = record("cad.design.json")
         if scene_of(design)["surfaces"][0]["shape"]["type"] != "triangle_mesh":
             raise ValueError("Native STEP import produced no mesh")
@@ -171,7 +171,7 @@ def check(archive, output):
         if len(caches) != 1:
             raise ValueError("Native STEP cache was not created")
         caches[0].write_text('{"format":"corrupt"}', encoding="ascii")
-        run("raytrace-rs", "inspect", f"model.path={cad}", "output=cad.recovered.json")
+        run("raytrace-rs", "doc.inspect", f"model.path={cad}", "output=cad.recovered.json")
         if scene_of(record("cad.recovered.json")) != scene_of(design):
             raise ValueError("Corrupt STEP cache recovery changed geometry")
         scene_of(design)["surfaces"][0]["pose"]["translation_mm"][0] = 0.25
@@ -180,13 +180,13 @@ def check(archive, output):
         csv.write_text("id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium\n0,0,0,-5,0,0,1,1,.55,0\n", encoding="ascii")
         for original in [step,catalog,cad,*caches]:
             original.unlink()
-        run("raytrace-rs", "trace", "model.path=cad.moved.json", f"rays.csv={csv}", "threads:=1", "output=cad.run.json")
+        run("raytrace-rs", "analysis.trace", "model.path=cad.moved.json", f"rays.csv={csv}", "threads:=1", "output=cad.run.json")
         result = record("cad.run.json")
         if abs(result["report"]["budget"]["detected"] - 12/13) > 1e-6:
             raise ValueError("Native CAD slab optical power differs from the analytic value")
         (root / "cad.moved.json").unlink()
         csv.unlink()
-        run("raytrace-rs", "replay", "record.path=cad.run.json", "threads:=2", "output=cad.replay.json")
+        run("raytrace-rs", "run.replay", "record.path=cad.run.json", "threads:=2", "output=cad.replay.json")
         if result["report"] != record("cad.replay.json")["report"]:
             raise ValueError("Native CAD frozen replay differs")
         checks.extend(["Fresh STEP through ZMX without FreeCAD/Python lookup or a conversion cache",

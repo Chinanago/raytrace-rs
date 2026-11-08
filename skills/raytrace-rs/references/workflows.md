@@ -21,29 +21,37 @@ The Windows ZIP runs without Rust or OpticStudio installed. If a source build is
 
 ## Command forms by version
 
-Check `--help` first. v0.11.0 uses the options shown in the PowerShell examples below. Newer builds (`--help` lists commands such as `trace` and `run`) have no options of their own: every argument sets a field of a JSON request, and the GUI sends the same requests.
+Check `--help` first. v0.11.0 uses the options shown in the PowerShell examples below. Newer builds (`--help` lists commands such as `trace` and `run`) have no options of their own: every argument sets a field of a command's parameters, and the GUI calls the same commands. Builds with the session (`--help` lists ids such as `analysis.trace`) name commands `<area>.<action>`; the short names `trace`, `inspect`, `replay`, `scan`, `resume_scan`, `convergence`, `open`, `save_design`, `save_run`, `export_zmx`, `export_screen`, `schema` and `version` remain as deprecated aliases (`open` opens designs only: records are `run.open`, scan directories `study.open`). Prefer the dotted ids.
 
 - `raytrace-rs COMMAND field=text field:=JSON field:=@file.json`; dotted names reach nested fields (`overrides.rays_per_source:=1024`). `raytrace-rs COMMAND --help` lists that command's fields, types, defaults and descriptions, generated from the schema. Unknown fields fail with `invalid_request`.
-- `raytrace-rs run REQUEST.json` or `raytrace-rs run -` (stdin, several requests in a row) executes the same requests as JSON. `model` is `{"path": ...}`, `{"design": {...}}` or `{"scene": {...}}` (builds before the design document used `{"project": {...}}`); `include_record` returns the full calculation record in `result.record`.
-- stdout carries exactly one JSON line per request: `{"ok": true, "command": ..., "result": {...}}` or `{"ok": false, "command": ..., "error": {"code": ..., "message": ...}}`. Exit code 1 on failure. Human text, warnings and scan progress go to stderr. Without `output`, `trace` and `replay` save nothing and return only the summary.
-- `raytrace-rs schema name=scene` returns a JSON Schema in `result.schema` (names: request, response, scene, design, run, scan_plan, scan, convergence_plan, convergence; builds before the design document call `design` `project`); `schema output=DIR` writes all of them. The package's `schemas/` folder holds the same files. Prefer the schemas over source code when writing models, plans and requests.
-- Scan plans in builds with the design document name components by occurrence id and surfaces by name: `{"type": "component_position", "occurrence": "rod-4", "axis": 2}`, `{"type": "rod_size", "occurrence": "rod-4", "axis": 2}`, `{"type": "surface_position", "surface": "screen", "axis": 2}` (add `occurrence` to address a surface of a placed part). Read the ids from `inspect ... include_design:=true` or the saved design JSON. Earlier builds used `component`/`surface` indices, and their scan records cannot be resumed.
-- `error.code` values are stable identifiers such as `io`, `invalid_json`, `invalid_request`, `usage`, `invalid_scene`, `invalid_ray`, `design` (newer builds), `zmx`, `agf`, `step`, `plan`, `limit`, `cases_failed` and `cancelled`; `message` is Japanese.
+- `raytrace-rs run REQUEST.json` or `raytrace-rs run -` (stdin, several requests in a row) executes the same requests as JSON, `{"command": "<id>", ...parameters}`. `model` is `{"path": ...}`, `{"design": {...}}` or `{"scene": {...}}` (builds before the design document used `{"project": {...}}`); `include_record` returns the full calculation record in `result.record`.
+- A `run` stream is one session. `doc.open` opens a file as the session document; commands then run without `model`: `analysis.trace`, `doc.inspect`, `doc.export_zmx`, `study.scan`. Edit with `doc.set {"path": "/occurrences/@rod-4/pose/translation_mm/2", "value": 12.5}` (JSON Pointer into the design JSON; array elements by index or `@<id>`; read the ids and the structure with `doc.get {"path": "/occurrences"}`), `component.add` (`path`+`kind` source|optic|system, or `kind` rod|detector), `component.remove {"occurrence": "rod-4"}`, `component.duplicate`, `doc.replace`; `session.undo`/`session.redo` step through the history and `session.status` shows the revision. Every response has `revision`; pass `expected_revision` to a change to reject it if the document moved meanwhile (`error.code` `revision`). A failed change leaves the document alone. A single command line is a new session, so pass `model` there. `command.list` and `command.describe id=...` return the commands and their input/output schemas.
+- stdout carries exactly one JSON line per request: `{"ok": true, "command": ..., "revision": N, "result": {...}}` or `{"ok": false, "command": ..., "revision": N, "error": {"code": ..., "message": ...}}`. Exit code 1 on failure. Human text, warnings and scan progress go to stderr. Without `output`, `trace` and `replay` save nothing and return only the summary.
+- `raytrace-rs schema.get name=scene` returns a JSON Schema in `result.schema` (names: request, response, scene, design, run, scan_plan, scan, convergence_plan, convergence; builds before the design document call `design` `project`); `schema.get output=DIR` writes all of them. `request` and `response` list every command. The package's `schemas/` folder holds the same files. Prefer the schemas over source code when writing models, plans and requests.
+- Scan plans in builds with the design document name components by occurrence id and surfaces by name: `{"type": "component_position", "occurrence": "rod-4", "axis": 2}`, `{"type": "rod_size", "occurrence": "rod-4", "axis": 2}`, `{"type": "surface_position", "surface": "screen", "axis": 2}` (add `occurrence` to address a surface of a placed part). Read the ids from `doc.inspect ... include_design:=true` or the saved design JSON. Earlier builds used `component`/`surface` indices, and their scan records cannot be resumed.
+- `error.code` values are stable identifiers such as `io`, `invalid_json`, `invalid_request`, `usage`, `invalid_scene`, `invalid_ray`, `design` (newer builds), `zmx`, `agf`, `step`, `plan`, `limit`, `cases_failed`, `cancelled`, `revision`, `no_document` and `history`; `message` is Japanese.
 
 | v0.11.0 | Newer builds |
 |---|---|
-| `MODEL --output RUN.json` | `trace model.path=MODEL output=RUN.json` |
+| `MODEL --output RUN.json` | `analysis.trace model.path=MODEL output=RUN.json` |
 | `--rays-per-source N`, `--sampling S`, `--mode M`, `--wavelength-um W`, `--ignore-coatings` | `overrides.rays_per_source:=N`, `overrides.sampling=S`, `overrides.mode=M`, `overrides.wavelength_um:=W`, `overrides.ignore_coatings:=true` |
 | `--rays-csv FILE`, `--terminals`, `--paths N`, `--threads N`, `--repeat N` | `rays.csv=FILE`, `terminals:=true`, `paths:=N`, `threads:=N`, `repeat:=N` (add `warmup:=true` to match the old benchmark timing) |
-| `MODEL --inspect --output P.json`, `--export-zmx Z` | `inspect model.path=MODEL output=P.json`, `export_zmx=Z` |
-| `--replay RUN.json --output NEW.json` | `replay record.path=RUN.json output=NEW.json` |
-| `--scan MODEL --plan PLAN --output DIR`, `--resume-scan DIR` | `scan model.path=MODEL plan:=@PLAN output=DIR`, `resume_scan directory=DIR` |
-| `--convergence MODEL --plan PLAN --output DIR` | `convergence model.path=MODEL plan:=@PLAN output=DIR` |
+| `MODEL --inspect --output P.json`, `--export-zmx Z` | `doc.inspect model.path=MODEL output=P.json`, `export_zmx=Z` |
+| `--replay RUN.json --output NEW.json` | `run.replay record.path=RUN.json output=NEW.json` |
+| `--scan MODEL --plan PLAN --output DIR`, `--resume-scan DIR` | `study.scan model.path=MODEL plan:=@PLAN output=DIR`, `study.resume directory=DIR` |
+| `--convergence MODEL --plan PLAN --output DIR` | `study.convergence model.path=MODEL plan:=@PLAN output=DIR` |
 
 ```bash
-raytrace-rs inspect model.path=lens.zmx
-raytrace-rs trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 overrides.sampling=sobol threads:=4 output=results/lens.json
-echo '{"command":"replay","record":{"path":"results/lens.json"},"output":"results/lens_replay.json"}' | raytrace-rs run -
+raytrace-rs doc.inspect model.path=lens.zmx
+raytrace-rs analysis.trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 overrides.sampling=sobol threads:=4 output=results/lens.json
+echo '{"command":"run.replay","record":{"path":"results/lens.json"},"output":"results/lens_replay.json"}' | raytrace-rs run -
+# One session: open, edit, calculate, undo
+cat <<'EOF' | raytrace-rs run -
+{"command":"doc.open","path":"examples/sequential_lens.json"}
+{"command":"doc.set","path":"/parts/@system-1/scene/surfaces/2/pose/translation_mm/2","value":70.0}
+{"command":"analysis.trace","overrides":{"rays_per_source":1024},"output":"results/moved.json"}
+{"command":"session.undo"}
+EOF
 ```
 
 ## First run from an extracted Windows ZIP (v0.11.0 options)
