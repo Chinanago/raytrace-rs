@@ -175,12 +175,14 @@ impl ScreenAnalysis {
 /// Rectangular ROI integral: partially covered pixels contribute by area overlap.
 /// The interpolation assumes constant power density within each recorded pixel.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct ScreenRoi {
     pub minimum_mm: [f64; 2],
     pub maximum_mm: [f64; 2],
 }
 #[derive(Clone, Debug, serde::Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RoiIntegral {
     pub percent_of_reference: f64,
     pub power_weight: f64,

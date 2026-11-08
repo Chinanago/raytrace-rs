@@ -12,11 +12,12 @@ categories = ["science", "simulation"]
 
 [dependencies]
 thiserror = { workspace = true }
-raytrace-core = { workspace = true }
-raytrace-io = { workspace = true }
+raytrace-core = { workspace = true, features = ["schema"] }
+raytrace-io = { workspace = true, features = ["schema"] }
 rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+schemars = { workspace = true }
 
 [lints]
 workspace = true

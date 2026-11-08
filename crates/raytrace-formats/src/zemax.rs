@@ -42,6 +42,7 @@ pub fn read_catalog_material(directory: &Path, catalog: &str, name: &str) -> Res
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ZmxDocument {
     pub text: String,
     pub encoding: TextEncoding,

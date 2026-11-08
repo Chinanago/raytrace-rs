@@ -1,0 +1,261 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ScanPlan",
+  "description": "Plan for `raytrace-rs --scan MODEL --plan PLAN.json`. At most 256 cases.",
+  "type": "object",
+  "properties": {
+    "links": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ParameterLink"
+      }
+    },
+    "parameter": {
+      "$ref": "#/$defs/Parameter",
+      "default": {
+        "type": "wavelength"
+      }
+    },
+    "rays_per_source": {
+      "description": "Rays per source for every case; null keeps the model setting.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint",
+      "default": null,
+      "minimum": 0
+    },
+    "secondary": {
+      "description": "Optional second axis; every combination with `values` is traced.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ScanAxis"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "threads": {
+      "type": "integer",
+      "format": "uint",
+      "default": 4,
+      "minimum": 0
+    },
+    "values": {
+      "description": "Values of `parameter` in its unit (mm, deg or um).",
+      "type": "array",
+      "default": [
+        0.45,
+        0.55,
+        0.635
+      ],
+      "items": {
+        "type": "number",
+        "format": "double"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "Parameter": {
+      "description": "Scanned value. Indices are zero-based; axis 0/1/2 is X/Y/Z.",
+      "oneOf": [
+        {
+          "description": "Assembly component position in mm.",
+          "type": "object",
+          "properties": {
+            "axis": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "component": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "component_position"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "component",
+            "axis"
+          ]
+        },
+        {
+          "description": "Assembly component rotation in degrees.",
+          "type": "object",
+          "properties": {
+            "axis": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "component": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "component_rotation"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "component",
+            "axis"
+          ]
+        },
+        {
+          "description": "Rod width X / width Y / length (axis 0/1/2) in mm.",
+          "type": "object",
+          "properties": {
+            "axis": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "component": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "rod_size"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "component",
+            "axis"
+          ]
+        },
+        {
+          "description": "Standalone-model surface position in mm.",
+          "type": "object",
+          "properties": {
+            "axis": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "surface": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "surface_position"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "surface",
+            "axis"
+          ]
+        },
+        {
+          "description": "Standalone-model surface rotation in degrees.",
+          "type": "object",
+          "properties": {
+            "axis": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "surface": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "surface_rotation"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "surface",
+            "axis"
+          ]
+        },
+        {
+          "description": "Wavelength of every source in micrometres.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "wavelength"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "ParameterLink": {
+      "description": "target = source * scale + offset; scale is dimensionless, offset uses target units.",
+      "type": "object",
+      "properties": {
+        "offset": {
+          "type": "number",
+          "format": "double"
+        },
+        "scale": {
+          "type": "number",
+          "format": "double"
+        },
+        "source": {
+          "$ref": "#/$defs/Parameter"
+        },
+        "target": {
+          "$ref": "#/$defs/Parameter"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "target",
+        "scale",
+        "offset"
+      ]
+    },
+    "ScanAxis": {
+      "type": "object",
+      "properties": {
+        "parameter": {
+          "$ref": "#/$defs/Parameter"
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "parameter",
+        "values"
+      ]
+    }
+  }
+}

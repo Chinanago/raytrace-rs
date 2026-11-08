@@ -11,6 +11,7 @@ use std::{
     path::Path,
 };
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DisplaySettings {
     pub peak_normalized: bool,
     pub square_root: bool,

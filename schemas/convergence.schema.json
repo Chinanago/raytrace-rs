@@ -1,0 +1,391 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConvergenceReport",
+  "type": "object",
+  "properties": {
+    "cases": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ConvergenceCase"
+      }
+    },
+    "comparisons": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ConvergenceComparison"
+      }
+    },
+    "distribution_definition": {
+      "type": "string"
+    },
+    "format": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "plan": {
+      "$ref": "#/$defs/ConvergencePlan"
+    },
+    "software_version": {
+      "type": "string"
+    },
+    "timing_definition": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "format",
+    "software_version",
+    "model",
+    "plan",
+    "cases",
+    "comparisons",
+    "distribution_definition",
+    "timing_definition"
+  ],
+  "$defs": {
+    "CaseSettings": {
+      "type": "object",
+      "properties": {
+        "cad_deflection_mm": {
+          "type": "number",
+          "format": "double"
+        },
+        "pixels": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "rays_per_source": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "seed": {
+          "description": "First source seed; later sources use consecutive seeds. None preserves originals.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "cad_deflection_mm"
+      ]
+    },
+    "ConvergenceCase": {
+      "type": "object",
+      "properties": {
+        "budget_percent_of_reference": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "cad_applied": {
+          "type": "boolean"
+        },
+        "detected_percent": {
+          "type": "number",
+          "format": "double"
+        },
+        "detectors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DetectorSummary"
+          }
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "rays": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "reference_plane": {
+          "type": "string"
+        },
+        "reference_weight": {
+          "type": "number",
+          "format": "double"
+        },
+        "run_file": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "settings": {
+          "$ref": "#/$defs/CaseSettings"
+        },
+        "trace_seconds": {
+          "type": "number",
+          "format": "double"
+        },
+        "triangles": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "unresolved_percent": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "index",
+        "settings",
+        "rays",
+        "trace_seconds",
+        "reference_plane",
+        "reference_weight",
+        "detected_percent",
+        "unresolved_percent",
+        "budget_percent_of_reference",
+        "triangles",
+        "cad_applied",
+        "detectors"
+      ]
+    },
+    "ConvergenceComparison": {
+      "type": "object",
+      "properties": {
+        "axis": {
+          "type": "string"
+        },
+        "case": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "detectors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DetectorDifference"
+          }
+        },
+        "reference_case": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "axis",
+        "case",
+        "reference_case",
+        "detectors"
+      ]
+    },
+    "ConvergencePlan": {
+      "description": "Plan for `raytrace-rs --convergence MODEL --plan PLAN.json`. Every combination is traced.",
+      "type": "object",
+      "properties": {
+        "allow_uncoated": {
+          "description": "Trace coated surfaces as uncoated Fresnel interfaces.",
+          "type": "boolean",
+          "default": false
+        },
+        "cad_deflections_mm": {
+          "description": "CAD tessellation deflections in mm; needs the original STEP-referencing ZMX.",
+          "type": "array",
+          "default": [
+            0.02
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "pixels": {
+          "description": "Detector pixel counts `[x, y]`; empty keeps the model setting.",
+          "type": "array",
+          "default": [
+            [
+              64,
+              64
+            ]
+          ],
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "maxItems": 2,
+            "minItems": 2
+          }
+        },
+        "ray_counts": {
+          "description": "Rays per source; an empty list keeps the model setting.",
+          "type": "array",
+          "default": [
+            256,
+            1024,
+            4096
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        },
+        "save_runs": {
+          "description": "Save a replayable calculation record for each case.",
+          "type": "boolean",
+          "default": true
+        },
+        "seeds": {
+          "description": "Seed of the first source (later sources use +1, +2, ...); empty keeps the model setting.",
+          "type": "array",
+          "default": [
+            42,
+            43
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          }
+        },
+        "threads": {
+          "type": "integer",
+          "format": "uint",
+          "default": 4,
+          "minimum": 0
+        },
+        "wavelength_um": {
+          "description": "Replace the source spectra with one wavelength in micrometres.",
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "DetectorDifference": {
+      "type": "object",
+      "properties": {
+        "comparison_pixels": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "distribution_l1_percent_of_reference": {
+          "type": "number",
+          "format": "double"
+        },
+        "fwhm_delta_mm": {
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "name": {
+          "type": "string"
+        },
+        "received_delta_percentage_points": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "received_delta_percentage_points",
+        "fwhm_delta_mm",
+        "distribution_l1_percent_of_reference",
+        "comparison_pixels"
+      ]
+    },
+    "DetectorSummary": {
+      "type": "object",
+      "properties": {
+        "fwhm_mm": {
+          "type": "array",
+          "items": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "name": {
+          "type": "string"
+        },
+        "peak_position_mm": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "pixel_pitch_mm": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "received_percent": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "received_percent",
+        "pixel_pitch_mm",
+        "fwhm_mm"
+      ]
+    }
+  }
+}

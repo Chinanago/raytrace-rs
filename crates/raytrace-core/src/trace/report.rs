@@ -3,6 +3,7 @@ use crate::model::{Interaction, PreparedScene, Ray};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Budget {
     pub launched: f64,
     pub detected: f64,
@@ -49,6 +50,7 @@ impl Budget {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SurfaceStats {
     pub name: String,
     pub encounters: u64,
@@ -65,6 +67,7 @@ fn zero(n: &u64) -> bool {
     *n == 0
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DetectorMap {
     pub name: String,
     pub pixels: [usize; 2],
@@ -73,6 +76,7 @@ pub struct DetectorMap {
     pub weights: Vec<f64>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Terminal {
     pub ray: Ray,
     pub reason: String,
@@ -80,6 +84,7 @@ pub struct Terminal {
     pub depth: usize,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PathEvent {
     pub id: u64,
     pub depth: usize,
@@ -89,6 +94,7 @@ pub struct PathEvent {
     pub incident_weight: f64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct TraceDiagnostic {
     pub reason: String,
     pub surface: Option<usize>,
@@ -102,6 +108,7 @@ pub struct TraceDiagnostic {
     pub intersection: Option<IntersectionContext>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct IntersectionContext {
     /// Position from which the failed interface search started.
     pub origin_mm: V3,
@@ -111,6 +118,7 @@ pub struct IntersectionContext {
     pub geometric_normal: V3,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct DiagnosticOverflow {
     pub branch_count: u64,
     pub weight: f64,
@@ -118,6 +126,7 @@ pub struct DiagnosticOverflow {
 const MAX_DIAGNOSTIC_GROUPS: usize = 64;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Report {
     pub budget: Budget,
     pub surfaces: Vec<SurfaceStats>,

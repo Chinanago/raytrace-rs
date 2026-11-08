@@ -1,14 +1,30 @@
-//! Command-line tracing, project workflows and calculation replay.
-use raytrace_core::math::V3;
-use raytrace_core::model::{Mode, PreparedScene, Ray, Sampling, Scene};
-use raytrace_core::trace::{TraceOptions, trace, trace_generated};
-use raytrace_io::record::{LaunchInput, RUN_FORMAT, RunContext, RunRecord};
-use raytrace_io::{project::Project, zemax};
-use serde::Serialize;
-use serde_json::{Value, json};
-use std::{env, error::Error, fs, path::PathBuf, time::Instant};
+//! Command-line front end of the JSON engine.
+//!
+//! `raytrace-rs run REQUEST.json` executes engine requests directly. The classic options
+//! (`MODEL --output ...`, `--replay`, `--scan`, ...) are translated into the same requests.
+//! stdout always carries one JSON response per request; people read stderr.
+use raytrace_app::{
+    convergence::ConvergencePlan,
+    engine::{
+        self, ConvergenceRequest, EngineError, InspectRequest, ModelInput, Outcome, Overrides,
+        Progress, RaysInput, RecordInput, ReplayRequest, Request, ResumeScanRequest, ScanRequest,
+        SchemaName, TraceRequest,
+    },
+    scan::ScanPlan,
+};
+use raytrace_core::{
+    model::{Mode, Sampling},
+    trace::TraceControl,
+};
+use serde_json::Value;
+use std::{
+    env, fs,
+    io::{Read, Write},
+    path::PathBuf,
+};
 
-const HELP: &str = "raytrace-rs MODEL.json|MODEL.zmx [--output REPORT.json] [--rays-csv INPUT.csv]\n\
+const HELP: &str = "raytrace-rs run REQUEST.json|-\n\
+    raytrace-rs MODEL.json|MODEL.zmx [--output REPORT.json] [--rays-csv INPUT.csv]\n\
     [--mode sequential|non_sequential] [--threads N] [--repeat N]\n\
     [--terminals] [--paths FIRST_N_LAUNCH_RAYS]\n\
     [--inspect] [--export-zmx COPY.zmx] [--ignore-coatings]\n\
@@ -17,577 +33,444 @@ const HELP: &str = "raytrace-rs MODEL.json|MODEL.zmx [--output REPORT.json] [--r
     raytrace-rs --convergence MODEL [--plan PLAN.json] [--output DIRECTORY]\n\
     raytrace-rs --scan MODEL [--plan PLAN.json] [--output DIRECTORY]\n\
     raytrace-rs --resume-scan DIRECTORY\n\
-共通: --json で標準出力を1行のJSON概要にします（成功時 \"ok\": true、失敗時 \"ok\": false と \"error\"）。\n\
+    raytrace-rs --schema NAME [--output FILE] | --schema all --output DIRECTORY\n\
+    raytrace-rs --version\n\
+run: JSONリクエスト（--schema request）を実行します。- は標準入力で、複数のリクエストを続けて渡せます。\n\
+オプション形式も同じリクエストに変換して実行します。\n\
+標準出力: リクエストごとに1行のJSON（--schema response）。成功時 \"ok\": true と result、失敗時 \"ok\": false と error.code・error.message。人向けの表示は標準エラーへ出力します。\n\
+スキーマ名: request, response, scene, project, run, scan_plan, scan, convergence_plan, convergence\n\
 光線CSVヘッダー: id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium\n\
 単位: mm、um、任意の光量重み。発射光線の重み合計を100%の基準とします。\n\
 シーケンシャルは透過光と指定したミラーを追跡し、全反射で光線を終了します。非シーケンシャルは反射光と透過光に分岐します。\n\
-ベンチマーク時間は光源光線の生成・追跡・レポート集計を含み、入出力とウォームアップを除きます。";
+オプション形式の追跡はウォームアップを1回行い、光源光線の生成・追跡・レポート集計の時間を計ります。";
 
-fn read_csv(path: &str, scene: &PreparedScene) -> Result<Vec<Ray>, Box<dyn Error>> {
-    let text = fs::read_to_string(path)?;
-    let mut lines = text.lines();
-    let header = lines
-        .next()
-        .ok_or("CSVが空です")?
-        .trim_start_matches('\u{feff}')
-        .trim();
-    if header != "id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium" {
-        return Err("光線CSVのヘッダーが不正です（--helpを確認してください）".into());
-    }
-    let mut ids = std::collections::HashSet::new();
-    lines
-        .filter(|l| !l.trim().is_empty())
-        .map(|line| {
-            let v: Vec<_> = line.split(',').map(str::trim).collect();
-            if v.len() != 10 {
-                return Err("CSVは10列で指定してください".into());
-            }
-            let mut ray = Ray {
-                id: v[0]
-                    .parse()
-                    .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
-                position_mm: V3([
-                    v[1].parse()
-                        .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
-                    v[2].parse()
-                        .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
-                    v[3].parse()
-                        .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
-                ]),
-                direction: V3([
-                    v[4].parse()
-                        .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
-                    v[5].parse()
-                        .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
-                    v[6].parse()
-                        .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
-                ]),
-                weight: v[7]
-                    .parse()
-                    .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
-                wavelength_um: v[8]
-                    .parse()
-                    .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
-                medium: v[9]
-                    .parse()
-                    .map_err(|e| format!("CSVの数値が不正です: {e}"))?,
-                optical_path_mm: 0.0,
-            };
-            if !ids.insert(ray.id) {
-                return Err("CSVの発射光線IDが重複しています".into());
-            }
-            ray.validate(scene)?;
-            Ok(ray)
-        })
-        .collect()
+/// A CLI argument error before any request runs.
+fn usage(message: impl Into<String>) -> EngineError {
+    EngineError::new("usage", message)
 }
 
-#[derive(Serialize)]
-struct Benchmark {
-    repetitions: usize,
-    worker_threads: usize,
-    input_rays: usize,
-    minimum_seconds: f64,
-    median_seconds: f64,
-    launched_rays_per_second: f64,
-    surface_intersections_per_second: f64,
-    timed_scope: &'static str,
+fn value(args: &[String], i: usize) -> Result<&String, EngineError> {
+    args.get(i + 1)
+        .ok_or_else(|| usage(format!("{} の値を指定してください", args[i])))
 }
 
-/// Runs one CLI command and returns its machine-readable summary.
-/// Human-readable progress is printed only when `json` is false.
-fn run(mut args: Vec<String>, json: bool) -> Result<Value, Box<dyn Error>> {
-    let say = |line: String| {
-        if !json {
-            println!("{line}");
+fn number<T: std::str::FromStr>(text: &str) -> Result<T, EngineError>
+where
+    T::Err: std::fmt::Display,
+{
+    text.parse()
+        .map_err(|e| usage(format!("オプションの数値が不正です: {e}")))
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<T, EngineError> {
+    let bytes = fs::read(path).map_err(|e| raytrace_io::Error::io(path, e))?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| raytrace_io::Error::json(Some(PathBuf::from(path)), e).into())
+}
+
+/// `--scan`, `--resume-scan` and `--convergence`.
+fn study(args: &[String]) -> Result<Request, EngineError> {
+    let input = args
+        .get(1)
+        .ok_or_else(|| usage("走査・収束確認のモデルまたはディレクトリを指定してください"))?;
+    let mut plan = None;
+    let mut output = None;
+    let mut i = 2;
+    while i < args.len() {
+        let v = value(args, i)?;
+        match args[i].as_str() {
+            "--plan" if args[0] != "--resume-scan" => plan = Some(v.clone()),
+            "--output" if args[0] != "--resume-scan" => output = Some(PathBuf::from(v)),
+            option => return Err(usage(format!("不明なオプションです: {option}"))),
         }
-    };
-    if args.first().is_some_and(|a| a == "--version" || a == "-V") {
-        say(format!("raytrace-rs {}", env!("CARGO_PKG_VERSION")));
-        return Ok(
-            json!({ "ok": true, "command": "version", "version": env!("CARGO_PKG_VERSION") }),
-        );
+        i += 2;
     }
-    if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
-        say(HELP.to_string());
-        return Ok(json!({ "ok": true, "command": "help", "help": HELP }));
+    Ok(match args[0].as_str() {
+        "--resume-scan" => Request::ResumeScan(ResumeScanRequest {
+            directory: input.into(),
+            include_manifest: false,
+        }),
+        "--scan" => Request::Scan(ScanRequest {
+            model: ModelInput::Path(input.into()),
+            catalogs: Vec::new(),
+            plan: plan.map_or_else(|| Ok(ScanPlan::default()), |p| read_json(&p))?,
+            output: output.unwrap_or_else(|| "results/scan".into()),
+            include_manifest: false,
+        }),
+        _ => Request::Convergence(ConvergenceRequest {
+            model: input.into(),
+            plan: plan.map_or_else(|| Ok(ConvergencePlan::default()), |p| read_json(&p))?,
+            output: output.unwrap_or_else(|| "results/convergence".into()),
+            include_report: false,
+        }),
+    })
+}
+
+/// Classic options → one request.
+fn parse(mut args: Vec<String>) -> Result<Request, EngineError> {
+    if matches!(
+        args[0].as_str(),
+        "--scan" | "--resume-scan" | "--convergence"
+    ) {
+        return study(&args);
     }
-    if args[0] == "--convergence" {
-        let model = args.get(1).ok_or("収束確認のモデルを指定してください")?;
-        let mut plan = raytrace_app::convergence::ConvergencePlan::default();
-        let mut output = PathBuf::from("results/convergence");
-        let mut i = 2;
-        while i < args.len() {
-            let value = args
-                .get(i + 1)
-                .ok_or("収束確認オプションの値を指定してください")?;
-            match args[i].as_str() {
-                "--plan" => plan = serde_json::from_slice(&fs::read(value)?)?,
-                "--output" => output = value.into(),
-                option => return Err(format!("不明な収束確認オプションです: {option}").into()),
-            }
-            i += 2;
-        }
-        let report = raytrace_app::convergence::run(std::path::Path::new(model), &plan, &output)?;
-        let failures = report.cases.iter().filter(|c| c.error.is_some()).count();
-        let summary_path = output.join("convergence.json");
-        say(format!(
-            "収束確認: {}ケース、{}比較、{}失敗; {}",
-            report.cases.len(),
-            report.comparisons.len(),
-            failures,
-            summary_path.display()
-        ));
-        let mut summary = json!({
-            "ok": failures == 0, "command": "convergence", "output": summary_path,
-            "cases": report.cases.len(), "comparisons": report.comparisons.len(),
-            "failed": failures,
-        });
-        if failures > 0 {
-            summary["error"] =
-                "収束確認で失敗したケースがあります。保存した概要を確認してください".into();
-        }
-        return Ok(summary);
+    let replay = args[0] == "--replay";
+    if replay {
+        args.remove(0);
     }
-    if args[0] == "--scan" || args[0] == "--resume-scan" {
-        use raytrace_app::scan::{ScanManifest, ScanPlan};
-        use raytrace_core::trace::TraceControl;
-        let input = args
-            .get(1)
-            .ok_or("走査のモデルまたはディレクトリを指定してください")?;
-        let mut output = PathBuf::from("results/scan");
-        let mut plan = ScanPlan::default();
-        let mut i = 2;
-        while i < args.len() {
-            let value = args
-                .get(i + 1)
-                .ok_or("走査オプションの値を指定してください")?;
-            match args[i].as_str() {
-                "--plan" if args[0] == "--scan" => {
-                    plan = serde_json::from_slice(&fs::read(value)?)?
+    let input = args
+        .first()
+        .ok_or_else(|| usage("再計算する記録ファイルを指定してください"))?
+        .clone();
+    let mut output = None;
+    let mut csv = None;
+    let mut threads = None;
+    let mut repeat = 1usize;
+    let mut terminals = false;
+    let mut paths = None;
+    let mut inspect = false;
+    let mut export_zmx = None;
+    let mut o = Overrides::default();
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--inspect" => inspect = true,
+            "--ignore-coatings" => o.ignore_coatings = true,
+            "--terminals" => terminals = true,
+            flag => {
+                let v = value(&args, i)?;
+                match flag {
+                    "--output" => output = Some(PathBuf::from(v)),
+                    "--rays-csv" => csv = Some(PathBuf::from(v)),
+                    "--export-zmx" => export_zmx = Some(PathBuf::from(v)),
+                    "--threads" => {
+                        let n: usize = number(v)?;
+                        if n == 0 {
+                            return Err(usage("スレッド数は正の値で指定してください"));
+                        }
+                        threads = Some(n);
+                    }
+                    "--repeat" => {
+                        repeat = number(v)?;
+                        if repeat == 0 {
+                            return Err(usage("繰返し回数は正の値で指定してください"));
+                        }
+                    }
+                    "--paths" => paths = Some(number(v)?),
+                    "--wavelength-um" => o.wavelength_um = Some(number(v)?),
+                    "--rays-per-source" => o.rays_per_source = Some(number(v)?),
+                    "--sampling" => {
+                        o.sampling = Some(match v.as_str() {
+                            "sobol" => Sampling::Sobol,
+                            "pseudorandom" => Sampling::Pseudorandom,
+                            _ => {
+                                return Err(usage(
+                                    "サンプリングはsobolまたはpseudorandomで指定してください",
+                                ));
+                            }
+                        })
+                    }
+                    "--mode" => {
+                        o.mode = Some(match v.as_str() {
+                            "sequential" => Mode::Sequential,
+                            "non_sequential" => Mode::NonSequential,
+                            _ => return Err(usage("不明な追跡方式です")),
+                        })
+                    }
+                    option => return Err(usage(format!("不明なオプションです: {option}"))),
                 }
-                "--output" if args[0] == "--scan" => output = value.into(),
-                _ => return Err("不明な走査オプションです".into()),
+                i += 1;
             }
-            i += 2;
         }
-        let mut manifest = if args[0] == "--resume-scan" {
-            output = input.into();
-            ScanManifest::open(&output)?
-        } else {
-            if output.join("scan.json").exists() {
-                return Err(
-                    "走査の出力先は既に存在します。--resume-scanまたは新しいディレクトリを指定してください".into(),
-                );
+        i += 1;
+    }
+    if replay {
+        if csv.is_some()
+            || o.mode.is_some()
+            || o.sampling.is_some()
+            || o.rays_per_source.is_some()
+            || o.wavelength_um.is_some()
+            || o.ignore_coatings
+            || inspect
+            || export_zmx.is_some()
+        {
+            return Err(usage(
+                "再計算では記録された光学条件を使います。変更できるのはoutput・threads・repeat・terminals・pathsだけです",
+            ));
+        }
+        return Ok(Request::Replay(ReplayRequest {
+            record: RecordInput::Path(input.into()),
+            threads,
+            repeat,
+            warmup: true,
+            terminals: terminals.then_some(true),
+            paths,
+            output: Some(output.unwrap_or_else(|| "results/replay.json".into())),
+            include_record: false,
+        }));
+    }
+    let output = Some(output.unwrap_or_else(|| "results/report.json".into()));
+    if inspect {
+        return Ok(Request::Inspect(InspectRequest {
+            model: ModelInput::Path(input.into()),
+            catalogs: Vec::new(),
+            output,
+            export_zmx,
+            ignore_coatings: o.ignore_coatings,
+            wavelength_um: o.wavelength_um,
+            include_project: false,
+        }));
+    }
+    Ok(Request::Trace(TraceRequest {
+        model: ModelInput::Path(input.into()),
+        catalogs: Vec::new(),
+        rays: csv.map(RaysInput::Csv),
+        overrides: o,
+        threads,
+        repeat,
+        warmup: true,
+        terminals,
+        paths: paths.unwrap_or(0),
+        preview_paths: 0,
+        max_total_rays: None,
+        export_zmx,
+        output,
+        include_record: false,
+    }))
+}
+
+/// Japanese lines for stderr.
+fn describe(outcome: &Outcome) -> Vec<String> {
+    match outcome {
+        Outcome::Version { version } => vec![format!("raytrace-rs {version}")],
+        Outcome::Schema { .. } => Vec::new(),
+        Outcome::Opened(_) => vec!["読込完了".into()],
+        Outcome::Inspected(r) => {
+            let mut lines = vec![format!(
+                "読込結果: 光源{}個、面{}個、材料{}個",
+                r.sources, r.surfaces, r.materials
+            )];
+            for component in &r.compatibility.components {
+                lines.push(format!(
+                    "{}{}",
+                    component.name,
+                    if component.enabled { "" } else { " [無効]" }
+                ));
+                for entry in &component.entries {
+                    lines.push(format!("  {}: {}", entry.status.label(), entry.message));
+                }
             }
-            ScanManifest::new(&Project::open(std::path::Path::new(input), &[])?, plan)?
-        };
-        manifest.execute(&output, &TraceControl::default(), |m| {
-            let completed = m
+            lines
+        }
+        Outcome::Traced(r) => {
+            let mut lines = vec![
+                format!("基準: {} = 100%", r.reference_plane),
+                format!(
+                    "発射光線数: {}; 検出光量: {:.6}%",
+                    r.launched_rays, r.detected_percent_of_reference
+                ),
+                format!(
+                    "追跡時間の中央値: {:.3} ms; {:.3}百万光線/秒; {}スレッド",
+                    r.median_seconds * 1000.0,
+                    r.launched_rays as f64 / r.median_seconds / 1e6,
+                    r.worker_threads
+                ),
+                format!(
+                    "光量収支の誤差: {:.3e}; レポート: {}",
+                    r.relative_budget_closure_error,
+                    r.output
+                        .as_ref()
+                        .map_or_else(|| "保存なし".into(), |p| p.display().to_string())
+                ),
+            ];
+            lines.extend(r.warnings.iter().cloned());
+            lines
+        }
+        Outcome::Scanned(r) => vec![format!(
+            "走査を保存しました: {}（{}ケース、完了{}、失敗{}）",
+            r.output.display(),
+            r.cases,
+            r.completed,
+            r.failed
+        )],
+        Outcome::Converged(r) => vec![format!(
+            "収束確認: {}ケース、{}比較、{}失敗; {}",
+            r.cases,
+            r.comparisons,
+            r.failed,
+            r.output.display()
+        )],
+        Outcome::Saved { output } => vec![format!("保存しました: {}", output.display())],
+    }
+}
+
+fn print(stdout: &mut impl Write, response: &engine::Response) {
+    let line = serde_json::to_string(response).expect("responses serialize");
+    let _ = writeln!(stdout, "{line}");
+}
+
+/// Run one request, print its response line and the human summary. Returns success.
+fn perform(request: Request, stdout: &mut impl Write) -> bool {
+    let command = request.command();
+    let mut progress = |p: Progress<'_>| match p {
+        Progress::Scan(m) => {
+            let done = m
                 .cases
                 .iter()
                 .filter(|c| c.state == "completed" || c.state == "failed")
                 .count();
-            if json {
-                eprintln!("走査: {completed}/{}ケース", m.cases.len());
-            } else {
-                println!("走査: {completed}/{}ケース", m.cases.len());
-            }
-        })?;
-        let summary_path = output.join("scan.json");
-        say(format!("走査を保存しました: {}", summary_path.display()));
-        let count = |state: &str| manifest.cases.iter().filter(|c| c.state == state).count();
-        let failed = count("failed");
-        let mut summary = json!({
-            "ok": failed == 0, "command": args[0].trim_start_matches("--"),
-            "output": summary_path, "cases": manifest.cases.len(),
-            "completed": count("completed"), "failed": failed,
-        });
-        if failed > 0 {
-            summary["error"] = "走査で失敗したケースがあります。scan.jsonを確認してください".into();
+            eprintln!("走査: {done}/{}ケース", m.cases.len());
         }
-        return Ok(summary);
-    }
-    let replay = if args[0] == "--replay" {
-        args.remove(0);
-        Some(RunRecord::open(std::path::Path::new(
-            args.first()
-                .ok_or("再計算する記録ファイルを指定してください")?,
-        ))?)
-    } else {
-        None
     };
-    let mut output = PathBuf::from(if replay.is_some() {
-        "results/replay.json"
-    } else {
-        "results/report.json"
-    });
-    let mut csv = None;
-    let mut threads = None;
-    let mut repeat = 1usize;
-    let mut mode = None;
-    let mut options = replay
-        .as_ref()
-        .map_or_else(TraceOptions::default, |r| r.calculation.trace_options);
-    let mut inspect = false;
-    let mut export_zmx = None;
-    let mut ignore_coatings = false;
-    let mut wavelength = None;
-    let mut rays_per_source = None;
-    let mut sampling = None;
-    let mut i = 1;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--inspect" => {
-                inspect = true;
-                i += 1;
-                continue;
-            }
-            "--ignore-coatings" => {
-                ignore_coatings = true;
-                i += 1;
-                continue;
-            }
-            "--terminals" => {
-                options.keep_terminals = true;
-                i += 1;
-                continue;
-            }
-            "--output" | "--rays-csv" | "--threads" | "--repeat" | "--mode" | "--paths"
-            | "--export-zmx" | "--wavelength-um" | "--rays-per-source" | "--sampling" => (),
-            option => return Err(format!("不明なオプションです: {option}").into()),
-        }
-        let value = args.get(i + 1).ok_or("オプションの値を指定してください")?;
-        match args[i].as_str() {
-            "--sampling" => {
-                sampling = Some(match value.as_str() {
-                    "sobol" => Sampling::Sobol,
-                    "pseudorandom" => Sampling::Pseudorandom,
-                    _ => {
-                        return Err(
-                            "サンプリングはsobolまたはpseudorandomで指定してください".into()
-                        );
-                    }
-                })
-            }
-            "--rays-per-source" => {
-                rays_per_source = Some(
-                    value
-                        .parse::<usize>()
-                        .map_err(|e| format!("オプションの数値が不正です: {e}"))?,
-                )
-            }
-            "--export-zmx" => export_zmx = Some(PathBuf::from(value)),
-            "--wavelength-um" => {
-                wavelength = Some(
-                    value
-                        .parse::<f64>()
-                        .map_err(|e| format!("オプションの数値が不正です: {e}"))?,
-                )
-            }
-            "--output" => output = value.into(),
-            "--rays-csv" => csv = Some(value.clone()),
-            "--threads" => {
-                let n: usize = value
-                    .parse()
-                    .map_err(|e| format!("オプションの数値が不正です: {e}"))?;
-                if n == 0 {
-                    return Err("スレッド数は正の値で指定してください".into());
-                }
-                threads = Some(n);
-            }
-            "--repeat" => {
-                repeat = value
-                    .parse()
-                    .map_err(|e| format!("オプションの数値が不正です: {e}"))?;
-                if repeat == 0 {
-                    return Err("繰返し回数は正の値で指定してください".into());
-                }
-            }
-            "--paths" => {
-                options.path_launch_count = value
-                    .parse()
-                    .map_err(|e| format!("オプションの数値が不正です: {e}"))?
-            }
-            "--mode" => {
-                mode = Some(match value.as_str() {
-                    "sequential" => Mode::Sequential,
-                    "non_sequential" => Mode::NonSequential,
-                    _ => return Err("不明な追跡方式です".into()),
-                })
-            }
-            _ => unreachable!(),
-        }
-        i += 2;
-    }
-    let mut builder = rayon::ThreadPoolBuilder::new();
-    if replay.is_some()
-        && (csv.is_some()
-            || mode.is_some()
-            || sampling.is_some()
-            || rays_per_source.is_some()
-            || wavelength.is_some()
-            || ignore_coatings
-            || inspect
-            || export_zmx.is_some())
-    {
-        return Err("再計算では記録された光学条件を使います。変更できるのはoutput・threads・repeat・terminals・pathsだけです".into());
-    }
-    if let Some(n) = threads.or_else(|| replay.as_ref().map(|r| r.calculation.worker_threads)) {
-        if n == 0 {
-            return Err("スレッド数は正の値で指定してください".into());
-        }
-        builder = builder.num_threads(n);
-    }
-    let pool = builder.build()?;
-    let mut project = match &replay {
-        Some(r) => r.calculation.project.clone(),
-        None => Project::open(std::path::Path::new(&args[0]), &[])?,
-    };
-    project.allow_uncoated = ignore_coatings || project.allow_uncoated;
-    if let Some(w) = wavelength {
-        project.monochromatic_override_um = Some(w);
-    }
-    if let Some(path) = &export_zmx {
-        zemax::export(&project, path)?;
-    }
-    if inspect {
-        if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
-            fs::create_dir_all(parent)?;
-        }
-        project.save(&output)?;
-        say(format!(
-            "読込結果: 光源{}個、面{}個、材料{}個",
-            project.scene.sources.len(),
-            project.scene.surfaces.len(),
-            project.scene.materials.len()
-        ));
-        let compatibility = project.compatibility_report();
-        for component in &compatibility.components {
-            say(format!(
-                "{}{}",
-                component.name,
-                if component.enabled { "" } else { " [無効]" }
-            ));
-            for entry in &component.entries {
-                say(format!("  {}: {}", entry.status.label(), entry.message));
-            }
-        }
-        return Ok(json!({
-            "ok": true, "command": "inspect", "output": output, "exported_zmx": export_zmx,
-            "sources": project.scene.sources.len(), "surfaces": project.scene.surfaces.len(),
-            "materials": project.scene.materials.len(), "traceable": compatibility.traceable,
-            "compatibility": compatibility,
-        }));
-    }
-    let mut spec: Scene = match &replay {
-        Some(r) => r.calculation.scene.clone(),
-        None => project.trace_scene()?,
-    };
-    if let Some(sampling) = sampling {
-        for source in &mut spec.sources {
-            source.sampling = sampling;
+    let result = engine::execute_with(request, &TraceControl::default(), &mut progress);
+    if let Ok(outcome) = &result {
+        for line in describe(outcome) {
+            eprintln!("{line}");
         }
     }
-    if let Some(count) = rays_per_source {
-        for source in &mut spec.sources {
-            source.count = count;
-        }
+    let response = engine::respond(command, result);
+    if let Some(error) = &response.error {
+        eprintln!("エラー: {}", error.message);
     }
-    if let Some(mode) = mode {
-        if project.assembly.is_some() && mode == Mode::Sequential {
-            return Err("組立光学系は非シーケンシャルで追跡してください".into());
+    print(stdout, &response);
+    response.ok
+}
+
+fn fail(stdout: &mut impl Write, command: &str, error: EngineError) -> bool {
+    eprintln!("エラー: {error}");
+    print(stdout, &engine::respond(command, Err(error)));
+    false
+}
+
+/// `run FILE|-`: a stream of JSON requests, one response line each.
+fn run_requests(source: Option<&String>, stdout: &mut impl Write) -> bool {
+    let text = match source.map(String::as_str) {
+        None => {
+            return fail(
+                stdout,
+                "run",
+                usage("リクエストJSONのファイルか - を指定してください"),
+            );
         }
-        spec.mode = mode;
-    }
-    let scene = spec.prepare()?;
-    if fs::canonicalize(&output)
-        .ok()
-        .zip(fs::canonicalize(&args[0]).ok())
-        .is_some_and(|(a, b)| a == b)
-    {
-        return Err("出力先は入力モデル・計算記録と異なるパスを指定してください".into());
-    }
-    let explicit = csv.is_some()
-        || replay
-            .as_ref()
-            .is_some_and(|r| matches!(r.calculation.input, LaunchInput::Explicit { .. }));
-    let rays = if explicit {
-        Some(if let Some(r) = &replay {
-            r.calculation.rays()?
-        } else {
-            read_csv(csv.as_ref().unwrap(), &scene)?
-        })
-    } else {
-        if let Some(r) = &replay {
-            r.calculation.validate_generated(&scene)?;
-        }
-        None
-    };
-    let input_count = match &rays {
-        Some(rays) => {
-            if rays.is_empty() {
-                return Err("光源または光線CSVを指定してください".into());
+        Some("-") => {
+            let mut text = String::new();
+            if let Err(e) = std::io::stdin().read_to_string(&mut text) {
+                return fail(stdout, "run", raytrace_io::Error::io("-", e).into());
             }
-            if !rays.iter().map(|r| r.weight).sum::<f64>().is_finite()
-                || rays.iter().all(|r| r.weight == 0.0)
-            {
-                return Err("発射光線の重み合計は正の有限値にしてください".into());
-            }
-            rays.len()
+            text
         }
-        None => scene.ray_generator()?.len(),
-    };
-    if input_count == 0 {
-        return Err("光源または光線CSVを指定してください".into());
-    }
-    let run = || match &rays {
-        Some(rays) => Ok(trace(&scene, rays, options)),
-        None => trace_generated(&scene, options),
-    };
-    std::hint::black_box(pool.install(run)?);
-    let mut timings = Vec::with_capacity(repeat);
-    let mut report = None;
-    for _ in 0..repeat {
-        let start = Instant::now();
-        let result = pool.install(run)?;
-        timings.push(start.elapsed().as_secs_f64());
-        report = Some(result);
-    }
-    let report = report.unwrap();
-    if !report.budget.launched.is_finite() || report.budget.launched <= 0. {
-        return Err("発射光線の重み合計は正の有限値にしてください".into());
-    }
-    timings.sort_by(f64::total_cmp);
-    let median = if repeat.is_multiple_of(2) {
-        (timings[repeat / 2 - 1] + timings[repeat / 2]) * 0.5
-    } else {
-        timings[repeat / 2]
-    };
-    let benchmark = Benchmark {
-        repetitions: repeat,
-        worker_threads: pool.current_num_threads(),
-        input_rays: input_count,
-        minimum_seconds: timings[0],
-        median_seconds: median,
-        launched_rays_per_second: input_count as f64 / median,
-        surface_intersections_per_second: report.surface_intersections as f64 / median,
-        timed_scope: if explicit {
-            "Trace, branch traversal, and report accumulation; excludes scene/ray input, JSON output, and one warmup"
-        } else {
-            "Source ray generation, trace, branch traversal, and report accumulation; excludes scene input, JSON output, and one warmup"
+        Some(path) => match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(e) => return fail(stdout, "run", raytrace_io::Error::io(path, e).into()),
         },
     };
-    let reference = report.budget.launched;
-    let raw = serde_json::to_value(&report.budget)?;
-    let percentages: serde_json::Map<String, Value> = raw
-        .as_object()
-        .unwrap()
-        .iter()
-        .map(|(key, value)| {
-            (
-                key.clone(),
-                json!(100.0 * value.as_f64().unwrap() / reference),
-            )
-        })
-        .collect();
-    let closure = (report.budget.accounted() - reference) / reference;
-    let detector_percentages: serde_json::Map<String, Value> = report
-        .detectors
-        .iter()
-        .map(|d| {
-            (
-                d.name.clone(),
-                json!(100.0 * d.weights.iter().sum::<f64>() / reference),
-            )
-        })
-        .collect();
-    let surface_percentages: Vec<_> = report
-        .surfaces
-        .iter()
-        .map(|s| {
-            json!({
-                "name": s.name, "incident": 100.0*s.incident_weight/reference,
-                "transmitted": 100.0*s.transmitted_weight/reference,
-                "reflected": 100.0*s.reflected_weight/reference,
-                "absorbed": 100.0*s.absorbed_weight/reference,
-                "detected": 100.0*s.detected_weight/reference,
-                "geometric_miss": 100.0*s.geometric_miss_weight/reference,
-            })
-        })
-        .collect();
-    let calculation = RunContext::capture(
-        &project,
-        &scene.spec,
-        rays.as_deref(),
-        pool.current_num_threads(),
-        options,
-    );
-    let result = json!({
-        "format": RUN_FORMAT, "calculation": calculation, "trace_seconds": median,
-        "schema_version": 2, "scene": scene.spec, "reference_weight": reference,
-        "budget_percent_of_reference": percentages.clone(),
-        "detector_percent_of_reference": detector_percentages.clone(),
-        "surface_encounter_percent_of_reference": surface_percentages,
-        "relative_budget_closure_error": closure, "benchmark": benchmark, "report": report,
-    });
-    if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
-        fs::create_dir_all(parent)?;
+    let mut ok = true;
+    let mut any = false;
+    for value in serde_json::Deserializer::from_str(&text).into_iter::<Value>() {
+        any = true;
+        let request = value
+            .map_err(|e| e.to_string())
+            .and_then(|v| serde_json::from_value::<Request>(v).map_err(|e| e.to_string()));
+        ok &= match request {
+            Ok(request) => perform(request, stdout),
+            Err(e) => fail(
+                stdout,
+                "unknown",
+                EngineError::new(
+                    "invalid_request",
+                    format!("リクエストJSONが不正です（--schema request を確認してください）: {e}"),
+                ),
+            ),
+        };
     }
-    fs::write(&output, serde_json::to_vec_pretty(&result)?)?;
-    let detected_percent =
-        100.0 * result["report"]["budget"]["detected"].as_f64().unwrap() / reference;
-    say(format!("基準: {} = 100%", scene.spec.reference_plane));
-    say(format!(
-        "発射光線数: {}; 検出光量: {:.6}%",
-        input_count, detected_percent
-    ));
-    say(format!(
-        "追跡時間の中央値: {:.3} ms; {:.3}百万光線/秒; {}スレッド",
-        median * 1000.0,
-        input_count as f64 / median / 1e6,
-        pool.current_num_threads()
-    ));
-    say(format!(
-        "光量収支の誤差: {:.3e}; レポート: {}",
-        closure,
-        output.display()
-    ));
-    let budget = &result["report"]["budget"];
-    let mut warnings = Vec::new();
-    if ["numerical_failure", "medium_mismatch", "interaction_limit"]
-        .iter()
-        .any(|key| budget[key].as_f64().unwrap() > 0.0)
-    {
-        let warning = "未解決の光線重みがあります。保存したレポートのnumerical_failure・medium_mismatch・interaction_limitを確認してください。";
-        eprintln!("{warning}");
-        warnings.push(warning);
+    if !any {
+        return fail(stdout, "run", usage("リクエストJSONが空です"));
     }
-    Ok(json!({
-        "ok": true, "command": if replay.is_some() { "replay" } else { "trace" },
-        "output": output, "format": RUN_FORMAT, "schema_version": 2,
-        "reference_plane": scene.spec.reference_plane, "launched_rays": input_count,
-        "detected_percent_of_reference": detected_percent,
-        "budget_percent_of_reference": percentages,
-        "detector_percent_of_reference": detector_percentages,
-        "relative_budget_closure_error": closure, "median_seconds": median,
-        "worker_threads": pool.current_num_threads(), "warnings": warnings,
-    }))
+    ok
+}
+
+fn render_schema(name: SchemaName) -> Result<String, EngineError> {
+    match engine::execute(Request::Schema { name })? {
+        Outcome::Schema { schema } => {
+            Ok(serde_json::to_string_pretty(&schema).expect("schemas serialize") + "\n")
+        }
+        _ => unreachable!("schema requests return schemas"),
+    }
+}
+
+/// `--schema NAME [--output FILE]` or `--schema all --output DIR`.
+/// Returns None when the schema itself was printed to stdout.
+fn schemas(args: &[String], stdout: &mut impl Write) -> Result<Option<Outcome>, EngineError> {
+    let names = || SchemaName::ALL.map(SchemaName::as_str).join(", ");
+    let name = args
+        .get(1)
+        .ok_or_else(|| usage(format!("スキーマ名を指定してください: {}, all", names())))?;
+    let output = match args.get(2..) {
+        Some([flag, path]) if flag == "--output" => Some(PathBuf::from(path)),
+        Some([]) | None => None,
+        _ => {
+            return Err(usage("--schema に指定できるオプションは --output だけです"));
+        }
+    };
+    let write = |path: &PathBuf, text: String| -> Result<(), EngineError> {
+        fs::write(path, text).map_err(|e| raytrace_io::Error::io(path, e).into())
+    };
+    if name == "all" {
+        let dir = output
+            .ok_or_else(|| usage("--schema all には --output DIRECTORY を指定してください"))?;
+        fs::create_dir_all(&dir).map_err(|e| raytrace_io::Error::io(&dir, e))?;
+        for schema in SchemaName::ALL {
+            let path = dir.join(format!("{}.schema.json", schema.as_str()));
+            write(&path, render_schema(schema)?)?;
+        }
+        return Ok(Some(Outcome::Saved { output: dir }));
+    }
+    let schema = SchemaName::parse(name)
+        .ok_or_else(|| usage(format!("不明なスキーマ名です: {name}（{}, all）", names())))?;
+    let text = render_schema(schema)?;
+    match output {
+        Some(path) => {
+            write(&path, text)?;
+            Ok(Some(Outcome::Saved { output: path }))
+        }
+        None => {
+            let _ = stdout.write_all(text.as_bytes());
+            Ok(None)
+        }
+    }
 }
 
 fn main() {
     let mut args: Vec<String> = env::args().skip(1).collect();
-    let json = args.iter().any(|a| a == "--json");
+    // Output is always JSON; `--json` remains accepted for earlier scripts.
     args.retain(|a| a != "--json");
-    let summary =
-        run(args, json).unwrap_or_else(|error| json!({ "ok": false, "error": error.to_string() }));
-    if json {
-        println!("{summary}");
-    }
-    if let Some(error) = summary["error"].as_str() {
-        eprintln!("エラー: {error}");
-    }
-    if summary["ok"] != true {
+    let mut stdout = std::io::stdout().lock();
+    let ok = match args.first().map(String::as_str) {
+        None | Some("--help" | "-h") => {
+            let _ = writeln!(stdout, "{HELP}");
+            true
+        }
+        // Plain text: packaging scripts compare it with the crate version.
+        Some("--version" | "-V") => {
+            let _ = writeln!(stdout, "raytrace-rs {}", env!("CARGO_PKG_VERSION"));
+            true
+        }
+        Some("run") => run_requests(args.get(1), &mut stdout),
+        Some("--schema") => match schemas(&args, &mut stdout) {
+            Ok(None) => true,
+            Ok(Some(outcome)) => {
+                print(&mut stdout, &engine::respond("schema", Ok(outcome)));
+                true
+            }
+            Err(error) => fail(&mut stdout, "schema", error),
+        },
+        Some(_) => match parse(args) {
+            Ok(request) => perform(request, &mut stdout),
+            Err(error) => fail(&mut stdout, "usage", error),
+        },
+    };
+    let _ = stdout.flush();
+    if !ok {
         std::process::exit(1);
     }
 }

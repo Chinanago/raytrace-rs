@@ -8,6 +8,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum RayAiming {
     #[default]
@@ -17,6 +18,7 @@ pub enum RayAiming {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct OpticalPupil {
     pub first_surface: usize,
@@ -27,6 +29,7 @@ pub struct OpticalPupil {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Vignetting {
     #[serde(default)]
@@ -64,6 +67,7 @@ impl Vignetting {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct PupilGeometry {
     pub entrance_pose: Pose,
     pub object_origin_mm: V3,

@@ -12,14 +12,21 @@ use raytrace_io::{
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path, sync::atomic::Ordering, time::Instant};
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Scanned value. Indices are zero-based; axis 0/1/2 is X/Y/Z.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Parameter {
+    /// Assembly component position in mm.
     ComponentPosition { component: usize, axis: usize },
+    /// Assembly component rotation in degrees.
     ComponentRotation { component: usize, axis: usize },
+    /// Rod width X / width Y / length (axis 0/1/2) in mm.
     RodSize { component: usize, axis: usize },
+    /// Standalone-model surface position in mm.
     SurfacePosition { surface: usize, axis: usize },
+    /// Standalone-model surface rotation in degrees.
     SurfaceRotation { surface: usize, axis: usize },
+    /// Wavelength of every source in micrometres.
     Wavelength,
 }
 impl Parameter {
@@ -167,14 +174,18 @@ pub fn linear_values(start: f64, end: f64, count: usize) -> Result<Vec<f64>> {
         })
         .collect())
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Plan for `raytrace-rs --scan MODEL --plan PLAN.json`. At most 256 cases.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct ScanPlan {
     pub parameter: Parameter,
+    /// Values of `parameter` in its unit (mm, deg or um).
     pub values: Vec<f64>,
+    /// Optional second axis; every combination with `values` is traced.
     pub secondary: Option<ScanAxis>,
     pub links: Vec<ParameterLink>,
     pub threads: usize,
+    /// Rays per source for every case; null keeps the model setting.
     pub rays_per_source: Option<usize>,
 }
 impl Default for ScanPlan {
@@ -189,14 +200,14 @@ impl Default for ScanPlan {
         }
     }
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ScanAxis {
     pub parameter: Parameter,
     pub values: Vec<f64>,
 }
 /// target = source * scale + offset; scale is dimensionless, offset uses target units.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ParameterLink {
     pub source: Parameter,
@@ -272,13 +283,13 @@ impl ScanPlan {
         Ok(p)
     }
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DetectorMetrics {
     pub name: String,
     pub received_percent: f64,
     pub fwhm_mm: [Option<f64>; 2],
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScanCase {
     pub value: f64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -290,7 +301,7 @@ pub struct ScanCase {
     pub detectors: Vec<DetectorMetrics>,
     pub trace_seconds: Option<f64>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ScanManifest {
     pub format: String,
     pub software_version: String,

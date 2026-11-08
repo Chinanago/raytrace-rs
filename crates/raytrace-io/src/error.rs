@@ -35,6 +35,25 @@ pub enum Error {
     Record(String),
 }
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+impl Error {
+    /// Stable snake_case identifier for scripts and agents; the message stays Japanese.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Format(error) => error.code(),
+            Self::Core(error) => error.code(),
+            Self::Io { .. } => "io",
+            Self::Json { .. } => "invalid_json",
+            Self::Zmx { .. } => "zmx",
+            Self::Agf(_) => "agf",
+            Self::Spcd(_) => "spcd",
+            Self::Step { .. } => "step",
+            Self::Unsupported(_) => "unsupported",
+            Self::Project(_) => "project",
+            Self::Record(_) => "record",
+        }
+    }
+}
 impl Error {
     pub(crate) fn zmx(detail: String) -> Self {
         Self::Zmx { line: None, detail }

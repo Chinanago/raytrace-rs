@@ -30,6 +30,9 @@ DEMOS = {
     "examples/integrator_rod.json", "examples/folded_mirror.json",
 }
 FIXTURES = {"tests/fixtures/step_legacy_hits.json"}
+SCHEMAS = {f"schemas/{name}.schema.json" for name in (
+    "request", "response", "scene", "project", "run", "scan_plan", "scan", "convergence_plan", "convergence",
+)}
 FONT_ASSETS = {"crates/raytrace-gui/assets/fonts/" + name for name in (
     "NotoSansJP-Regular.otf", "NotoSansJP-Bold.otf", "NotoSansMono-Regular.ttf",
     "OFL-NotoSansJP.txt", "OFL-NotoSansMono.txt",
@@ -67,7 +70,7 @@ def main():
             and (part.parts[2:] == ("Cargo.toml",)
                  or (part.parts[2] == "src" and part.suffix == ".rs"))
         )
-        if mode != b"100644" or stage != b"0" or not (path in FILES | DEMOS | FIXTURES | FONT_ASSETS or source):
+        if mode != b"100644" or stage != b"0" or not (path in FILES | DEMOS | FIXTURES | SCHEMAS | FONT_ASSETS or source):
             failures.append(f"Unapproved publication path or mode: {path}")
             continue
         content = git("show", f":{path}")

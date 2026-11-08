@@ -11,6 +11,7 @@ pub use material::Material;
 pub use source::{Diode, PupilIllumination, Ray, RayGenerator, Source};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Shape {
     /// Side of a closed lens barrel: z in [0,length], outward-pointing normal.
@@ -44,6 +45,7 @@ pub enum Shape {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Aperture {
     Circle {
@@ -90,6 +92,7 @@ impl Aperture {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Interaction {
     /// The minus/plus medium is on the -/+ side of the local sag normal.
@@ -108,6 +111,7 @@ pub enum Interaction {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Surface {
     pub name: String,
@@ -120,7 +124,10 @@ pub struct Surface {
     pub interaction: Interaction,
 }
 
+/// `sequential` follows the surface order and terminates at TIR;
+/// `non_sequential` follows the nearest hit and splits reflection and transmission.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
     Sequential,
@@ -137,6 +144,7 @@ fn default_cutoff() -> f64 {
     1e-7
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Settings {
     #[serde(default = "default_depth")]
@@ -156,13 +164,19 @@ impl Default for Settings {
     }
 }
 
+/// Optical model: materials, surfaces, sources and trace limits.
+/// Lengths are mm and wavelengths are micrometres. `examples/*.json` use this format.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Scene {
     pub name: String,
+    /// Describes where the launched weight is counted as 100 %.
     pub reference_plane: String,
     pub mode: Mode,
+    /// Material table; surfaces and rays refer to materials by index. Index 0 is usually air.
     pub materials: Vec<Material>,
+    /// Surfaces in sequential order (non-sequential tracing uses the nearest hit).
     pub surfaces: Vec<Surface>,
     #[serde(default)]
     pub settings: Settings,

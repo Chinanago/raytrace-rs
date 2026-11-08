@@ -2,6 +2,7 @@ use super::*;
 use crate::Result;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum TextEncoding {
     Utf8,
     Utf8Bom,

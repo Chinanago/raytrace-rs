@@ -9,6 +9,7 @@ use raytrace_core::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ComponentKind {
     System,
@@ -33,6 +34,7 @@ impl ComponentKind {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RodSize {
     pub width_mm: f64,
     pub height_mm: f64,
@@ -43,6 +45,7 @@ pub struct RodSize {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Component {
     pub name: String,
     pub enabled: bool,
@@ -55,6 +58,7 @@ pub struct Component {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Assembly {
     pub components: Vec<Component>,
 }

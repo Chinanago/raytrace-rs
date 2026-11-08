@@ -31,3 +31,18 @@ pub enum Error {
     Limit(String),
 }
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+impl Error {
+    /// Stable snake_case identifier for scripts and agents; the message stays Japanese.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::InvalidScene(_) => "invalid_scene",
+            Self::InvalidSource { .. } => "invalid_source",
+            Self::InvalidRay { .. } => "invalid_ray",
+            Self::Wavelength { .. } => "wavelength_out_of_range",
+            Self::RayAiming { .. } => "ray_aiming",
+            Self::Coating(_) => "coating",
+            Self::Limit(_) => "limit",
+        }
+    }
+}

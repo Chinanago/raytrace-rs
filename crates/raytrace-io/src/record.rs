@@ -16,6 +16,7 @@ pub const RUN_FORMAT: &str = "raytrace-run-v1";
 const SAMPLING_REVISION: u32 = 3;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SavedPupil {
     pub source_index: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -25,6 +26,7 @@ pub struct SavedPupil {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LaunchInput {
     Generated {
@@ -36,6 +38,7 @@ pub enum LaunchInput {
     },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RunContext {
     pub software_version: String,
     pub created_unix_ms: u64,
@@ -264,6 +267,7 @@ impl RunContext {
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RunRecord {
     pub format: String,
     pub calculation: RunContext,

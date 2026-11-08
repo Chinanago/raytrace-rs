@@ -3,6 +3,7 @@ use crate::Result;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Coating {
     pub name: String,
@@ -17,6 +18,7 @@ pub struct Coating {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum CoatingModel {
     Ideal {

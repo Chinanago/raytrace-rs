@@ -1,0 +1,2422 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RunOutput",
+  "description": "Calculation record written by `trace` and `replay`.\n`replay` reruns `calculation` with the recorded optical conditions.",
+  "type": "object",
+  "properties": {
+    "benchmark": {
+      "$ref": "#/$defs/Benchmark"
+    },
+    "budget_percent_of_reference": {
+      "description": "`report.budget` entries as percentages of `reference_weight`.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "format": "double"
+      }
+    },
+    "calculation": {
+      "description": "Frozen project, effective scene, launch input and software version used for replay.",
+      "$ref": "#/$defs/RunContext"
+    },
+    "detector_percent_of_reference": {
+      "description": "Integrated power on each detector, by detector name, as a percentage of `reference_weight`.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "format": "double"
+      }
+    },
+    "format": {
+      "description": "Always `raytrace-run-v1`.",
+      "type": "string"
+    },
+    "reference_weight": {
+      "description": "Launched weight sum; every `*_percent_of_reference` field divides by this value.",
+      "type": "number",
+      "format": "double"
+    },
+    "relative_budget_closure_error": {
+      "description": "`(accounted - launched) / launched` of the power budget.",
+      "type": "number",
+      "format": "double"
+    },
+    "report": {
+      "description": "Raw trace report: budget, detector pixel weights, surface totals and diagnostics.",
+      "$ref": "#/$defs/Report"
+    },
+    "scene": {
+      "description": "Effective scene after overrides.",
+      "$ref": "#/$defs/Scene"
+    },
+    "schema_version": {
+      "description": "Output layout version of the record.",
+      "type": "integer",
+      "format": "uint32",
+      "minimum": 0
+    },
+    "surface_encounter_percent_of_reference": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SurfacePercent"
+      }
+    },
+    "trace_seconds": {
+      "description": "Median trace time in seconds (same as `benchmark.median_seconds`).",
+      "type": "number",
+      "format": "double"
+    }
+  },
+  "required": [
+    "format",
+    "schema_version",
+    "calculation",
+    "trace_seconds",
+    "scene",
+    "reference_weight",
+    "budget_percent_of_reference",
+    "detector_percent_of_reference",
+    "surface_encounter_percent_of_reference",
+    "relative_budget_closure_error",
+    "benchmark",
+    "report"
+  ],
+  "$defs": {
+    "Aperture": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "radius_mm": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "circle"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "radius_mm"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "half_height_mm": {
+              "type": "number",
+              "format": "double"
+            },
+            "half_width_mm": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "rectangle"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "half_width_mm",
+            "half_height_mm"
+          ]
+        }
+      ]
+    },
+    "Assembly": {
+      "type": "object",
+      "properties": {
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Component"
+          }
+        }
+      },
+      "required": [
+        "components"
+      ]
+    },
+    "Benchmark": {
+      "description": "Timing of the repeated trace; see `timed_scope` for what is measured.",
+      "type": "object",
+      "properties": {
+        "input_rays": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "launched_rays_per_second": {
+          "type": "number",
+          "format": "double"
+        },
+        "median_seconds": {
+          "type": "number",
+          "format": "double"
+        },
+        "minimum_seconds": {
+          "type": "number",
+          "format": "double"
+        },
+        "repetitions": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "surface_intersections_per_second": {
+          "type": "number",
+          "format": "double"
+        },
+        "timed_scope": {
+          "type": "string"
+        },
+        "worker_threads": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "repetitions",
+        "worker_threads",
+        "input_rays",
+        "minimum_seconds",
+        "median_seconds",
+        "launched_rays_per_second",
+        "surface_intersections_per_second",
+        "timed_scope"
+      ]
+    },
+    "Budget": {
+      "type": "object",
+      "properties": {
+        "branch_cutoff": {
+          "type": "number",
+          "format": "double"
+        },
+        "bulk_absorbed": {
+          "type": "number",
+          "format": "double"
+        },
+        "detected": {
+          "type": "number",
+          "format": "double"
+        },
+        "escaped": {
+          "type": "number",
+          "format": "double"
+        },
+        "geometric_miss": {
+          "type": "number",
+          "format": "double"
+        },
+        "interaction_limit": {
+          "type": "number",
+          "format": "double"
+        },
+        "launched": {
+          "type": "number",
+          "format": "double"
+        },
+        "medium_mismatch": {
+          "type": "number",
+          "format": "double"
+        },
+        "numerical_failure": {
+          "type": "number",
+          "format": "double"
+        },
+        "sequential_reflection_not_followed": {
+          "type": "number",
+          "format": "double"
+        },
+        "sequential_tir": {
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "surface_absorbed": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "launched",
+        "detected",
+        "escaped",
+        "geometric_miss",
+        "surface_absorbed",
+        "bulk_absorbed",
+        "sequential_reflection_not_followed",
+        "branch_cutoff",
+        "interaction_limit",
+        "numerical_failure",
+        "medium_mismatch"
+      ]
+    },
+    "Coating": {
+      "type": "object",
+      "properties": {
+        "back": {
+          "description": "Incidence from the plus side; omission uses the front model on both sides.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CoatingModel"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "front": {
+          "description": "Incidence from the minus side of the surface normal.",
+          "$ref": "#/$defs/CoatingModel"
+        },
+        "name": {
+          "type": "string"
+        },
+        "zemax_definition": {
+          "description": "Original named coating block, including S/P and phase data for lossless exchange.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "front"
+      ]
+    },
+    "CoatingModel": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "reflectance": {
+              "type": "number",
+              "format": "double"
+            },
+            "tir_reflectance": {
+              "type": "number",
+              "format": "double",
+              "default": 1.0
+            },
+            "transmittance": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "ideal"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "reflectance",
+            "transmittance"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "angles_deg": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "coefficients": {
+              "description": "Angle-major, then wavelength; each element is [R, T] in power units.",
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "format": "double"
+                },
+                "maxItems": 2,
+                "minItems": 2
+              }
+            },
+            "low_index_angle": {
+              "description": "Zemax TABLE angles refer to the lower-index medium on either traversal.",
+              "type": "boolean",
+              "default": false
+            },
+            "tir_reflectance": {
+              "type": "number",
+              "format": "double",
+              "default": 1.0
+            },
+            "type": {
+              "type": "string",
+              "const": "table"
+            },
+            "wavelengths_um": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "wavelengths_um",
+            "angles_deg",
+            "coefficients"
+          ]
+        }
+      ]
+    },
+    "CompatibilityEntry": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/CompatibilityStatus"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "status"
+      ]
+    },
+    "CompatibilityReport": {
+      "type": "object",
+      "properties": {
+        "components": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ComponentCompatibility"
+          }
+        },
+        "traceable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "traceable",
+        "components"
+      ]
+    },
+    "CompatibilityStatus": {
+      "type": "string",
+      "enum": [
+        "computed",
+        "preserved_only",
+        "requires_override",
+        "override_applied",
+        "unsupported"
+      ]
+    },
+    "Component": {
+      "type": "object",
+      "properties": {
+        "anchor_mm": {
+          "description": "Local point placed at pose.translation_mm; lens first vertex / source-array centre.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "kind": {
+          "$ref": "#/$defs/ComponentKind"
+        },
+        "name": {
+          "type": "string"
+        },
+        "pose": {
+          "$ref": "#/$defs/Pose"
+        },
+        "project": {
+          "$ref": "#/$defs/Project"
+        },
+        "rod": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RodSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "enabled",
+        "kind",
+        "pose",
+        "anchor_mm",
+        "project"
+      ]
+    },
+    "ComponentCompatibility": {
+      "type": "object",
+      "properties": {
+        "component": {
+          "description": "Zero-based index in the assembly; None denotes a standalone project.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "effective_wavelengths_um": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "enabled": {
+          "type": "boolean"
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CompatibilityEntry"
+          }
+        },
+        "materials": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MaterialUse"
+          }
+        },
+        "name": {
+          "type": "string"
+        },
+        "source_format": {
+          "type": "string"
+        },
+        "sources": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "surfaces": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "name",
+        "enabled",
+        "source_format",
+        "sources",
+        "surfaces",
+        "effective_wavelengths_um",
+        "materials",
+        "entries"
+      ]
+    },
+    "ComponentKind": {
+      "type": "string",
+      "enum": [
+        "system",
+        "source",
+        "optic",
+        "rod",
+        "detector"
+      ]
+    },
+    "DetectorMap": {
+      "type": "object",
+      "properties": {
+        "half_extent_mm": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "name": {
+          "type": "string"
+        },
+        "pixels": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "weights": {
+          "description": "Row-major: row y, column x. Values are integrated pixel power, not density.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "pixels",
+        "half_extent_mm",
+        "weights"
+      ]
+    },
+    "DiagnosticOverflow": {
+      "type": "object",
+      "properties": {
+        "branch_count": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "weight": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "branch_count",
+        "weight"
+      ]
+    },
+    "Diode": {
+      "type": "object",
+      "properties": {
+        "angular_supergaussian": {
+          "type": "array",
+          "default": [
+            1.0,
+            1.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "array": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "astigmatism_mm": {
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "divergence_deg": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "gaussian_width_mm": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "half_width_mm": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "rotation_deg": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "spacing_mm": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "spatial_supergaussian": {
+          "type": "array",
+          "default": [
+            1.0,
+            1.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        }
+      },
+      "required": [
+        "rotation_deg",
+        "divergence_deg",
+        "array",
+        "spacing_mm",
+        "half_width_mm",
+        "gaussian_width_mm"
+      ]
+    },
+    "Interaction": {
+      "oneOf": [
+        {
+          "description": "The minus/plus medium is on the -/+ side of the local sag normal.",
+          "type": "object",
+          "properties": {
+            "minus_medium": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "plus_medium": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "reflectance": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "dielectric"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "minus_medium",
+            "plus_medium"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "reflectance": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "mirror"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "reflectance"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "absorb"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "pixels": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "uint",
+                "minimum": 0
+              },
+              "maxItems": 2,
+              "minItems": 2
+            },
+            "type": {
+              "type": "string",
+              "const": "detector"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "pixels"
+          ]
+        }
+      ]
+    },
+    "IntersectionContext": {
+      "type": "object",
+      "properties": {
+        "distance_mm": {
+          "type": "number",
+          "format": "double"
+        },
+        "geometric_normal": {
+          "type": "array",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "normal": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "origin_mm": {
+          "description": "Position from which the failed interface search started.",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        }
+      },
+      "required": [
+        "origin_mm",
+        "distance_mm",
+        "normal"
+      ]
+    },
+    "Issue": {
+      "type": "object",
+      "properties": {
+        "blocking": {
+          "description": "An unsupported physical definition prevents tracing.",
+          "type": "boolean"
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "blocking"
+      ]
+    },
+    "LaunchInput": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "sampling_revision": {
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "generated"
+            }
+          },
+          "required": [
+            "type",
+            "sampling_revision",
+            "count"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "rays": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Ray"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "explicit"
+            }
+          },
+          "required": [
+            "type",
+            "rays"
+          ]
+        }
+      ]
+    },
+    "Material": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "absorption_per_mm": {
+              "type": "number",
+              "format": "double",
+              "default": 0.0
+            },
+            "coefficients": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "formula": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "catalog"
+            },
+            "valid_range_um": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "formula",
+            "coefficients",
+            "valid_range_um"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "dispersion": {
+              "$ref": "#/$defs/Material"
+            },
+            "samples": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "format": "double"
+                },
+                "maxItems": 2,
+                "minItems": 2
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "with_absorption"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "dispersion",
+            "samples"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "absorption_per_mm": {
+              "type": "number",
+              "format": "double",
+              "default": 0.0
+            },
+            "n": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "constant"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "n"
+          ]
+        },
+        {
+          "description": "n² = 1 + sum(B_i * lambda² / (lambda² - C_i)). C_i has units um².",
+          "type": "object",
+          "properties": {
+            "absorption_per_mm": {
+              "type": "number",
+              "format": "double",
+              "default": 0.0
+            },
+            "b": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "c_um2": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 3,
+              "minItems": 3
+            },
+            "type": {
+              "type": "string",
+              "const": "sellmeier"
+            },
+            "valid_range_um": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "b",
+            "c_um2",
+            "valid_range_um"
+          ]
+        },
+        {
+          "description": "n² = A0 + A1*l² + A2/l² + A3/l⁴ + A4/l⁶ + A5/l⁸ (AGF formula 1).",
+          "type": "object",
+          "properties": {
+            "absorption_per_mm": {
+              "type": "number",
+              "format": "double",
+              "default": 0.0
+            },
+            "coefficients": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 6,
+              "minItems": 6
+            },
+            "type": {
+              "type": "string",
+              "const": "schott"
+            },
+            "valid_range_um": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "double"
+              },
+              "maxItems": 2,
+              "minItems": 2
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "coefficients",
+            "valid_range_um"
+          ]
+        },
+        {
+          "description": "Sorted [wavelength_um, n] pairs. Linear interpolation, no extrapolation.",
+          "type": "object",
+          "properties": {
+            "absorption_per_mm": {
+              "type": "number",
+              "format": "double",
+              "default": 0.0
+            },
+            "samples": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "format": "double"
+                },
+                "maxItems": 2,
+                "minItems": 2
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "tabulated"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "samples"
+          ]
+        }
+      ]
+    },
+    "MaterialUse": {
+      "type": "object",
+      "properties": {
+        "index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        },
+        "samples": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OpticalSample"
+          }
+        }
+      },
+      "required": [
+        "index",
+        "name",
+        "samples"
+      ]
+    },
+    "Mode": {
+      "description": "`sequential` follows the surface order and terminates at TIR;\n`non_sequential` follows the nearest hit and splits reflection and transmission.",
+      "type": "string",
+      "enum": [
+        "sequential",
+        "non_sequential"
+      ]
+    },
+    "OpticalPupil": {
+      "type": "object",
+      "properties": {
+        "aiming": {
+          "$ref": "#/$defs/RayAiming"
+        },
+        "finite_field_angle_deg": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "first_surface": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "primary_wavelength_um": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "first_surface",
+        "primary_wavelength_um",
+        "aiming"
+      ]
+    },
+    "OpticalSample": {
+      "type": "object",
+      "properties": {
+        "absorption_per_mm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "refractive_index": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "wavelength_um": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "wavelength_um"
+      ]
+    },
+    "PathEvent": {
+      "type": "object",
+      "properties": {
+        "depth": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "end_mm": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "incident_weight": {
+          "type": "number",
+          "format": "double"
+        },
+        "start_mm": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "surface": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "id",
+        "depth",
+        "surface",
+        "start_mm",
+        "end_mm",
+        "incident_weight"
+      ]
+    },
+    "Pose": {
+      "type": "object",
+      "properties": {
+        "rotation_deg": {
+          "description": "Active rotations: Rx, then Ry, then Rz, in the world frame.",
+          "type": "array",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "translation_mm": {
+          "type": "array",
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        }
+      },
+      "additionalProperties": false
+    },
+    "Project": {
+      "description": "Editable project saved by the GUI and `--inspect`: the scene, its source documents\n(ZMX definitions, assembly components) and import issues.",
+      "type": "object",
+      "properties": {
+        "allow_uncoated": {
+          "type": "boolean",
+          "default": false
+        },
+        "assembly": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Assembly"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "cad_deflection_mm": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double"
+        },
+        "format": {
+          "type": "string"
+        },
+        "issues": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Issue"
+          }
+        },
+        "material_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "monochromatic_override_um": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "format": "double",
+          "default": null
+        },
+        "scene": {
+          "$ref": "#/$defs/Scene"
+        },
+        "zemax": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ZmxDocument"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "format",
+        "scene",
+        "material_names"
+      ]
+    },
+    "PupilGeometry": {
+      "type": "object",
+      "properties": {
+        "aiming": {
+          "$ref": "#/$defs/RayAiming"
+        },
+        "entrance_pose": {
+          "$ref": "#/$defs/Pose"
+        },
+        "entrance_radius_mm": {
+          "type": "number",
+          "format": "double"
+        },
+        "object_origin_mm": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "paraxial_stop_radius_mm": {
+          "type": "number",
+          "format": "double"
+        },
+        "primary_wavelength_um": {
+          "type": "number",
+          "format": "double"
+        },
+        "target_stop_radius_mm": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "entrance_pose",
+        "object_origin_mm",
+        "entrance_radius_mm",
+        "paraxial_stop_radius_mm",
+        "target_stop_radius_mm",
+        "primary_wavelength_um",
+        "aiming"
+      ]
+    },
+    "PupilIllumination": {
+      "description": "Uniform area samples on a pupil. Finite objects emit from a point; infinite\nobjects launch a parallel bundle whose intersections fill the pupil.",
+      "type": "object",
+      "properties": {
+        "aperture": {
+          "$ref": "#/$defs/Aperture"
+        },
+        "finite_object": {
+          "type": "boolean"
+        },
+        "optical": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OpticalPupil"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pose": {
+          "$ref": "#/$defs/Pose"
+        },
+        "surface": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "vignetting": {
+          "$ref": "#/$defs/Vignetting"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pose",
+        "aperture",
+        "finite_object"
+      ]
+    },
+    "Ray": {
+      "type": "object",
+      "properties": {
+        "direction": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "id": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "medium": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "optical_path_mm": {
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "position_mm": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "wavelength_um": {
+          "type": "number",
+          "format": "double"
+        },
+        "weight": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "id",
+        "position_mm",
+        "direction",
+        "weight",
+        "wavelength_um",
+        "medium"
+      ]
+    },
+    "RayAiming": {
+      "type": "string",
+      "enum": [
+        "off",
+        "paraxial",
+        "real"
+      ]
+    },
+    "Report": {
+      "type": "object",
+      "properties": {
+        "budget": {
+          "$ref": "#/$defs/Budget"
+        },
+        "detectors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DetectorMap"
+          }
+        },
+        "diagnostic_overflow": {
+          "$ref": "#/$defs/DiagnosticOverflow",
+          "default": {
+            "branch_count": 0,
+            "weight": 0.0
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TraceDiagnostic"
+          }
+        },
+        "paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PathEvent"
+          }
+        },
+        "surface_intersections": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "surfaces": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SurfaceStats"
+          }
+        },
+        "terminals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Terminal"
+          }
+        },
+        "total_internal_reflections": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "budget",
+        "surfaces",
+        "detectors",
+        "surface_intersections",
+        "total_internal_reflections"
+      ]
+    },
+    "RodSize": {
+      "type": "object",
+      "properties": {
+        "coatings": {
+          "description": "Optional power coatings on entrance, exit, or sides.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/Coating"
+          }
+        },
+        "height_mm": {
+          "type": "number",
+          "format": "double"
+        },
+        "length_mm": {
+          "type": "number",
+          "format": "double"
+        },
+        "width_mm": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "width_mm",
+        "height_mm",
+        "length_mm"
+      ]
+    },
+    "RunContext": {
+      "type": "object",
+      "properties": {
+        "compatibility": {
+          "$ref": "#/$defs/CompatibilityReport"
+        },
+        "created_unix_ms": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "input": {
+          "$ref": "#/$defs/LaunchInput"
+        },
+        "launch_wavelengths_um": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          }
+        },
+        "project": {
+          "description": "The editor state, including original documents, local components and overrides.",
+          "$ref": "#/$defs/Project"
+        },
+        "pupils": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SavedPupil"
+          }
+        },
+        "scene": {
+          "description": "Exact effective scene after CLI overrides or GUI preview limits.",
+          "$ref": "#/$defs/Scene"
+        },
+        "software_version": {
+          "type": "string"
+        },
+        "trace_options": {
+          "$ref": "#/$defs/TraceOptions"
+        },
+        "worker_threads": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "software_version",
+        "created_unix_ms",
+        "worker_threads",
+        "project",
+        "scene",
+        "input",
+        "trace_options",
+        "launch_wavelengths_um",
+        "compatibility"
+      ]
+    },
+    "Sampling": {
+      "type": "string",
+      "enum": [
+        "sobol",
+        "pseudorandom"
+      ]
+    },
+    "SavedPupil": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "geometry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PupilGeometry"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "source_index": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "source_index"
+      ]
+    },
+    "Scene": {
+      "description": "Optical model: materials, surfaces, sources and trace limits.\nLengths are mm and wavelengths are micrometres. `examples/*.json` use this format.",
+      "type": "object",
+      "properties": {
+        "materials": {
+          "description": "Material table; surfaces and rays refer to materials by index. Index 0 is usually air.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Material"
+          }
+        },
+        "mode": {
+          "$ref": "#/$defs/Mode"
+        },
+        "name": {
+          "type": "string"
+        },
+        "reference_plane": {
+          "description": "Describes where the launched weight is counted as 100 %.",
+          "type": "string"
+        },
+        "settings": {
+          "$ref": "#/$defs/Settings",
+          "default": {
+            "max_depth": 64,
+            "max_events_per_launch": 4096,
+            "min_relative_branch_weight": 1e-7
+          }
+        },
+        "sources": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Source"
+          }
+        },
+        "surfaces": {
+          "description": "Surfaces in sequential order (non-sequential tracing uses the nearest hit).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Surface"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "reference_plane",
+        "mode",
+        "materials",
+        "surfaces"
+      ]
+    },
+    "Settings": {
+      "type": "object",
+      "properties": {
+        "max_depth": {
+          "type": "integer",
+          "format": "uint",
+          "default": 64,
+          "minimum": 0
+        },
+        "max_events_per_launch": {
+          "type": "integer",
+          "format": "uint",
+          "default": 4096,
+          "minimum": 0
+        },
+        "min_relative_branch_weight": {
+          "type": "number",
+          "format": "double",
+          "default": 1e-7
+        }
+      },
+      "additionalProperties": false
+    },
+    "Shape": {
+      "oneOf": [
+        {
+          "description": "Side of a closed lens barrel: z in [0,length], outward-pointing normal.",
+          "type": "object",
+          "properties": {
+            "length_mm": {
+              "type": "number",
+              "format": "double"
+            },
+            "radius_end_mm": {
+              "type": "number",
+              "format": "double"
+            },
+            "radius_start_mm": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "conical_side"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "radius_start_mm",
+            "radius_end_mm",
+            "length_mm"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "normals": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "format": "double"
+                },
+                "maxItems": 3,
+                "minItems": 3
+              }
+            },
+            "triangles": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "uint32",
+                  "minimum": 0
+                },
+                "maxItems": 3,
+                "minItems": 3
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "triangle_mesh"
+            },
+            "vertices": {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "format": "double"
+                },
+                "maxItems": 3,
+                "minItems": 3
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "vertices",
+            "triangles",
+            "normals"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "plane"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Coefficients are A4, A6, A8, ... in increasing order.",
+          "type": "object",
+          "properties": {
+            "coefficients": {
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "flat_even_asphere"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "The vertex-centred sag cap; radius is signed. This is not a full sphere.",
+          "type": "object",
+          "properties": {
+            "radius_mm": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "sphere"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "radius_mm"
+          ]
+        },
+        {
+          "description": "Coefficients are A4, A6, A8, ... in increasing order.",
+          "type": "object",
+          "properties": {
+            "coefficients": {
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "conic": {
+              "type": "number",
+              "format": "double"
+            },
+            "radius_mm": {
+              "type": "number",
+              "format": "double"
+            },
+            "type": {
+              "type": "string",
+              "const": "even_asphere"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "radius_mm",
+            "conic"
+          ]
+        }
+      ]
+    },
+    "Source": {
+      "type": "object",
+      "properties": {
+        "cone_half_angle_deg": {
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "count": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "diode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Diode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "direction": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "disk_radius_mm": {
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        },
+        "medium": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "origin_mm": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 3,
+          "minItems": 3
+        },
+        "pupil": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PupilIllumination"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sampling": {
+          "$ref": "#/$defs/Sampling",
+          "default": "sobol"
+        },
+        "seed": {
+          "type": "integer",
+          "format": "uint64",
+          "default": 0,
+          "minimum": 0
+        },
+        "spectrum": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Spectrum"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "total_weight": {
+          "description": "Arbitrary power units; the sum at launch defines the reference plane.",
+          "type": "number",
+          "format": "double"
+        },
+        "wavelength_um": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "count",
+        "origin_mm",
+        "direction",
+        "wavelength_um",
+        "medium",
+        "total_weight"
+      ]
+    },
+    "Spectrum": {
+      "type": "object",
+      "properties": {
+        "samples": {
+          "description": "Ascending [wavelength_um, relative_power] pairs, sampled without interpolation.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "double"
+            },
+            "maxItems": 2,
+            "minItems": 2
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "samples"
+      ]
+    },
+    "Surface": {
+      "type": "object",
+      "properties": {
+        "aperture": {
+          "$ref": "#/$defs/Aperture"
+        },
+        "coating": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Coating"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "interaction": {
+          "$ref": "#/$defs/Interaction"
+        },
+        "name": {
+          "type": "string"
+        },
+        "pose": {
+          "$ref": "#/$defs/Pose",
+          "default": {
+            "rotation_deg": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "translation_mm": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "shape": {
+          "$ref": "#/$defs/Shape"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "shape",
+        "aperture",
+        "interaction"
+      ]
+    },
+    "SurfacePercent": {
+      "description": "Per-surface encounter totals as percentages of the launched weight.\nRepeated encounters with the same surface are summed.",
+      "type": "object",
+      "properties": {
+        "absorbed": {
+          "type": "number",
+          "format": "double"
+        },
+        "detected": {
+          "type": "number",
+          "format": "double"
+        },
+        "geometric_miss": {
+          "type": "number",
+          "format": "double"
+        },
+        "incident": {
+          "type": "number",
+          "format": "double"
+        },
+        "name": {
+          "type": "string"
+        },
+        "reflected": {
+          "type": "number",
+          "format": "double"
+        },
+        "transmitted": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "incident",
+        "transmitted",
+        "reflected",
+        "absorbed",
+        "detected",
+        "geometric_miss"
+      ]
+    },
+    "SurfaceStats": {
+      "type": "object",
+      "properties": {
+        "absorbed_weight": {
+          "type": "number",
+          "format": "double"
+        },
+        "detected_weight": {
+          "type": "number",
+          "format": "double"
+        },
+        "encounters": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "geometric_miss_weight": {
+          "type": "number",
+          "format": "double"
+        },
+        "incident_weight": {
+          "type": "number",
+          "format": "double"
+        },
+        "name": {
+          "type": "string"
+        },
+        "normal_fallbacks": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "reflected_weight": {
+          "type": "number",
+          "format": "double"
+        },
+        "transmitted_weight": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "name",
+        "encounters",
+        "incident_weight",
+        "transmitted_weight",
+        "reflected_weight",
+        "absorbed_weight",
+        "detected_weight",
+        "geometric_miss_weight"
+      ]
+    },
+    "Terminal": {
+      "type": "object",
+      "properties": {
+        "depth": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "ray": {
+          "$ref": "#/$defs/Ray"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "surface": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ray",
+        "reason",
+        "depth"
+      ]
+    },
+    "TextEncoding": {
+      "type": "string",
+      "enum": [
+        "Utf8",
+        "Utf8Bom",
+        "Utf16Le",
+        "Utf16Be",
+        "Windows1252"
+      ]
+    },
+    "TraceDiagnostic": {
+      "type": "object",
+      "properties": {
+        "actual_medium": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "branch_count": {
+          "description": "Counts terminal branches, not unique launch IDs.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "example": {
+          "$ref": "#/$defs/Terminal"
+        },
+        "expected_medium": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "intersection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IntersectionContext"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reason": {
+          "type": "string"
+        },
+        "surface": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "weight": {
+          "type": "number",
+          "format": "double"
+        }
+      },
+      "required": [
+        "reason",
+        "actual_medium",
+        "branch_count",
+        "weight",
+        "example"
+      ]
+    },
+    "TraceOptions": {
+      "type": "object",
+      "properties": {
+        "keep_terminals": {
+          "type": "boolean"
+        },
+        "path_launch_count": {
+          "description": "Store every segment belonging to the first N launch rays in input order, including branches.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "keep_terminals",
+        "path_launch_count"
+      ]
+    },
+    "Vignetting": {
+      "type": "object",
+      "properties": {
+        "compression": {
+          "type": "array",
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "decenter": {
+          "type": "array",
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxItems": 2,
+          "minItems": 2
+        },
+        "tangential_angle_deg": {
+          "type": "number",
+          "format": "double",
+          "default": 0.0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ZmxDocument": {
+      "type": "object",
+      "properties": {
+        "baseline_scene": {
+          "$ref": "#/$defs/Scene"
+        },
+        "encoding": {
+          "$ref": "#/$defs/TextEncoding"
+        },
+        "glass_records": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "source_path": {
+          "type": "string"
+        },
+        "surface_numbers": {
+          "description": "One source-document surface number per editable sequential surface.",
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "encoding",
+        "source_path",
+        "baseline_scene",
+        "surface_numbers",
+        "glass_records"
+      ]
+    }
+  }
+}

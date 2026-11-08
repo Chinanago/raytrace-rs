@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::ops::{Add, Div, Mul, Neg, Sub};
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(transparent)]
 pub struct V3(pub [f64; 3]);
 
@@ -59,6 +60,7 @@ impl Neg for V3 {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Pose {
     #[serde(default)]

@@ -39,6 +39,7 @@ __pycache__/
 !/examples/integrator_rod.json
 !/examples/folded_mirror.json
 !/tests/fixtures/step_legacy_hits.json
+!/schemas/*.schema.json
 *.csv
 *.npz
 *.npy

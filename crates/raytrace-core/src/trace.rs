@@ -26,6 +26,7 @@ pub struct TraceControl {
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct TraceOptions {
     pub keep_terminals: bool,
     /// Store every segment belonging to the first N launch rays in input order, including branches.

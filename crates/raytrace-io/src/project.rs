@@ -11,7 +11,10 @@ use std::{
 
 pub use raytrace_formats::Issue;
 
+/// Editable project saved by the GUI and `--inspect`: the scene, its source documents
+/// (ZMX definitions, assembly components) and import issues.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Project {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assembly: Option<Assembly>,

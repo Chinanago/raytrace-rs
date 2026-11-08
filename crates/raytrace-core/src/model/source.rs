@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::ops::Range;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Source {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -33,6 +34,7 @@ pub struct Source {
 /// Uniform area samples on a pupil. Finite objects emit from a point; infinite
 /// objects launch a parallel bundle whose intersections fill the pupil.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct PupilIllumination {
     pub pose: Pose,
@@ -75,6 +77,7 @@ impl Source {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Diode {
     #[serde(default)]
     pub astigmatism_mm: f64,
@@ -126,6 +129,7 @@ impl Diode {
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Ray {
     pub id: u64,
     pub position_mm: V3,

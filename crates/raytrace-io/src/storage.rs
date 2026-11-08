@@ -8,6 +8,7 @@ use std::{
 };
 
 #[derive(Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(default)]
 pub struct Preferences {
     pub recent_files: Vec<PathBuf>,

@@ -29,6 +29,22 @@ pub enum Error {
     Cad(String),
 }
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+impl Error {
+    /// Stable snake_case identifier for scripts and agents; the message stays Japanese.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Core(error) => error.code(),
+            Self::Io { .. } => "io",
+            Self::Json { .. } => "invalid_json",
+            Self::Zmx { .. } => "zmx",
+            Self::Agf(_) => "agf",
+            Self::Spcd(_) => "spcd",
+            Self::Step { .. } => "step",
+            Self::Cad(_) => "cad",
+        }
+    }
+}
 impl Error {
     pub(crate) fn step(detail: String) -> Self {
         Self::Step { detail }

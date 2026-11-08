@@ -85,6 +85,7 @@ fn cache_key(bytes: &[u8], deflection_mm: f64) -> String {
     format!("{:016x}_native_v1.json", hash.finish())
 }
 #[derive(Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 struct CachedMesh {
     format: String,
     shape: Shape,
@@ -133,6 +134,7 @@ fn load_cached(path: &Path, deflection_mm: f64, cache_dir: &Path) -> Result<Shap
 }
 fn save_cache(path: &Path, shape: &Shape) -> Result<()> {
     #[derive(Serialize)]
+    #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     struct Borrowed<'a> {
         format: &'static str,
         shape: &'a Shape,

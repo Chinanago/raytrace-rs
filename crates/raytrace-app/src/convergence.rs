@@ -9,16 +9,24 @@ use raytrace_io::{project::Project, record::RunContext};
 use serde::{Deserialize, Serialize};
 use std::{fs, path::Path, time::Instant};
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// Plan for `raytrace-rs --convergence MODEL --plan PLAN.json`. Every combination is traced.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct ConvergencePlan {
+    /// Rays per source; an empty list keeps the model setting.
     pub ray_counts: Vec<usize>,
+    /// Seed of the first source (later sources use +1, +2, ...); empty keeps the model setting.
     pub seeds: Vec<u64>,
+    /// Detector pixel counts `[x, y]`; empty keeps the model setting.
     pub pixels: Vec<[usize; 2]>,
+    /// CAD tessellation deflections in mm; needs the original STEP-referencing ZMX.
     pub cad_deflections_mm: Vec<f64>,
     pub threads: usize,
+    /// Trace coated surfaces as uncoated Fresnel interfaces.
     pub allow_uncoated: bool,
+    /// Replace the source spectra with one wavelength in micrometres.
     pub wavelength_um: Option<f64>,
+    /// Save a replayable calculation record for each case.
     pub save_runs: bool,
 }
 impl Default for ConvergencePlan {
@@ -81,7 +89,7 @@ impl ConvergencePlan {
         Ok(())
     }
 }
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CaseSettings {
     pub rays_per_source: Option<usize>,
     /// First source seed; later sources use consecutive seeds. None preserves originals.
@@ -89,7 +97,7 @@ pub struct CaseSettings {
     pub pixels: Option<[usize; 2]>,
     pub cad_deflection_mm: f64,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DetectorSummary {
     pub name: String,
     pub received_percent: f64,
@@ -97,7 +105,7 @@ pub struct DetectorSummary {
     pub fwhm_mm: [Option<f64>; 2],
     pub peak_position_mm: Option<[f64; 2]>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConvergenceCase {
     pub index: usize,
     pub settings: CaseSettings,
@@ -114,7 +122,7 @@ pub struct ConvergenceCase {
     pub detectors: Vec<DetectorSummary>,
     pub run_file: Option<String>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct DetectorDifference {
     pub name: String,
     pub received_delta_percentage_points: f64,
@@ -122,14 +130,14 @@ pub struct DetectorDifference {
     pub distribution_l1_percent_of_reference: f64,
     pub comparison_pixels: [usize; 2],
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConvergenceComparison {
     pub axis: String,
     pub case: usize,
     pub reference_case: usize,
     pub detectors: Vec<DetectorDifference>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ConvergenceReport {
     pub format: String,
     pub software_version: String,

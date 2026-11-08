@@ -19,3 +19,16 @@ pub enum Error {
     Cancelled,
 }
 pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+impl Error {
+    /// Stable snake_case identifier for scripts and agents; the message stays Japanese.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Core(error) => error.code(),
+            Self::Io(error) => error.code(),
+            Self::Plan(_) => "plan",
+            Self::CasesFailed { .. } => "cases_failed",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}

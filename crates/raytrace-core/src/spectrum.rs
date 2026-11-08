@@ -2,6 +2,7 @@
 use crate::Result;
 use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(deny_unknown_fields)]
 pub struct Spectrum {
     /// Ascending [wavelength_um, relative_power] pairs, sampled without interpolation.

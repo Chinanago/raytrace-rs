@@ -4,6 +4,7 @@ use raytrace_core::model::Interaction;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum CompatibilityStatus {
     Computed,
@@ -27,24 +28,28 @@ impl CompatibilityStatus {
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct CompatibilityEntry {
     pub code: String,
     pub message: String,
     pub status: CompatibilityStatus,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct OpticalSample {
     pub wavelength_um: f64,
     pub refractive_index: Option<f64>,
     pub absorption_per_mm: Option<f64>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct MaterialUse {
     pub index: usize,
     pub name: String,
     pub samples: Vec<OpticalSample>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct ComponentCompatibility {
     /// Zero-based index in the assembly; None denotes a standalone project.
     pub component: Option<usize>,
@@ -58,6 +63,7 @@ pub struct ComponentCompatibility {
     pub entries: Vec<CompatibilityEntry>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct CompatibilityReport {
     pub traceable: bool,
     pub components: Vec<ComponentCompatibility>,
