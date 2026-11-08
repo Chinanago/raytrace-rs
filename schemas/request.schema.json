@@ -94,13 +94,12 @@
     },
     {
       "title": "doc.new",
-      "description": "空の組立光学系をセッションの文書にする",
+      "description": "新しい文書（空の組立光学系、または design）を始める",
       "type": "object",
       "properties": {
         "catalogs": {
           "description": "Extra AGF catalog folders for later ZMX imports in this session.",
           "type": "array",
-          "default": [],
           "items": {
             "type": "string"
           }
@@ -110,6 +109,17 @@
             "doc.new"
           ]
         },
+        "design": {
+          "description": "Start from this design instead of an empty assembly.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Design"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "expected_revision": {
           "description": "Reject the command unless the session is at this revision.",
           "type": [
@@ -117,16 +127,14 @@
             "null"
           ],
           "format": "uint64",
-          "default": null,
           "minimum": 0
         },
         "name": {
-          "description": "Document name; omitted keeps the default.",
+          "description": "Document name; omitted keeps the default (or the name of `design`).",
           "type": [
             "string",
             "null"
-          ],
-          "default": null
+          ]
         }
       },
       "additionalProperties": false,
@@ -142,7 +150,6 @@
         "catalogs": {
           "description": "Extra AGF catalog folders for ZMX import; they stay with the session.",
           "type": "array",
-          "default": [],
           "items": {
             "type": "string"
           }
@@ -160,13 +167,11 @@
             "null"
           ],
           "format": "uint64",
-          "default": null,
           "minimum": 0
         },
         "include_design": {
           "description": "Also return the opened design in the result.",
-          "type": "boolean",
-          "default": false
+          "type": "boolean"
         },
         "path": {
           "type": "string"
@@ -376,8 +381,14 @@
             "null"
           ],
           "format": "uint64",
-          "default": null,
           "minimum": 0
+        },
+        "group": {
+          "description": "Name of an editing gesture. A change whose `group` equals that of the change right\nbefore it (with no undo, redo or open in between) joins the same undo step, so a drag\nor the typing in one field can be undone at once. Omitted: a step of its own. Every\nchange still raises the revision.",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "path": {
           "description": "JSON Pointer such as `/occurrences/@rod-4/pose/translation_mm/2`. An array element is\naddressed by index or as `@<id>`, matching the `id` field of the element.",
@@ -414,8 +425,14 @@
             "null"
           ],
           "format": "uint64",
-          "default": null,
           "minimum": 0
+        },
+        "group": {
+          "description": "Edits with the same `group` in a row form one undo step (see [`DocSetRequest::group`]).",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false,
@@ -432,7 +449,6 @@
         "catalogs": {
           "description": "Extra AGF catalog folders for ZMX import (default: those of the session).",
           "type": "array",
-          "default": [],
           "items": {
             "type": "string"
           }
@@ -449,8 +465,14 @@
             "null"
           ],
           "format": "uint64",
-          "default": null,
           "minimum": 0
+        },
+        "group": {
+          "description": "Edits with the same `group` in a row form one undo step (see [`DocSetRequest::group`]).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "kind": {
           "description": "`source`, `optic` or `system` for a file; `rod` or `detector` without one.",
@@ -461,8 +483,7 @@
             {
               "type": "null"
             }
-          ],
-          "default": null
+          ]
         },
         "material": {
           "description": "Material of a rod; omitted uses fused silica.",
@@ -473,32 +494,28 @@
             {
               "type": "null"
             }
-          ],
-          "default": null
+          ]
         },
         "material_name": {
           "description": "Display name of the material of a rod.",
           "type": [
             "string",
             "null"
-          ],
-          "default": null
+          ]
         },
         "name": {
           "description": "Name of the new placement; omitted uses the name of the part.",
           "type": [
             "string",
             "null"
-          ],
-          "default": null
+          ]
         },
         "path": {
           "description": "ZMX, design JSON or scene JSON to import.",
           "type": [
             "string",
             "null"
-          ],
-          "default": null
+          ]
         }
       },
       "additionalProperties": false,
@@ -523,8 +540,14 @@
             "null"
           ],
           "format": "uint64",
-          "default": null,
           "minimum": 0
+        },
+        "group": {
+          "description": "Edits with the same `group` in a row form one undo step (see [`DocSetRequest::group`]).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "occurrence": {
           "description": "Occurrence id such as `rod-4`.",
@@ -554,8 +577,14 @@
             "null"
           ],
           "format": "uint64",
-          "default": null,
           "minimum": 0
+        },
+        "group": {
+          "description": "Edits with the same `group` in a row form one undo step (see [`DocSetRequest::group`]).",
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "occurrence": {
           "description": "Occurrence id such as `rod-4`.",
@@ -1065,7 +1094,6 @@
             "null"
           ],
           "format": "uint64",
-          "default": null,
           "minimum": 0
         }
       },
@@ -1091,7 +1119,6 @@
             "null"
           ],
           "format": "uint64",
-          "default": null,
           "minimum": 0
         }
       },
@@ -1108,6 +1135,22 @@
         "command": {
           "enum": [
             "session.status"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "title": "session.log",
+      "description": "文書を開いてからの変更コマンドを順に返す（取り消した変更を除く）",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "session.log"
           ]
         }
       },

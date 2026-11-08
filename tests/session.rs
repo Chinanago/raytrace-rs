@@ -475,6 +475,7 @@ fn every_command_has_schemas_and_is_listed() {
         "session.undo",
         "session.redo",
         "session.status",
+        "session.log",
     ] {
         assert!(registered.contains(&id), "{id} is not registered");
     }
@@ -547,6 +548,20 @@ fn every_command_has_schemas_and_is_listed() {
                 "{} takes no expected_revision",
                 spec.id
             );
+            // The commands that make one undoable change can name a group of changes.
+            assert_eq!(
+                description["input_schema"]["properties"]["group"].is_object(),
+                matches!(
+                    spec.id,
+                    "doc.set"
+                        | "doc.replace"
+                        | "component.add"
+                        | "component.remove"
+                        | "component.duplicate"
+                ),
+                "{}",
+                spec.id
+            );
         }
     }
 
@@ -602,6 +617,7 @@ fn typed_calls_run_the_same_commands() {
             DocSetRequest {
                 path: "/name".into(),
                 value: json!("typed"),
+                group: None,
                 expected_revision: Some(1),
             },
         )
@@ -614,6 +630,7 @@ fn typed_calls_run_the_same_commands() {
             DocSetRequest {
                 path: "/name".into(),
                 value: json!("again"),
+                group: None,
                 expected_revision: Some(1),
             },
         )
@@ -696,4 +713,352 @@ fn a_run_stream_shares_one_session() {
     let (ok, described) = cli(&dir, &["command.describe", "id=doc.set"], "");
     assert!(ok);
     assert_eq!(described[0]["result"]["kind"], "mutation");
+}
+
+fn set_name(session: &mut Session, name: &str, group: Option<&str>) -> Value {
+    let mut params = json!({"path": "/name", "value": name});
+    if let Some(group) = group {
+        params["group"] = json!(group);
+    }
+    ok(session, "doc.set", params)
+}
+
+fn undo_depth(session: &mut Session) -> u64 {
+    ok(session, "session.status", json!({}))["undo_depth"]
+        .as_u64()
+        .unwrap()
+}
+
+#[test]
+fn changes_of_one_group_in_a_row_share_an_undo_step() {
+    let mut session = open_lens();
+    let original = document(&mut session);
+    let revision = session.revision();
+    for (i, name) in ["a", "b", "c"].into_iter().enumerate() {
+        set_name(&mut session, name, Some("drag:1"));
+        assert_eq!(session.revision(), revision + 1 + i as u64, "per change");
+    }
+    assert_eq!(undo_depth(&mut session), 1);
+    // A different group, or none, starts a new step.
+    set_name(&mut session, "d", Some("drag:2"));
+    set_name(&mut session, "e", None);
+    set_name(&mut session, "f", None);
+    set_name(&mut session, "g", Some("drag:2"));
+    assert_eq!(undo_depth(&mut session), 5);
+
+    // Undo goes back to the state before the first change of the step.
+    ok(&mut session, "session.undo", json!({}));
+    assert_eq!(document(&mut session)["name"], "f");
+    ok(&mut session, "session.undo", json!({}));
+    assert_eq!(document(&mut session)["name"], "e");
+    ok(&mut session, "session.undo", json!({}));
+    assert_eq!(document(&mut session)["name"], "d");
+    ok(&mut session, "session.undo", json!({}));
+    assert_eq!(document(&mut session)["name"], "c");
+    ok(&mut session, "session.undo", json!({}));
+    assert_eq!(document(&mut session), original);
+    assert_eq!(
+        error_code(&mut session, "session.undo", json!({})),
+        "history"
+    );
+    ok(&mut session, "session.redo", json!({}));
+    assert_eq!(document(&mut session)["name"], "c");
+}
+
+#[test]
+fn undo_redo_open_and_other_commands_end_a_group() {
+    let mut session = open_lens();
+    set_name(&mut session, "a", Some("g"));
+    set_name(&mut session, "b", Some("g"));
+    ok(&mut session, "session.undo", json!({}));
+    ok(&mut session, "session.redo", json!({}));
+    // The step was closed by the undo and redo: the same group name starts a new one.
+    set_name(&mut session, "c", Some("g"));
+    assert_eq!(undo_depth(&mut session), 2);
+    // A structural change in the same group joins the step.
+    ok(
+        &mut session,
+        "component.add",
+        json!({"kind": "detector", "group": "g"}),
+    );
+    assert_eq!(undo_depth(&mut session), 2);
+    ok(&mut session, "session.undo", json!({}));
+    assert_eq!(document(&mut session)["name"], "b");
+    assert_eq!(
+        ok(&mut session, "session.status", json!({}))["document"]["occurrences"],
+        1
+    );
+    // A failed change does not end the group, a query does not either.
+    set_name(&mut session, "d", Some("h"));
+    assert!(
+        !exec(
+            &mut session,
+            "doc.set",
+            json!({"path": "/nope", "value": 1, "group": "h"})
+        )
+        .ok
+    );
+    document(&mut session);
+    set_name(&mut session, "e", Some("h"));
+    assert_eq!(undo_depth(&mut session), 2);
+    // Opening a document starts over.
+    ok(&mut session, "doc.open", json!({"path": LENS}));
+    assert_eq!(undo_depth(&mut session), 0);
+    set_name(&mut session, "x", Some("h"));
+    set_name(&mut session, "y", Some("h"));
+    assert_eq!(undo_depth(&mut session), 1);
+}
+
+#[test]
+fn the_session_keeps_at_most_64_undo_steps_and_a_byte_budget() {
+    use raytrace_rs::session::HistoryLimits;
+    let mut session = open_lens();
+    assert_eq!(session.history_limits(), HistoryLimits::default());
+    assert_eq!(HistoryLimits::default().steps, 64);
+    assert_eq!(HistoryLimits::default().bytes, 128 * 1024 * 1024);
+    for i in 0..70 {
+        set_name(&mut session, &format!("n{i}"), None);
+    }
+    assert_eq!(undo_depth(&mut session), 64);
+    assert_eq!(
+        session.log().entries.len(),
+        70,
+        "the log keeps dropped steps"
+    );
+    for _ in 0..64 {
+        ok(&mut session, "session.undo", json!({}));
+    }
+    assert_eq!(
+        document(&mut session)["name"],
+        "n5",
+        "the oldest 6 are gone"
+    );
+
+    // The byte budget drops the oldest steps first but keeps the newest.
+    let mut session = open_lens();
+    for i in 0..5 {
+        set_name(&mut session, &format!("n{i}"), None);
+    }
+    let one = session.undo_bytes() / 5;
+    assert!(one > 0);
+    session.set_history_limits(HistoryLimits {
+        steps: 64,
+        bytes: one * 2 + one / 2,
+    });
+    assert_eq!(undo_depth(&mut session), 2);
+    session.set_history_limits(HistoryLimits {
+        steps: 64,
+        bytes: 0,
+    });
+    assert_eq!(undo_depth(&mut session), 1);
+    assert!(session.undo_bytes() > 0);
+}
+
+#[test]
+fn the_log_lists_committed_changes_without_the_undone_ones() {
+    let mut session = Session::new();
+    assert_eq!(session.log().base, None);
+    assert!(session.log().entries.is_empty());
+    let log = ok(&mut session, "session.log", json!({}));
+    assert_eq!(log["base"], Value::Null);
+    assert_eq!(log["entries"], json!([]));
+
+    ok(&mut session, "doc.open", json!({"path": LENS}));
+    let log = ok(&mut session, "session.log", json!({}));
+    assert_eq!(
+        log["base"],
+        json!({"command": "doc.open", "params": {"path": LENS}})
+    );
+    assert_eq!(log["entries"], json!([]));
+    assert_eq!(log["revision"], session.revision());
+
+    let revision = session.revision();
+    set_name(&mut session, "a", None);
+    ok(
+        &mut session,
+        "doc.set",
+        json!({"path": "/mode", "value": "non_sequential", "expected_revision": revision + 1}),
+    );
+    let log = ok(&mut session, "session.log", json!({}));
+    assert_eq!(
+        log["entries"],
+        json!([
+            {"command": "doc.set", "params": {"path": "/name", "value": "a"}},
+            {"command": "doc.set", "params": {"path": "/mode", "value": "non_sequential"}},
+        ]),
+        "expected_revision is not part of the log"
+    );
+
+    // A failed change is not logged; an undo takes the last step out and redo brings it back.
+    assert!(
+        !exec(
+            &mut session,
+            "doc.set",
+            json!({"path": "/nope", "value": 1})
+        )
+        .ok
+    );
+    ok(&mut session, "session.undo", json!({}));
+    assert_eq!(session.log().entries.len(), 1);
+    ok(&mut session, "session.redo", json!({}));
+    assert_eq!(session.log().entries.len(), 2);
+    // A new change after an undo replaces the undone one.
+    ok(&mut session, "session.undo", json!({}));
+    set_name(&mut session, "b", None);
+    let entries = session.log().entries;
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[1].params["value"], "b");
+    assert_eq!(
+        error_code(&mut session, "session.redo", json!({})),
+        "history"
+    );
+
+    // Rewriting one place in a group keeps the last value only.
+    for value in [1.0, 2.0, 3.0] {
+        ok(
+            &mut session,
+            "doc.set",
+            json!({"path": "/parts/@system-1/scene/surfaces/2/pose/translation_mm/2", "value": value, "group": "drag"}),
+        );
+    }
+    ok(
+        &mut session,
+        "doc.set",
+        json!({"path": "/name", "value": "c", "group": "drag"}),
+    );
+    let entries = session.log().entries;
+    assert_eq!(entries.len(), 4);
+    assert_eq!(entries[2].params["value"], 3.0);
+    assert_eq!(entries[2].params["group"], "drag");
+
+    // Opening or creating a document starts a new log.
+    ok(&mut session, "doc.new", json!({"name": "n"}));
+    let log = session.log();
+    assert_eq!(log.base.unwrap().command, "doc.new");
+    assert!(log.entries.is_empty());
+    // A session can also start with doc.replace, which is then the first entry.
+    let design = document(&mut session);
+    let mut started = Session::new();
+    ok(&mut started, "doc.replace", json!({"design": design}));
+    let log = started.log();
+    assert!(log.base.is_none());
+    assert_eq!(log.entries[0].command, "doc.replace");
+}
+
+/// Run the log of `session` on a new session and return that session.
+fn replay(session: &Session) -> Session {
+    let log = session.log();
+    let mut fresh = Session::new();
+    if let Some(base) = &log.base {
+        ok(&mut fresh, &base.command, base.params.clone());
+    }
+    for entry in &log.entries {
+        ok(&mut fresh, &entry.command, entry.params.clone());
+    }
+    fresh
+}
+
+fn design_text(session: &Session) -> String {
+    serde_json::to_string_pretty(session.design().unwrap().as_ref()).unwrap()
+}
+
+#[test]
+fn replaying_the_log_in_a_new_session_gives_the_same_document() {
+    use raytrace_rs::session::HistoryLimits;
+    let mut session = open_lens();
+    set_name(&mut session, "edited", None);
+    let rod = ok(
+        &mut session,
+        "component.add",
+        json!({"kind": "rod", "name": "R", "group": "add"}),
+    );
+    let rod = rod["occurrence"].as_str().unwrap().to_string();
+    ok(
+        &mut session,
+        "doc.set",
+        json!({"path": format!("/occurrences/@{rod}/pose/translation_mm/2"), "value": 12.5, "group": "add"}),
+    );
+    for z in [1.0, 2.0, 3.5] {
+        ok(
+            &mut session,
+            "doc.set",
+            json!({"path": format!("/occurrences/@{rod}/pose/translation_mm"), "value": [0.0, 0.1, z], "group": "drag:1"}),
+        );
+    }
+    let copy = ok(
+        &mut session,
+        "component.duplicate",
+        json!({"occurrence": rod}),
+    );
+    ok(&mut session, "component.add", json!({"kind": "detector"}));
+    ok(
+        &mut session,
+        "component.remove",
+        json!({"occurrence": copy["occurrence"]}),
+    );
+    // Undone and redone changes, and a step dropped by the limits.
+    ok(&mut session, "session.undo", json!({}));
+    ok(&mut session, "session.undo", json!({}));
+    ok(&mut session, "session.redo", json!({}));
+    ok(
+        &mut session,
+        "doc.set",
+        json!({"path": "/name", "value": "last"}),
+    );
+    session.set_history_limits(HistoryLimits {
+        steps: 3,
+        bytes: usize::MAX,
+    });
+    assert_eq!(undo_depth(&mut session), 3);
+
+    let fresh = replay(&session);
+    assert_eq!(design_text(&fresh), design_text(&session));
+    assert_eq!(fresh.log().entries, session.log().entries);
+}
+
+#[test]
+fn a_new_document_can_start_from_a_design_and_is_not_dirty() {
+    let mut session = open_lens();
+    let design = document(&mut session);
+    let mut other = Session::new();
+    ok(
+        &mut other,
+        "doc.new",
+        json!({"design": design.clone(), "name": "copy"}),
+    );
+    assert!(!other.is_dirty());
+    assert_eq!(document(&mut other)["name"], "copy");
+    assert_eq!(undo_depth(&mut other), 0);
+    let fresh = replay(&other);
+    assert_eq!(design_text(&fresh), design_text(&other));
+    set_name(&mut other, "changed", None);
+    assert!(other.is_dirty());
+}
+
+#[test]
+fn a_session_adopts_the_result_of_work_done_on_another_thread() {
+    let mut session = open_lens();
+    set_name(&mut session, "a", None);
+    let before = session.revision();
+
+    // Edit a copy elsewhere (a worker thread), then take it over.
+    let mut copy = session.clone();
+    let worker = std::thread::spawn(move || {
+        set_name(&mut copy, "b", None);
+        copy
+    });
+    session.adopt(worker.join().unwrap());
+    assert_eq!(document(&mut session)["name"], "b");
+    assert!(session.revision() > before);
+    ok(&mut session, "session.undo", json!({}));
+    assert_eq!(document(&mut session)["name"], "a");
+
+    // A session that opened a file takes over its document, and the revision keeps rising.
+    let revision = session.revision();
+    let mut opened = Session::new();
+    ok(&mut opened, "doc.open", json!({"path": LENS}));
+    session.adopt(opened);
+    assert!(session.revision() > revision);
+    assert_eq!(undo_depth(&mut session), 0);
+    assert_eq!(session.log().base.unwrap().command, "doc.open");
 }

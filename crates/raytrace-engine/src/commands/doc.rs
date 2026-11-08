@@ -30,7 +30,7 @@ pub(super) fn specs() -> Vec<CommandSpec> {
     vec![
         command(
             DOC_NEW,
-            "空の組立光学系をセッションの文書にする",
+            "新しい文書（空の組立光学系、または design）を始める",
             Kind::Mutation,
             doc_new,
         ),
@@ -85,7 +85,7 @@ fn doc_new(
     _: &mut Context<'_>,
 ) -> Result<DocSummary, EngineError> {
     session.check_revision(r.expected_revision)?;
-    let mut design = Design::empty();
+    let mut design = r.design.map_or_else(Design::empty, |design| *design);
     if let Some(name) = r.name {
         design.set_display_name(name);
     }

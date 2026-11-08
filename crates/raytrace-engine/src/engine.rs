@@ -216,15 +216,21 @@ impl DocSummary {
     }
 }
 
-/// `doc.new`: start an empty assembly as the session document.
+/// `doc.new`: start a new document, an empty assembly or the given design, with a new history.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct DocNewRequest {
-    /// Document name; omitted keeps the default.
+    /// Start from this design instead of an empty assembly.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub design: Option<Box<Design>>,
+    /// Document name; omitted keeps the default (or the name of `design`).
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Extra AGF catalog folders for later ZMX imports in this session.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub catalogs: Vec<PathBuf>,
     /// Reject the command unless the session is at this revision.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<u64>,
 }
 
@@ -234,13 +240,13 @@ pub struct DocNewRequest {
 pub struct DocOpenRequest {
     pub path: PathBuf,
     /// Extra AGF catalog folders for ZMX import; they stay with the session.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub catalogs: Vec<PathBuf>,
     /// Also return the opened design in the result.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub include_design: bool,
     /// Reject the command unless the session is at this revision.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<u64>,
 }
 
@@ -276,8 +282,11 @@ pub struct DocGetResult {
 #[serde(deny_unknown_fields)]
 pub struct DocReplaceRequest {
     pub design: Box<Design>,
+    /// Edits with the same `group` in a row form one undo step (see [`DocSetRequest::group`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     /// Reject the command unless the session is at this revision.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<u64>,
 }
 
@@ -294,8 +303,14 @@ pub struct DocSetRequest {
     pub path: String,
     /// The new JSON value.
     pub value: serde_json::Value,
+    /// Name of an editing gesture. A change whose `group` equals that of the change right
+    /// before it (with no undo, redo or open in between) joins the same undo step, so a drag
+    /// or the typing in one field can be undone at once. Omitted: a step of its own. Every
+    /// change still raises the revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     /// Reject the command unless the session is at this revision.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<u64>,
 }
 
@@ -388,18 +403,28 @@ pub struct Saved {
 #[serde(default, deny_unknown_fields)]
 pub struct ComponentAddRequest {
     /// ZMX, design JSON or scene JSON to import.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<PathBuf>,
     /// `source`, `optic` or `system` for a file; `rod` or `detector` without one.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<PartKind>,
     /// Extra AGF catalog folders for ZMX import (default: those of the session).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub catalogs: Vec<PathBuf>,
     /// Name of the new placement; omitted uses the name of the part.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     /// Material of a rod; omitted uses fused silica.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub material: Option<Material>,
     /// Display name of the material of a rod.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub material_name: Option<String>,
+    /// Edits with the same `group` in a row form one undo step (see [`DocSetRequest::group`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     /// Reject the command unless the session is at this revision.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<u64>,
 }
 
@@ -417,8 +442,11 @@ pub struct ComponentAdded {
 pub struct ComponentRef {
     /// Occurrence id such as `rod-4`.
     pub occurrence: String,
+    /// Edits with the same `group` in a row form one undo step (see [`DocSetRequest::group`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
     /// Reject the command unless the session is at this revision.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<u64>,
 }
 
@@ -437,6 +465,7 @@ pub struct ComponentChanged {
 #[serde(default, deny_unknown_fields)]
 pub struct HistoryRequest {
     /// Reject the command unless the session is at this revision.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub expected_revision: Option<u64>,
 }
 
@@ -453,9 +482,37 @@ pub struct SessionStatus {
     pub can_redo: bool,
     pub undo_depth: usize,
     pub redo_depth: usize,
+    /// Estimated memory of the undo history in bytes. The session keeps at most 64 undo
+    /// steps and about 128 MiB, dropping the oldest steps first.
+    pub undo_bytes: usize,
     pub catalogs: Vec<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub document: Option<DocSummary>,
+}
+
+/// One committed change of the session: the command and the parameters it ran with.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LogEntry {
+    /// Command id such as `doc.set`.
+    pub command: String,
+    /// The parameters as executed, without `expected_revision`.
+    pub params: serde_json::Value,
+}
+
+/// `session.log`: the changes that lead from the opened document to the current one.
+///
+/// Running `base` and then every entry in a new session gives the same document. Undone
+/// changes are not listed; a change after an undo replaces the undone ones. Consecutive
+/// `doc.set` of one `group` on one `path` are kept as the last one.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct SessionLog {
+    /// Revision of the session.
+    pub revision: u64,
+    /// The `doc.open` or `doc.new` that started the document; absent when the session
+    /// started with `doc.replace`.
+    pub base: Option<LogEntry>,
+    /// The committed changes after `base`, oldest first.
+    pub entries: Vec<LogEntry>,
 }
 
 // ---- calculations -----------------------------------------------------------------------

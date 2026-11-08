@@ -10,6 +10,7 @@ pub mod command;
 pub mod commands;
 pub mod convergence;
 pub mod engine;
+pub mod footprint;
 pub mod nsc_reference;
 pub mod pipeline;
 pub mod scan;

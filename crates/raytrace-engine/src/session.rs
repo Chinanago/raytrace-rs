@@ -1,24 +1,81 @@
-//! The session: the open document, its revision and the undo history.
+//! The session: the open document, its revision, the undo history and the change log.
 //!
 //! The document is an immutable value shared by reference. A change never edits it in place:
 //! the command builds a new [`Design`], the session validates it, and only then does it
 //! replace the document, keep the old one for undo, clear the redo history and bump the
 //! revision. A change that fails leaves the document, the history and the revision as they
 //! were. Opening or creating a document starts a new history.
-use crate::engine::{DocSummary, EngineError, SessionStatus};
+//!
+//! Changes that carry the same `group` in a row share one undo step, and the session keeps
+//! its history within [`HistoryLimits`]. The committed changes are recorded as
+//! [`LogEntry`]s, so the same document can be rebuilt by running them in a new session.
+use crate::{
+    engine::{DocSummary, EngineError, LogEntry, SessionLog, SessionStatus},
+    footprint,
+};
 use raytrace_io::design::{self, Design};
 use std::{path::PathBuf, sync::Arc};
 
-/// The document state that undo and redo bring back. Documents are shared, so a snapshot
-/// costs a reference count.
+/// How much undo history a session keeps. The oldest steps are dropped first; the newest
+/// step is always kept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HistoryLimits {
+    /// Most undo steps.
+    pub steps: usize,
+    /// Most estimated bytes of the documents held by the undo steps.
+    pub bytes: usize,
+}
+impl Default for HistoryLimits {
+    fn default() -> Self {
+        Self {
+            steps: 64,
+            bytes: 128 * 1024 * 1024,
+        }
+    }
+}
+
+/// One undo or redo step: the document that undo (or redo) brings back, and the log entries
+/// of the change(s) it undoes.
 #[derive(Clone, Debug)]
-struct Snapshot {
+struct Step {
     design: Arc<Design>,
+    /// Estimated size of `design`.
+    bytes: usize,
+    entries: Vec<LogEntry>,
+}
+impl Step {
+    fn new(design: Arc<Design>, entries: Vec<LogEntry>) -> Self {
+        Self {
+            bytes: footprint::design_bytes(&design),
+            design,
+            entries,
+        }
+    }
+    /// Add a change to the step. A `doc.set` that rewrites the place of the previous entry
+    /// replaces it, so a long drag leaves one entry instead of one per mouse move.
+    fn record(&mut self, entry: LogEntry) {
+        if let Some(last) = self.entries.last_mut()
+            && entry.command == "doc.set"
+            && last.command == entry.command
+            && last.params.get("path") == entry.params.get("path")
+        {
+            *last = entry;
+        } else {
+            self.entries.push(entry);
+        }
+    }
+}
+
+/// The command that is running, set by the registry around a change command.
+#[derive(Clone, Debug)]
+struct Pending {
+    entry: LogEntry,
+    group: Option<String>,
 }
 
 /// A document under edit. Create one per front end (the CLI makes one per process, or per
 /// `run` stream), then call commands with [`Session::execute`] or [`Session::call`].
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Session {
     design: Option<Arc<Design>>,
     path: Option<PathBuf>,
@@ -26,8 +83,17 @@ pub struct Session {
     /// The document as it was opened or last saved.
     saved: Option<Arc<Design>>,
     dirty: bool,
-    undo: Vec<Snapshot>,
-    redo: Vec<Snapshot>,
+    undo: Vec<Step>,
+    redo: Vec<Step>,
+    limits: HistoryLimits,
+    /// The `doc.open` or `doc.new` that started the document.
+    base: Option<LogEntry>,
+    /// Entries of changes that no longer have an undo step (dropped by the limits, or made
+    /// before the session had a document to keep).
+    older: Vec<LogEntry>,
+    /// The group of the last committed change, while it is the last thing that happened.
+    open_group: Option<String>,
+    pending: Option<Pending>,
     catalogs: Vec<PathBuf>,
 }
 
@@ -82,7 +148,46 @@ impl Session {
         }
     }
 
-    /// Replace the document by an opened or new one and start a new history.
+    /// The limits of the undo history.
+    pub fn history_limits(&self) -> HistoryLimits {
+        self.limits
+    }
+    /// Change the limits of the undo history; steps over the new limits are dropped now.
+    pub fn set_history_limits(&mut self, limits: HistoryLimits) {
+        self.limits = limits;
+        self.trim();
+    }
+    /// Estimated bytes held by the undo steps.
+    pub fn undo_bytes(&self) -> usize {
+        self.undo.iter().map(|step| step.bytes).sum()
+    }
+
+    /// The changes that lead from the opened document to the current one.
+    pub fn log(&self) -> SessionLog {
+        SessionLog {
+            revision: self.revision,
+            base: self.base.clone(),
+            entries: self
+                .older
+                .iter()
+                .chain(self.undo.iter().flat_map(|step| &step.entries))
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// Record the command that is about to run, so that the change it commits is logged.
+    /// Called by the registry around every change command.
+    pub(crate) fn begin_command(&mut self, entry: LogEntry, group: Option<String>) {
+        self.pending = Some(Pending { entry, group });
+    }
+    /// The command is over; whatever it did not commit is not logged.
+    pub(crate) fn end_command(&mut self) {
+        self.pending = None;
+    }
+
+    /// Replace the document by an opened or new one and start a new history and log.
+    /// The document starts without unsaved changes.
     pub fn open_design(
         &mut self,
         design: Design,
@@ -91,7 +196,7 @@ impl Session {
     ) -> Result<(), EngineError> {
         design::check(&design)?;
         let design = Arc::new(design);
-        self.saved = path.is_some().then(|| design.clone());
+        self.saved = Some(design.clone());
         self.design = Some(design);
         self.path = path;
         self.update_dirty();
@@ -100,8 +205,24 @@ impl Session {
         }
         self.undo.clear();
         self.redo.clear();
+        self.older.clear();
+        self.base = self.pending.take().map(|p| p.entry);
+        self.open_group = None;
         self.revision += 1;
         Ok(())
+    }
+
+    /// Take over the document, history and log of `other`: a session that opened the
+    /// document, or edited a copy of this one ([`Clone`]), on another thread. The revision
+    /// keeps rising.
+    pub fn adopt(&mut self, other: Session) {
+        let revision = (self.revision + 1).max(other.revision);
+        let catalogs = std::mem::take(&mut self.catalogs);
+        *self = other;
+        if self.catalogs.is_empty() {
+            self.catalogs = catalogs;
+        }
+        self.revision = revision;
     }
 
     /// Change the document. `build` receives the current document and returns the new one (and
@@ -131,14 +252,43 @@ impl Session {
 
     fn commit(&mut self, next: Design) -> Result<(), EngineError> {
         design::check(&next)?;
-        if let Some(old) = self.design.take() {
-            self.undo.push(Snapshot { design: old });
+        let (entry, group) = match self.pending.take() {
+            Some(Pending { entry, group }) => (Some(entry), group),
+            None => (None, None),
+        };
+        let joins_last_step = group.is_some() && self.open_group == group && !self.undo.is_empty();
+        if joins_last_step {
+            if let (Some(step), Some(entry)) = (self.undo.last_mut(), entry) {
+                step.record(entry);
+            }
+        } else if let Some(old) = self.design.take() {
+            self.undo.push(Step::new(old, entry.into_iter().collect()));
+            self.trim();
+        } else {
+            self.older.extend(entry);
         }
+        self.open_group = if self.undo.is_empty() { None } else { group };
         self.redo.clear();
         self.design = Some(Arc::new(next));
         self.update_dirty();
         self.revision += 1;
         Ok(())
+    }
+
+    /// Drop the oldest undo steps while the history is over its limits. Their log entries
+    /// stay in the log.
+    fn trim(&mut self) {
+        let mut bytes = self.undo_bytes();
+        let mut dropped = 0;
+        while self.undo.len() - dropped > 1
+            && (self.undo.len() - dropped > self.limits.steps || bytes > self.limits.bytes)
+        {
+            bytes = bytes.saturating_sub(self.undo[dropped].bytes);
+            dropped += 1;
+        }
+        for step in self.undo.drain(..dropped) {
+            self.older.extend(step.entries);
+        }
     }
 
     /// Bring back the document before the last change.
@@ -161,18 +311,19 @@ impl Session {
         Ok(())
     }
 
-    fn swap(&mut self, target: Snapshot, undoing: bool) {
-        let current = self
-            .design
-            .replace(target.design)
-            .map(|design| Snapshot { design });
+    /// Exchange the document with the one of `target`. The step that goes to the other
+    /// stack holds the document that was current and the same log entries.
+    fn swap(&mut self, target: Step, undoing: bool) {
+        let current = self.design.replace(target.design);
         if let Some(current) = current {
+            let step = Step::new(current, target.entries);
             if undoing {
-                self.redo.push(current);
+                self.redo.push(step);
             } else {
-                self.undo.push(current);
+                self.undo.push(step);
             }
         }
+        self.open_group = None;
         self.update_dirty();
         self.revision += 1;
     }
@@ -204,6 +355,7 @@ impl Session {
             can_redo: self.can_redo(),
             undo_depth: self.undo.len(),
             redo_depth: self.redo.len(),
+            undo_bytes: self.undo_bytes(),
             catalogs: self.catalogs.clone(),
             document: self.design.as_deref().map(DocSummary::of),
         }

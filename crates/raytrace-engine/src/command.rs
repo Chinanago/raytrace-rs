@@ -8,7 +8,7 @@
 //! `commands::all`.
 use crate::{
     commands,
-    engine::{EngineError, ErrorInfo, Progress, Response},
+    engine::{EngineError, ErrorInfo, LogEntry, Progress, Response},
     session::Session,
 };
 use raytrace_core::trace::TraceControl;
@@ -23,7 +23,9 @@ use std::{any::Any, marker::PhantomData, sync::OnceLock};
 pub enum Kind {
     /// Reads the document or files and never changes the document. Undo is not involved.
     Query,
-    /// Changes the document: undoable, bumps the revision, accepts `expected_revision`.
+    /// Changes the document: undoable, bumps the revision, accepts `expected_revision`, and is
+    /// recorded in the session log. A mutation whose input has an optional `group` field
+    /// lets consecutive changes of one group share an undo step.
     Mutation,
     /// A long calculation. It runs on the calling thread; cancellation and progress come
     /// through the [`Context`].
@@ -161,6 +163,35 @@ fn schema_of<T: JsonSchema>() -> schemars::Schema {
     schemars::schema_for!(T)
 }
 
+/// The log entry of a change command: its id and its parameters without `expected_revision`,
+/// and the `group` they name.
+fn log_entry<In: Serialize>(
+    id: &str,
+    input: &In,
+) -> Result<(LogEntry, Option<String>), EngineError> {
+    let mut params = serde_json::to_value(input).map_err(|e| {
+        EngineError::new(
+            "invalid_json",
+            format!("{id} の引数をJSONにできません: {e}"),
+        )
+    })?;
+    let mut group = None;
+    if let Value::Object(fields) = &mut params {
+        fields.remove("expected_revision");
+        group = fields
+            .get("group")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+    }
+    Ok((
+        LogEntry {
+            command: id.to_string(),
+            params,
+        },
+        group,
+    ))
+}
+
 fn internal(message: &str) -> EngineError {
     EngineError::new("internal", format!("内部エラー: {message}"))
 }
@@ -173,7 +204,7 @@ pub(crate) fn command<In, Out>(
     run: fn(&mut Session, In, &mut Context<'_>) -> Result<Out, EngineError>,
 ) -> CommandSpec
 where
-    In: DeserializeOwned + JsonSchema + 'static,
+    In: Serialize + DeserializeOwned + JsonSchema + 'static,
     Out: Serialize + JsonSchema + 'static,
 {
     let id = handle.id;
@@ -194,7 +225,13 @@ where
                     .downcast::<In>()
                     .map_err(|_| internal("入力の型がコマンドと一致しません"))?,
             };
-            Ok(Box::new(run(session, input, context)?) as Box<dyn Any>)
+            if kind == Kind::Mutation {
+                let (entry, group) = log_entry(id, &input)?;
+                session.begin_command(entry, group);
+            }
+            let output = run(session, input, context);
+            session.end_command();
+            Ok(Box::new(output?) as Box<dyn Any>)
         }),
         to_json: |any| {
             let out = any
