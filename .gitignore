@@ -40,6 +40,7 @@ __pycache__/
 !/examples/folded_mirror.json
 !/tests/fixtures/step_legacy_hits.json
 !/schemas/*.schema.json
+!/.claude-plugin/marketplace.json
 *.csv
 *.npz
 *.npy

@@ -1,0 +1,20 @@
+{
+  "name": "raytrace-rs",
+  "description": "Agent Skill for running raytrace-rs geometric optical ray-tracing calculations",
+  "owner": {
+    "name": "Chinanago",
+    "url": "https://github.com/Chinanago"
+  },
+  "plugins": [
+    {
+      "name": "raytrace-rs",
+      "source": "./",
+      "description": "Load ZMX/JSON optical models, trace them with the raytrace-rs CLI and read the JSON results",
+      "license": "MIT",
+      "homepage": "https://github.com/Chinanago/raytrace-rs",
+      "repository": "https://github.com/Chinanago/raytrace-rs",
+      "keywords": ["optics", "raytracing", "zemax", "simulation"],
+      "category": "science"
+    }
+  ]
+}

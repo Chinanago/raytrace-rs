@@ -50,6 +50,17 @@ python scripts/package_windows.py
 python scripts/check_portable.py results/packages/raytrace-rs-0.11.0-windows-x64.zip
 ```
 
+## Linux版CLIを作成する
+
+Linux版は静的リンクしたCLIだけを配布します。muslターゲットで依存ライブラリなしにビルドし、サンプル・スキーマ・文書・CLIの依存ライブラリのライセンスと一緒に `raytrace-rs-<版>-linux-x64.tar.gz` へまとめます。作成後に空のフォルダーへ展開し、4サンプルの追跡・再計算・JSONリクエスト・PNG出力を確認します。
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+python3 scripts/package_linux.py
+```
+
+CIの `linux-core` ジョブはpushごとにこの確認を行い、アーカイブを成果物として保存します。リリースを公開すると `release.yml` がタグと版の一致を確かめ、版付きのファイルと、`releases/latest/download/raytrace-rs-linux-x64.tar.gz` で取得できる版なしのファイルを添付します。Windows版ZIPとリリースノートはこれまで通り手作業で用意します。muslの静的リンク版は、2026-11-08の計測でglibc版と同じ結果を出し、追跡時間の差は4%以内でした。
+
 ## 自動テストと配布確認
 
 GitHubへのpushとPull Requestで、Windows上の整形・Clippy・全テスト・解析解／ZMX往復保存・配布ZIPの作成と確認を自動実行します。配布確認はWindows標準ディレクトリだけをPATHに残し、4サンプル、ZMX読込、配置編集、保存と元ファイル削除後の再計算を実行します。STEPは変換キャッシュを空にし、外部Pythonの参照先も使用できない状態で、ZMXから初回読込・配置・追跡・保存・再生を確認します。別PCでのGUIの対話操作は別途確認します。
@@ -209,13 +220,25 @@ Cargo workspaceとして、`crates/` 以下の6クレートに分けています
 - `raytrace-core`: 数学・形状・光源生成・光線追跡・コーティング・分散・スクリーン解析の計算核です。ファイル形式やGUIには依存しません。
 - `raytrace-formats`: ZMX／AGF／SPCD・STEPの入出力とCADキャッシュの保存先を扱います。
 - `raytrace-io`: `project`、`assembly`、`record`、`compatibility` と、設定の保存・スクリーン出力を扱います。従来のZMX・CAD入出力のパスもここから使えます。
-- `raytrace-app`: パラメーター走査・収束確認・検証ケースのワークフローを扱います。
-- `raytrace-cli`: コマンドライン用の `raytrace-rs` 実行ファイルです。
+- `raytrace-app`: JSONエンジン（`engine`）と、パラメーター走査・収束確認・検証ケースのワークフローを扱います。
+- `raytrace-cli`: コマンドライン用の `raytrace-rs` 実行ファイルです。引数をエンジンのリクエストへ変換し、応答をJSONで出力します。PNG出力も有効にします。
 - `raytrace-gui`: デスクトップ用の `raytrace-gui` 実行ファイルです。PNG出力も有効にします。
 
 依存方向は `core ← formats ← io ← app ← {cli, gui}` で、各層は必要な下位層を参照します。リポジトリ直下の `raytrace-rs` はcore・io・appのモジュールを再公開する窓口で、既存の `raytrace_rs::model` などのパスを使えます。`tests/` と `examples/` も直下に残しています。
 
 `raytrace-formats` はプロジェクトモデルに依存せず、ZMXの読込結果と書出し用の参照を形式側の型で受け渡します。`raytrace-io` がこれを `Project` に接続することで、ファイル形式とプロジェクトの相互参照を避けています。公開順もcore・formats・io・appの順です。
+
+### JSONエンジン
+
+計算とファイル操作の入口は `raytrace_app::engine` です。`Request` は `command` で操作を選ぶJSONで、`trace`・`replay`・`inspect`・`open`・`scan`・`resume_scan`・`convergence`・`save_project`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version` を持ちます。`engine::execute_with` が `Outcome` または `EngineError`（固定の `code` と日本語の `message`）を返し、`engine::respond` がCLIの応答 `{ok, command, result, error}` にまとめます。
+
+CLIのオプションは同じリクエストへの変換で、`raytrace-rs run` はリクエストJSONを直接実行します。GUIは同じリクエストを作り、作業スレッドで `execute_with` に渡します。中止は `TraceControl`、走査の進捗は `Progress` のコールバックで受け取ります。GUIはモデルの編集・光路図の描画・スクリーン表示の後処理を担い、追跡・読込・保存・書出しは直接呼びません。GUIのプレビュー光路（各光源の先頭から64本）、合計200万光線の上限、計算記録を開いたときの表示用光路もエンジンのオプションです。
+
+モデル・計算記録・計画・応答の型は `schemars` でJSON Schemaを導出します。下位クレートでは `schema` 機能で有効にし、`raytrace-app` は常に有効です。スキーマは `schemas/` にコミットし、型を変えたら次のコマンドで更新します。`tests/engine.rs` が古いスキーマを検出します。各クレートの `Error::code()` は応答の `error.code` に使う固定の識別子です。
+
+```powershell
+cargo run -q --locked -p raytrace-cli -- --schema all --output schemas
+```
 
 ライブラリのPNG出力には `--features png` を指定します。SPCDの文字列解析は `Spectrum::parse_spcd`、ファイルの読込・文字コード判定は `raytrace_rs::zemax::read_spcd` を使います。
 

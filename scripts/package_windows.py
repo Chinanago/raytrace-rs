@@ -22,17 +22,39 @@ FILES = {
     "examples/nonsequential_slab.json": "examples/nonsequential_slab.json",
     "examples/integrator_rod.json": "examples/integrator_rod.json",
     "examples/folded_mirror.json": "examples/folded_mirror.json",
+    **{f"schemas/{name}.schema.json": f"schemas/{name}.schema.json" for name in (
+        "request", "response", "scene", "project", "run", "scan_plan", "scan",
+        "convergence_plan", "convergence",
+    )},
 }
 
 
-def dependency_notices():
+def dependency_notices(platform="x86_64-pc-windows-msvc", root=None, assets=True):
+    """License texts of the resolved graph for `platform`.
+
+    With `root`, only packages reachable from that workspace package are included;
+    `assets` adds the bundled GUI fonts.
+    """
     metadata = json.loads(subprocess.check_output([
         "cargo", "metadata", "--locked", "--offline", "--all-features",
-        "--filter-platform", "x86_64-pc-windows-msvc", "--format-version", "1",
+        "--filter-platform", platform, "--format-version", "1",
     ], cwd=ROOT, text=True, encoding="utf-8"))
-    # Include the whole resolved Windows graph, including build dependencies.
+    # Include the whole resolved graph, including build dependencies.
     # Keep this conservative so a renderer feature cannot silently lose its notices.
-    active = {node["id"] for node in metadata["resolve"]["nodes"]}
+    nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
+    if root is None:
+        active = set(nodes)
+    else:
+        names = {package["id"]: package["name"] for package in metadata["packages"]}
+        pending = [i for i in nodes if names[i] == root]
+        if not pending:
+            raise ValueError(f"Unknown workspace package: {root}")
+        active = set()
+        while pending:
+            current = pending.pop()
+            if current not in active:
+                active.add(current)
+                pending.extend(dep["pkg"] for dep in nodes[current]["deps"])
     catalog = tomllib.loads((ROOT / "scripts/third_party_notices.toml").read_text(encoding="utf-8"))
     supplements = catalog["notice"]
     sections = ["Third-party components retain their respective licenses.\n"]
@@ -67,7 +89,7 @@ def dependency_notices():
             required = {"fonts/Hack-Regular.txt", "fonts/OFL.txt", "fonts/UFL.txt", "fonts/emoji-icon-font-mit-license.txt"}
             if required - included:
                 raise ValueError(f"Missing font notices: {sorted(required - included)}")
-    for asset in catalog["asset"]:
+    for asset in catalog["asset"] if assets else []:
         content = (ROOT / asset["file"]).read_text(encoding="utf-8") if "file" in asset else asset["text"]
         if not content.strip():
             raise ValueError(f"Missing bundled asset license: {asset['name']}")

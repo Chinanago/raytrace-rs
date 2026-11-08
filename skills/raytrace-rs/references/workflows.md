@@ -3,21 +3,8 @@
 ## Locate the application and documentation
 
 1. Use the executable or installation explicitly selected by the user.
-2. Otherwise check `raytrace-rs` on PATH, an extracted Windows package, or the current raytrace-rs source checkout. The release CLI is `raytrace-rs.exe`; a Windows source build places it in `target/release`. The GUI is `raytrace-gui.exe`.
+2. Otherwise check `raytrace-rs` on PATH, an extracted Windows or Linux package, or the current raytrace-rs source checkout. On Linux without a package, newer releases provide `https://github.com/Chinanago/raytrace-rs/releases/latest/download/raytrace-rs-linux-x64.tar.gz` (static CLI), and `cargo install --git https://github.com/Chinanago/raytrace-rs --locked raytrace-cli` builds the CLI anywhere Rust is available. The release CLI is `raytrace-rs.exe`; a Windows source build places it in `target/release`. The GUI is `raytrace-gui.exe`.
 3. Check `--version` and `--help` before using version-specific arguments. The skill directory and application checkout can be separate.
-
-## Machine-readable output
-
-Builds whose `--help` lists `--json` accept it with every command. stdout then holds exactly one JSON line; human messages and scan progress go to stderr.
-
-| Command | Summary fields besides `ok`, `command`, `output` |
-|---|---|
-| trace / `--replay` | `launched_rays`, `reference_plane`, `detected_percent_of_reference`, `budget_percent_of_reference`, `detector_percent_of_reference`, `relative_budget_closure_error`, `median_seconds`, `worker_threads`, `warnings` |
-| `--inspect` | `traceable`, `sources`, `surfaces`, `materials`, `compatibility` (the full compatibility report), `exported_zmx` |
-| `--scan` / `--resume-scan` | `cases`, `completed`, `failed` |
-| `--convergence` | `cases`, `comparisons`, `failed` |
-
-Failures print `{"ok": false, "error": "..."}` and exit with code 1. Without `--json` (v0.11.0 and earlier), parse the saved `--output` file instead of stdout.
 
 Upstream: [source](https://github.com/Chinanago/raytrace-rs), [Windows releases](https://github.com/Chinanago/raytrace-rs/releases).
 
@@ -28,9 +15,24 @@ The baseline below is **v0.11.0**. For another installed version, use its matchi
 | Physics, supported inputs and restrictions | `docs/FEATURES.md` | [Features](https://github.com/Chinanago/raytrace-rs/blob/v0.11.0/docs/FEATURES.md) |
 | Import, placement, sources, screens, scans, convergence and replay | `docs/GUIDE.md` | [Guide](https://github.com/Chinanago/raytrace-rs/blob/v0.11.0/docs/GUIDE.md) |
 | Build, test or modify the application | `docs/DEVELOPMENT.md` | [Development](https://github.com/Chinanago/raytrace-rs/blob/v0.11.0/docs/DEVELOPMENT.md) |
-| Model examples and exact schemas | `examples/*.json`, `crates/raytrace-io/src/project.rs`, `crates/raytrace-io/src/assembly.rs`, `crates/raytrace-core/src/model.rs` | [Examples](https://github.com/Chinanago/raytrace-rs/tree/v0.11.0/examples) |
+| Model examples and exact schemas | `schemas/*.schema.json` (newer builds), `examples/*.json`, `crates/raytrace-io/src/project.rs`, `crates/raytrace-io/src/assembly.rs`, `crates/raytrace-core/src/model.rs` | [Examples](https://github.com/Chinanago/raytrace-rs/tree/v0.11.0/examples) |
 
 The Windows ZIP runs without Rust or OpticStudio installed. If a source build is needed, run `cargo build --release --locked -p raytrace-cli` from the checkout for the CLI, or `cargo build --release --locked --workspace --bins` for CLI and GUI together. Windows is the verified distribution platform for v0.11.0.
+
+## JSON engine (builds whose `--help` lists `run`)
+
+Newer builds run every operation as a JSON request; the GUI sends the same requests. Classic options are translated into requests, so both forms behave identically.
+
+- stdout carries exactly one JSON line per request: `{"ok": true, "command": ..., "result": {...}}` or `{"ok": false, "command": ..., "error": {"code": ..., "message": ...}}`. Exit code 1 on failure. Human text, warnings and scan progress go to stderr.
+- `raytrace-rs run REQUEST.json` or `raytrace-rs run -` (stdin, several requests in a row) executes requests directly. `model` is `{"path": ...}`, `{"project": {...}}` or `{"scene": {...}}`; `include_record: true` returns the full calculation record in `result.record`.
+- `raytrace-rs --schema request|response|scene|project|run|scan_plan|scan|convergence_plan|convergence` prints the JSON Schema; the package's `schemas/` folder holds the same files. Prefer the schemas over source code when writing models, plans and requests.
+- `error.code` values are stable identifiers such as `io`, `invalid_json`, `invalid_request`, `usage`, `invalid_scene`, `invalid_ray`, `zmx`, `agf`, `step`, `plan`, `limit`, `cases_failed` and `cancelled`; `message` is Japanese.
+- Classic-option traces and replays include one untimed warmup; a `run` request does so only with `"warmup": true`. Results are identical either way.
+
+```bash
+echo '{"command":"inspect","model":{"path":"lens.zmx"}}' | raytrace-rs run -
+echo '{"command":"trace","model":{"path":"examples/sequential_lens.json"},"overrides":{"rays_per_source":1024,"sampling":"sobol"},"threads":4,"output":"results/lens.json"}' | raytrace-rs run -
+```
 
 ## First run from an extracted Windows ZIP
 

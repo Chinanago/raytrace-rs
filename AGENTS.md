@@ -8,15 +8,17 @@ Rust製の幾何光学レイトレーサーです。ZMX・JSONの光学系を読
 
 - 長さはmm、CLIとJSONの波長はμm、GUIの波長入力はnmです。
 - Cargo workspaceの6クレートで、依存方向は `core ← formats ← io ← app ← {cli, gui}` です。
+- **計算と読込・保存はすべて `raytrace_app::engine` のJSONリクエストを通します。** CLIは引数を `engine::Request` に変換するだけ、GUIもリクエストを作って `engine::execute_with` に渡すだけです。新しい操作は、まず `Request` にコマンドを足してからCLI・GUIにつなぎます。
 
 | クレート | 役割 |
 |---|---|
 | `crates/raytrace-core` | 形状・光源・追跡・コーティング・分散・スクリーン解析の計算核 |
 | `crates/raytrace-formats` | ZMX／AGF／SPCD・STEPの入出力（プロジェクトモデルに依存しない） |
 | `crates/raytrace-io` | `Project`・組立・計算記録・互換性レポート・出力 |
-| `crates/raytrace-app` | パラメーター走査・収束確認・検証ケース |
-| `crates/raytrace-cli` | CLI `raytrace-rs`（`src/main.rs` 1ファイル） |
-| `crates/raytrace-gui` | egui製GUI `raytrace-gui` |
+| `crates/raytrace-app` | JSONエンジン（`src/engine.rs`・`src/engine/run.rs`）、パラメーター走査・収束確認・検証ケース |
+| `crates/raytrace-cli` | CLI `raytrace-rs`。引数→リクエストの変換と応答の出力だけ（`src/main.rs`） |
+| `crates/raytrace-gui` | egui製GUI `raytrace-gui`。編集・描画・表示の後処理とリクエストの作成 |
+| `schemas/` | `--schema all` が生成するJSONスキーマ（コミット対象） |
 | 直下の `src/lib.rs` | 各クレートを再公開する `raytrace_rs` クレート。`tests/` と `examples/` もここに属する |
 
 ## コマンド
@@ -30,12 +32,18 @@ cargo clippy --locked -p raytrace-core -p raytrace-formats -p raytrace-io -p ray
 cargo test --locked -p raytrace-core -p raytrace-formats -p raytrace-io -p raytrace-app -p raytrace-cli -p raytrace-rs --all-features
 ```
 
-単一テストは `cargo test --locked -p raytrace-rs --test reliability <テスト名>` のように実行します。Windowsでは `--workspace` でGUIも含めて検査します。
+単一テストは `cargo test --locked -p raytrace-rs --test engine <テスト名>` のように実行します。GUIはLinuxでビルドできませんが、型検査とClippyはWindowsターゲットで実行できます（GUIのテストはWindows CIで実行）。
+
+```bash
+rustup target add x86_64-pc-windows-msvc
+cargo clippy --locked -p raytrace-gui --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+```
 
 CLIの動作確認：
 
 ```bash
-cargo run --locked -p raytrace-cli -- examples/sequential_lens.json --rays-per-source 256 --output results/lens.json --json
+cargo run --locked -p raytrace-cli -- examples/sequential_lens.json --rays-per-source 256 --output results/lens.json
+echo '{"command":"version"}' | cargo run -q --locked -p raytrace-cli -- run -
 ```
 
 `results/` はGit管理外です。生成物はそこに置きます。
@@ -49,6 +57,7 @@ cargo run --locked -p raytrace-cli -- examples/sequential_lens.json --rays-per-s
 - 計算核は集計順を固定しています。SIMD経路・BVH・小分け生成は従来経路と**全レポートが一致する**ことをテストで確認しているため、計算核を変えるときはこの一致を崩さないでください。
 - 新しいファイルをコミットするときは `scripts/check_publish.py` の許可リストに追加します。対象外は `src/`・`tests/` の `.rs` と `crates/*/src/**/*.rs`・`crates/*/Cargo.toml` だけです。追加しないとCIの「Check publication contents」が失敗します。`git add` 後に `python3 scripts/check_publish.py` で確認できます。
 - ZMX・AGF・STEP・CSV・画像・JSONなどは `.gitignore` で除外しています。利用者の光学データや、元のZMXを埋め込むプロジェクト・計算記録JSONはコミットしません。同梱するJSONは `examples/` の自作サンプル4件だけです。
+- リクエスト・応答・モデルの型を変えたら `cargo run -q --locked -p raytrace-cli -- --schema all --output schemas` でスキーマを再生成してコミットします。`tests/engine.rs` が古いスキーマを検出します。
 - CLIのオプションを変えたら、`crates/raytrace-cli/src/main.rs` の `HELP`、`docs/GUIDE.md` の「コマンドライン」、`skills/raytrace-rs/references/workflows.md` を合わせて更新します。利用者から見える機能の変更は `docs/FEATURES.md`・`docs/GUIDE.md` にも反映します。
 - コミットメッセージは英語の命令形で、変更内容を1行目に書きます（`git log` を参照）。
 
@@ -56,6 +65,7 @@ cargo run --locked -p raytrace-cli -- examples/sequential_lens.json --rays-per-s
 
 CLIやGUIで計算を実行・解釈する手順は [skills/raytrace-rs/SKILL.md](skills/raytrace-rs/SKILL.md) と [references/workflows.md](skills/raytrace-rs/references/workflows.md) にあります。
 
-- CLIは `--json` を付けると標準出力が1行のJSON概要になります。`ok`・`command`・`output`（保存したファイル）・主要な結果を読み、詳細は `output` のファイルを開きます。失敗時は `"ok": false` と `error`、終了コード1です。
-- ZMXは追跡の前に `--inspect --json` で読み込み、`traceable` と `compatibility.components[].entries[].status` を確認します。`requires_override`・`unsupported` は追跡を止めます。
-- 入力モデルの構造は `examples/*.json`、`crates/raytrace-core/src/model.rs`、`crates/raytrace-io/src/project.rs`、`crates/raytrace-io/src/assembly.rs` が正です。走査・収束確認の計画JSONは `docs/GUIDE.md` にあります。
+- CLIの標準出力はリクエストごとに1行のJSON（`ok`・`command`・`result`、失敗時は `error.code`・`error.message`、終了コード1）です。人向けの表示は標準エラーです。詳細は `result.output` のファイルを開きます。
+- 複数の操作は `raytrace-rs run -` にリクエストを続けて渡せます。モデルはファイルでもインラインJSON（`{"scene": {...}}`）でも渡せます。
+- ZMXは追跡の前に `inspect` で読み込み、`result.traceable` と `compatibility.components[].entries[].status` を確認します。`requires_override`・`unsupported` は追跡を止めます。
+- 入力・出力の形式は `schemas/*.schema.json` が正です。例は `examples/*.json`（`scene` 形式）と `docs/GUIDE.md` にあります。

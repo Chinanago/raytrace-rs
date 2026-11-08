@@ -173,6 +173,8 @@ CAD分割精度を比較する場合はSTEP参照を持つ元のZMXを指定し�
 
 ## コマンドライン
 
+CLIの本体はJSONリクエストを受け取るエンジンです。GUIも同じエンジンにリクエストを渡して計算・読込・保存を行います。オプション形式で指定した場合も、同じリクエストに変換して実行します。
+
 ```powershell
 ./raytrace-rs.exe examples/sequential_lens.json --threads 4 --output results/lens.json
 ./raytrace-rs.exe examples/integrator_rod.json --threads 4 --output results/rod.json
@@ -189,11 +191,40 @@ CAD分割精度を比較する場合はSTEP参照を持つ元のZMXを指定し�
 | `--terminals` / `--paths N` | 終端光線／入力順で先頭N本の発射光線の光路を保存 |
 | `--repeat N` | 同じ光線をN回追跡し、処理時間の中央値を出力 |
 | `--inspect` | ZMXを読み込み、追跡せずにプロジェクトへ保存 |
-| `--json` | 標準出力を1行のJSON概要にする（スクリプト・AIエージェント向け） |
+| `--schema NAME` | JSONスキーマを出力（`all --output DIR` で全件） |
 
-`--json` は全コマンドで使えます。標準出力には成功時に `"ok": true` と `command`・`output`（保存先）・主要な結果、失敗時に `"ok": false` と `error` を1行で出力し、終了コードは失敗時に1です。追跡では光量収支の割合・検出器ごとの割合・収支誤差・警告、`--inspect` では `traceable` と互換性レポート、走査と収束確認ではケース数と失敗数を含みます。詳しい結果は `output` のファイルを読みます。走査の進捗は標準エラーへ出力します。
+### JSONの入出力
 
-処理時間は、モデルの光源を使う場合は光線生成・追跡・集計を含みます。CSVや明示入力光線を保存した記録を使う場合は、追跡・集計を含みます。モデルの読込・準備、ファイル入出力、描画、ウォームアップは計測から除きます。結果の `benchmark.timed_scope` に実際の計測範囲を保存します。
+標準出力には、リクエストごとに1行のJSONを出力します。人向けの表示とエラー文は標準エラーへ出力します。
+
+```json
+{"ok":true,"command":"trace","result":{"output":"results/lens.json","launched_rays":2048,"detected_percent_of_reference":93.1, "...": "..."}}
+{"ok":false,"command":"trace","error":{"code":"io","message":"lens.zmx の入出力に失敗しました: ..."}}
+```
+
+失敗時は終了コード1です。`error.code` は `io`・`invalid_json`・`invalid_request`・`usage`・`invalid_scene`・`zmx`・`plan`・`limit`・`cases_failed`・`cancelled` などの固定の識別子で、`error.message` は日本語の説明です。走査や収束確認で一部のケースが失敗した場合は、`result` と `cases_failed` の両方を返します。追跡の `result` には光量収支の割合・検出器ごとの割合・収支誤差・警告、`inspect` には `traceable` と互換性レポートを含みます。詳しい結果は `output` のファイルを読みます。
+
+`run` でJSONリクエストを直接実行できます。`-` は標準入力で、複数のリクエストを続けて渡すと、それぞれの応答を1行ずつ返します。
+
+```powershell
+./raytrace-rs.exe run request.json
+'{"command":"trace","model":{"path":"examples/sequential_lens.json"},"overrides":{"rays_per_source":1024},"output":"results/lens.json"}' | ./raytrace-rs.exe run -
+```
+
+`model` はファイルパス `{"path": ...}`、プロジェクトJSON `{"project": {...}}`、光学系JSON `{"scene": {...}}` のいずれかで指定します。`include_record: true` を付けると、計算記録そのものを `result.record` に含めます。コマンドは `trace`・`replay`・`inspect`・`open`・`scan`・`resume_scan`・`convergence`・`save_project`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version` です。
+
+形式はリポジトリの [schemas/](../schemas/) と `--schema` で確認できます。
+
+| スキーマ | 内容 |
+|---|---|
+| `request` / `response` | `run` のリクエストと標準出力の応答 |
+| `scene` | 光学系モデル（`examples/*.json` と同じ形式） |
+| `project` | プロジェクトJSON（GUIの保存・`--inspect` の出力） |
+| `run` | 計算記録（追跡・再計算の出力） |
+| `scan_plan` / `scan` | 走査の計画と `scan.json` |
+| `convergence_plan` / `convergence` | 収束確認の計画と `convergence.json` |
+
+処理時間は、モデルの光源を使う場合は光線生成・追跡・集計を含みます。CSVや明示入力光線を保存した記録を使う場合は、追跡・集計を含みます。モデルの読込・準備、ファイル入出力、描画は計測から除きます。オプション形式の追跡と再計算は計測前にウォームアップを1回行い、`run` では `"warmup": true` で同じ動作になります。結果の `benchmark.timed_scope` に実際の計測範囲を保存します。
 
 ## カタログとSTEPの読込
 

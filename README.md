@@ -6,9 +6,15 @@
 
 ## インストール
 
-ZIPを展開して「Raytraceを起動.cmd」を開くだけです。RustやOpticStudioは要りません。
+**Windows**：ZIPを展開して「Raytraceを起動.cmd」を開くだけです。RustやOpticStudioは要りません。起動時にDLL不足と表示されたら、[Visual C++ x64ランタイム](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)を入れてください。
 
-起動時にDLL不足と表示されたら、[Visual C++ x64ランタイム](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)を入れてください。
+**Linux（CLIのみ）**：v0.11.0より後のリリースには、依存ライブラリなしで動く `raytrace-rs-<版>-linux-x64.tar.gz` を添付します。最新版は次の1行で取得できます。
+
+```bash
+curl -L https://github.com/Chinanago/raytrace-rs/releases/latest/download/raytrace-rs-linux-x64.tar.gz | tar xz
+```
+
+Rustがあれば、どのOSでも `cargo install --git https://github.com/Chinanago/raytrace-rs --locked raytrace-cli` でCLIを入れられます。
 
 ## GUIで使う
 
@@ -20,7 +26,7 @@ ZIPを展開して「Raytraceを起動.cmd」を開くだけです。RustやOpti
 
 ## コマンドラインで使う
 
-ZIPの展開先で実行します。
+ZIPの展開先で実行します（Linuxでは `./raytrace-rs`）。
 
 ```powershell
 # サンプルを計算して結果をJSONに保存
@@ -41,9 +47,14 @@ ZIPの展開先で実行します。
 | `--wavelength-um 0.465` | 波長（μm）を1つに固定 |
 | `--mode sequential` / `non_sequential` | 追跡方式 |
 | `--threads N` | 使うスレッド数 |
-| `--json` | 結果の概要を1行のJSONで出力 |
 
-全オプションは `--help`、パラメーター走査（`--scan`）や収束確認（`--convergence`）は[操作ガイド](docs/GUIDE.md#コマンドライン)にあります。長さはmm、CLIの波長はμmです。
+結果は標準出力に1行のJSONで返ります（`"ok"`・`"result"`、失敗時は `"error"`）。読みやすい表示は標準エラーに出ます。JSONのリクエストを直接渡すこともできます。
+
+```bash
+echo '{"command":"trace","model":{"path":"examples/sequential_lens.json"},"output":"results/lens.json"}' | ./raytrace-rs run -
+```
+
+GUIも同じJSONリクエストで計算しています。入出力の形式は [schemas/](schemas/) にあり、`--schema request` などでも出力できます。全オプションは `--help`、パラメーター走査（`--scan`）や収束確認（`--convergence`）は[操作ガイド](docs/GUIDE.md#コマンドライン)にあります。長さはmm、CLIの波長はμmです。
 
 ## AIエージェントで使う
 
@@ -55,9 +66,15 @@ CodexやClaude Codeに光学計算を任せるための[Agent Skill](https://git
 $skill-installer で Chinanago/raytrace-rs の skills/raytrace-rs をインストールして。
 ```
 
-**Claude Code**：`skills/raytrace-rs` フォルダーを `~/.claude/skills/` にコピーします。「Chinanago/raytrace-rs の skills/raytrace-rs を ~/.claude/skills/ にコピーして」と頼んでも構いません。
+**Claude Code**：プラグインとしてインストールします。
 
-CLIに `--json` を付けると、エージェントが結果をそのまま読めます。このリポジトリを開発するエージェント向けの手順は [AGENTS.md](https://github.com/Chinanago/raytrace-rs/blob/main/AGENTS.md) にあります。
+```text
+/plugin install raytrace-rs --marketplace Chinanago/raytrace-rs
+```
+
+古い版のClaude Codeでは `/plugin marketplace add Chinanago/raytrace-rs` の後に `/plugin install raytrace-rs@raytrace-rs` を実行します。
+
+エージェントはCLIのJSON出力と [schemas/](https://github.com/Chinanago/raytrace-rs/tree/main/schemas) を読んで、モデルの作成から結果の解釈まで行えます。このリポジトリを開発するエージェント向けの手順は [AGENTS.md](https://github.com/Chinanago/raytrace-rs/blob/main/AGENTS.md) にあります。
 
 ## できないこと
 
