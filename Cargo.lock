@@ -1855,6 +1855,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "raytrace-doc"
+version = "0.11.0"
+dependencies = [
+ "raytrace-core",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "raytrace-formats"
 version = "0.11.0"
 dependencies = [
@@ -1905,6 +1916,7 @@ dependencies = [
  "rayon",
  "raytrace-app",
  "raytrace-core",
+ "raytrace-doc",
  "raytrace-formats",
  "raytrace-io",
  "serde",

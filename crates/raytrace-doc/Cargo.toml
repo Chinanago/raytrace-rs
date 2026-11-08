@@ -1,0 +1,25 @@
+[package]
+name = "raytrace-doc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "Design document: parts, occurrences and their compilation into a traceable scene"
+readme = "../../README.md"
+keywords = ["optics", "raytracing"]
+categories = ["science", "simulation"]
+
+[dependencies]
+thiserror = { workspace = true }
+raytrace-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true, optional = true }
+
+[features]
+# JSON Schema generation for the document types.
+schema = ["dep:schemars", "raytrace-core/schema"]
+
+[lints]
+workspace = true

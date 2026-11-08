@@ -4,6 +4,7 @@ pub mod coating;
 pub mod dispersion;
 pub mod geometry;
 pub mod illumination;
+pub mod issue;
 pub mod math;
 pub mod mesh;
 pub mod model;

@@ -4,6 +4,7 @@ pub use raytrace_core::{
     coating, dispersion, geometry, illumination, math, mesh, model, sampling, screen, spectrum,
     trace,
 };
+pub use raytrace_doc as doc;
 pub use raytrace_io::{assembly, cad, compatibility, export, project, record, storage, zemax};
 
 pub mod error {
