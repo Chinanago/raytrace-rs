@@ -19,7 +19,7 @@ Rust製の幾何光学レイトレーサーです。ZMX・JSONの光学系を読
 | `crates/raytrace-io` | 設計文書のファイル形式（`design::open`・`save`、旧プロジェクト形式の移行）・計算記録・ZMX書出し・出力 |
 | `crates/raytrace-engine` | JSONエンジン（`src/engine.rs`・`src/engine/run.rs`）、計算パイプラインの各段（`src/pipeline.rs`。追跡ループはここだけ）、パラメーター走査・収束確認・検証ケース |
 | `crates/raytrace-cli` | CLI `raytrace-rs`。独自のオプションはなく、引数をコマンドのパラメーターに組み立てて応答を出力するだけ（`src/main.rs`） |
-| `crates/raytrace-gui` | egui製GUI `raytrace-gui`。編集・描画・表示の後処理とコマンドの呼び出し |
+| `crates/raytrace-gui` | egui製GUI `raytrace-gui`。文書は持たず、UIスレッドの `Session` に対するコマンドで編集する（`gui/edit.rs`）。描画・表示の後処理とコマンドの呼び出し |
 | `schemas/` | `schema.get output=schemas` が生成するJSONスキーマ（コミット対象） |
 | 直下の `src/lib.rs` | 各クレートを再公開する `raytrace_rs` クレート。`tests/` と `examples/` もここに属する |
 
@@ -73,6 +73,6 @@ echo '{"command":"app.version"}' | cargo run -q --locked -p raytrace-cli -- run 
 CLIやGUIで計算を実行・解釈する手順は [skills/raytrace-rs/SKILL.md](skills/raytrace-rs/SKILL.md) と [references/workflows.md](skills/raytrace-rs/references/workflows.md) にあります。
 
 - CLIの標準出力はリクエストごとに1行のJSON（`ok`・`command`・`revision`・`result`、失敗時は `error.code`・`error.message`、終了コード1）です。コマンドは `analysis.trace` のようなドット区切りのIDで、前の短い名前（`trace`・`inspect`・`replay`・`scan`・`resume_scan`・`convergence`・`open`・`save_design`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version`）は非推奨の別名です。人向けの表示は標準エラーです。詳細は `result.output` のファイルを開きます。
-- 複数の操作は `raytrace-rs run -` にリクエストを続けて渡せます。1つのストリームは1つのセッションなので、`doc.open` で開いた文書は `model` を省略したコマンドの対象になり、`doc.set`・`component.*` で編集して `session.undo` で戻せます。モデルはファイルでもインラインJSON（`{"scene": {...}}`・`{"design": {...}}`）でも渡せます。
+- 複数の操作は `raytrace-rs run -` にリクエストを続けて渡せます。1つのストリームは1つのセッションなので、`doc.open` で開いた文書は `model` を省略したコマンドの対象になり、`doc.set`・`component.*` で編集して `session.undo` で戻せます。変更コマンドは任意の `group` で連続した編集を取り消しの1単位にまとめられ、`session.log` が確定した変更の列（GUIの編集も同じ）を返します。モデルはファイルでもインラインJSON（`{"scene": {...}}`・`{"design": {...}}`）でも渡せます。
 - ZMXは追跡の前に `doc.inspect` で読み込み、`result.traceable` と `compatibility.components[].entries[].status` を確認します。`requires_override`・`unsupported` は追跡を止めます。
 - 入力・出力の形式は `schemas/*.schema.json` が正です。例は `examples/*.json`（`scene` 形式）と `docs/GUIDE.md` にあります。

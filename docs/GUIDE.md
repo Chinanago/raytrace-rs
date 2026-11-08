@@ -26,7 +26,7 @@
 
 ホイールでカーソル位置を中心に拡大し、背景のドラッグ、右ボタンまたは中ボタンのドラッグで表示範囲を移動できます。「選択へ」で選択部品を拡大し、「全体」で光学系全体の表示へ戻ります。表示範囲は投影ごとに保ち、表示操作は部品の座標を変更しません。
 
-上部の戻す／やり直すボタン、`Ctrl+Z`、`Ctrl+Shift+Z`／`Ctrl+Y`で配置編集を戻せます。一連のドラッグや数値入力は1操作として扱います。テキスト入力中はその欄の編集を優先します。履歴は最大64操作、CAD形状を含む保存量は約128 MiBを目安に古い操作から整理します。部品の「操作 → 部品を複製」でコピーを作れます。計算時の配置へ戻ると、その結果の光路を再表示します。
+上部の戻す／やり直すボタン、`Ctrl+Z`、`Ctrl+Shift+Z`／`Ctrl+Y`で配置編集を戻せます。一連のドラッグや数値入力は1操作として扱います。テキスト入力中はその欄の編集を優先します。履歴は最大64操作、CAD形状を含む保存量は約128 MiBを目安に古い操作から整理します。部品の「操作 → 部品を複製」でコピーを作れます。計算時の配置へ戻ると、その結果の光路を再表示します。光線数（プレビュー／指定本数）の切り替えは文書の変更ではないため、戻す対象に含まれません。履歴はセッションが持ち、GUIで行った編集は `session.log`（[セッションで文書を編集する](#セッションで文書を編集する)）で確認・再現できます。
 
 配置の基準は、光源が発光配列の中心、レンズが最初の光学面の頂点、ロッドが入口中心です。部品一覧のチェックで有効／無効を切り替え、選択部品の「操作 → 部品を削除」で取り除けます。光源を選ぶと本数・波長・分布・サンプリング、ロッドを選ぶと寸法と波長依存の材料、スクリーンを選ぶと寸法と画素数を編集できます。単体のZMXやJSONでは光源と各光学面を選んで編集します。
 
@@ -196,7 +196,7 @@ CLIの本体は、コマンドの登録表とセッションを持つエンジ�
 | `app.version` | 問い合わせ | 版を返す |
 | `command.list` / `command.describe` | 問い合わせ | コマンドの一覧／入力・出力スキーマ |
 | `schema.get` | 問い合わせ | JSONスキーマを返す（`output` でファイルに書き出す） |
-| `doc.new` / `doc.open` | 変更 | 空の組立／ZMX・設計JSON・光学系JSONを開いてセッションの文書にする |
+| `doc.new` / `doc.open` | 変更 | 新しい文書（空の組立、または `design`）／ZMX・設計JSON・光学系JSONを開いてセッションの文書にする |
 | `doc.get` / `doc.inspect` | 問い合わせ | 文書（またはJSON Pointerで指した一部）／互換性レポート |
 | `doc.save` / `doc.export_zmx` | 問い合わせ | 設計JSONの保存／ZMXの書出し |
 | `doc.set` / `doc.replace` | 変更 | 文書の1か所の書換え／全体の置換 |
@@ -204,7 +204,7 @@ CLIの本体は、コマンドの登録表とセッションを持つエンジ�
 | `analysis.trace` | 長い計算 | 追跡して計算記録を返す |
 | `run.replay` / `run.open` / `run.save` / `run.export_screen` | 長い計算・問い合わせ | 計算記録の再計算／読込／保存／スクリーンの書出し |
 | `study.scan` / `study.resume` / `study.convergence` / `study.open` | 長い計算・問い合わせ | 走査／再開／収束確認／走査ディレクトリの読込 |
-| `session.undo` / `session.redo` / `session.status` | 変更・問い合わせ | 取り消し／やり直し／版番号と履歴の状態 |
+| `session.undo` / `session.redo` / `session.status` / `session.log` | 変更・問い合わせ | 取り消し／やり直し／版番号と履歴の状態／文書を開いてからの変更コマンドの記録 |
 
 以前の短い名前は、非推奨の別名として引き続き使えます。応答の `command` には、指定した名前がそのまま入ります。
 
@@ -245,6 +245,20 @@ EOF
 ```
 
 `doc.set` は、文書（`schema.get name=design` の形式）の1か所をJSON Pointerで指定して書き換えます。配列の要素は添字のほか `@<ID>` で指定できます（`/occurrences/@rod-4/pose/translation_mm/2`、`/parts/@optic-2/scene/surfaces/0/pose`）。ID は `doc.get` や `component.add` の応答で確認します。書き換えた文書が設計文書として読み直せて、展開（コンパイル）できたときだけ変更が確定します。失敗した変更は文書・履歴・版番号を変えません。`id`・`format`・`next_id` と、部品や配置の増減は `doc.set` では変更できません（`component.add`・`component.remove`・`component.duplicate` を使います）。
+
+`doc.set`・`doc.replace`・`component.add`・`component.remove`・`component.duplicate` は、任意の `group`（文字列）も受け付けます。直前の変更と同じ `group` の変更（間に取り消し・やり直し・文書を開く操作がないとき）は、取り消しの1単位にまとまり、`session.undo` で最初の変更の前に戻ります。GUIはドラッグや1つの入力欄の入力を1つの `group` にしており、エージェントも関連する複数の編集（たとえば部品を追加して位置を決める）を同じ `group` で送れば1回で取り消せます。版番号は変更ごとに1増えます。取り消せる履歴は最大64操作・推定約128 MiBで、超えると古い操作から捨てます。
+
+`session.log` は、文書を開いてから確定した変更を `{"base": {"command": ..., "params": ...}, "entries": [{"command": ..., "params": ...}, ...]}` で返します。`base` は文書を始めた `doc.open`・`doc.new`、`entries` はその後の `doc.set`・`component.*` などを古い順に並べたものです（`expected_revision` は含みません。取り消した変更は含まず、やり直すと戻ります。同じ `group` の中で同じ場所を繰り返し書き換えた `doc.set` は最後の1件です）。新しいセッションで `base` と `entries` を順に実行すると、同じ文書になります。GUIで行った編集も、エージェントがこの記録で確認・再現できます。
+
+```bash
+cat <<'EOF' | ./raytrace-rs run -
+{"command":"doc.new"}
+{"command":"component.add","kind":"rod","group":"rod"}
+{"command":"doc.set","path":"/occurrences/@rod-2/pose/translation_mm/2","value":10.0,"group":"rod"}
+{"command":"session.log"}
+{"command":"session.undo"}
+EOF
+```
 
 変更コマンドは `expected_revision` を受け付けます。セッションの版番号と一致しないときは `revision` エラーで拒否するため、GUIとエージェントが同じ文書を編集しても古い版へ上書きしません。版番号は応答の `revision` と `session.status` で確認でき、変更・取り消し・やり直しのたびに1増えます。`doc.save` はセッションの文書を保存し、`output` を省略すると開いたファイル（または前回の保存先）に上書きします。
 
