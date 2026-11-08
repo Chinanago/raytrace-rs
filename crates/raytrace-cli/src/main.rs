@@ -420,6 +420,7 @@ fn overview(list: &CommandList) -> String {
          raytrace-rs run REQUEST.json|-\n\
          raytrace-rs COMMAND --help\n\
          raytrace-rs --version\n\n\
+         mcp はAIエージェント向けのMCPサーバーを標準入出力で起動します（raytrace-rs mcp --help）。\n\
          COMMAND は <領域>.<動作> 形式のコマンドIDです。引数はコマンドのパラメーターをそのまま指定します（a.b=文字列、a.b:=数値や真偽値などのJSON、a.b:=@ファイル）。\n\
          run はJSONリクエスト {\"command\": ID, ...} を実行し、- は標準入力から複数のリクエストを続けて読みます。run の中のリクエストは1つのセッションを共有するため、doc.open で開いた文書を doc.set で編集して analysis.trace で追跡できます。\n\
          文書を使うコマンドは model を省略するとセッションの文書を使います。コマンドラインの1回の呼び出しは新しいセッションなので、model を指定します。\n\
@@ -437,8 +438,33 @@ fn overview(list: &CommandList) -> String {
     out
 }
 
+/// `mcp`: serve the MCP protocol on stdin and stdout. The server writes to stdout from its own
+/// threads, so `main` must not hold the stdout lock in this mode.
+fn mcp(args: &[String]) -> i32 {
+    match args {
+        [] => match raytrace_mcp::serve_stdio() {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("エラー: MCPサーバーの入出力に失敗しました: {e}");
+                1
+            }
+        },
+        [flag] if flag == "--help" || flag == "-h" => {
+            println!("{}", raytrace_mcp::USAGE);
+            0
+        }
+        _ => {
+            eprintln!("エラー: mcp は引数を取りません（raytrace-rs mcp --help）");
+            1
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
+    if args.first().map(String::as_str) == Some("mcp") {
+        std::process::exit(mcp(&args[1..]));
+    }
     let mut stdout = std::io::stdout().lock();
     let ok = match args.first().map(String::as_str) {
         None | Some("--help" | "-h" | "help") => match command_list() {
