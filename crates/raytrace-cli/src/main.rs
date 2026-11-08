@@ -5,6 +5,7 @@ use raytrace_core::trace::{TraceOptions, trace, trace_generated};
 use raytrace_io::record::{LaunchInput, RUN_FORMAT, RunContext, RunRecord};
 use raytrace_io::{project::Project, zemax};
 use serde::Serialize;
+use serde_json::{Value, json};
 use std::{env, error::Error, fs, path::PathBuf, time::Instant};
 
 const HELP: &str = "raytrace-rs MODEL.json|MODEL.zmx [--output REPORT.json] [--rays-csv INPUT.csv]\n\
@@ -16,6 +17,7 @@ const HELP: &str = "raytrace-rs MODEL.json|MODEL.zmx [--output REPORT.json] [--r
     raytrace-rs --convergence MODEL [--plan PLAN.json] [--output DIRECTORY]\n\
     raytrace-rs --scan MODEL [--plan PLAN.json] [--output DIRECTORY]\n\
     raytrace-rs --resume-scan DIRECTORY\n\
+共通: --json で標準出力を1行のJSON概要にします（成功時 \"ok\": true、失敗時 \"ok\": false と \"error\"）。\n\
 光線CSVヘッダー: id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium\n\
 単位: mm、um、任意の光量重み。発射光線の重み合計を100%の基準とします。\n\
 シーケンシャルは透過光と指定したミラーを追跡し、全反射で光線を終了します。非シーケンシャルは反射光と透過光に分岐します。\n\
@@ -92,15 +94,23 @@ struct Benchmark {
     timed_scope: &'static str,
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
-    let mut args: Vec<_> = env::args().skip(1).collect();
+/// Runs one CLI command and returns its machine-readable summary.
+/// Human-readable progress is printed only when `json` is false.
+fn run(mut args: Vec<String>, json: bool) -> Result<Value, Box<dyn Error>> {
+    let say = |line: String| {
+        if !json {
+            println!("{line}");
+        }
+    };
     if args.first().is_some_and(|a| a == "--version" || a == "-V") {
-        println!("raytrace-rs {}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
+        say(format!("raytrace-rs {}", env!("CARGO_PKG_VERSION")));
+        return Ok(
+            json!({ "ok": true, "command": "version", "version": env!("CARGO_PKG_VERSION") }),
+        );
     }
     if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
-        println!("{HELP}");
-        return Ok(());
+        say(HELP.to_string());
+        return Ok(json!({ "ok": true, "command": "help", "help": HELP }));
     }
     if args[0] == "--convergence" {
         let model = args.get(1).ok_or("収束確認のモデルを指定してください")?;
@@ -120,19 +130,24 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
         let report = raytrace_app::convergence::run(std::path::Path::new(model), &plan, &output)?;
         let failures = report.cases.iter().filter(|c| c.error.is_some()).count();
-        println!(
+        let summary_path = output.join("convergence.json");
+        say(format!(
             "収束確認: {}ケース、{}比較、{}失敗; {}",
             report.cases.len(),
             report.comparisons.len(),
             failures,
-            output.join("convergence.json").display()
-        );
+            summary_path.display()
+        ));
+        let mut summary = json!({
+            "ok": failures == 0, "command": "convergence", "output": summary_path,
+            "cases": report.cases.len(), "comparisons": report.comparisons.len(),
+            "failed": failures,
+        });
         if failures > 0 {
-            return Err(
-                "収束確認で失敗したケースがあります。保存した概要を確認してください".into(),
-            );
+            summary["error"] =
+                "収束確認で失敗したケースがあります。保存した概要を確認してください".into();
         }
-        return Ok(());
+        return Ok(summary);
     }
     if args[0] == "--scan" || args[0] == "--resume-scan" {
         use raytrace_app::scan::{ScanManifest, ScanPlan};
@@ -173,13 +188,25 @@ fn run() -> Result<(), Box<dyn Error>> {
                 .iter()
                 .filter(|c| c.state == "completed" || c.state == "failed")
                 .count();
-            println!("走査: {completed}/{}ケース", m.cases.len());
+            if json {
+                eprintln!("走査: {completed}/{}ケース", m.cases.len());
+            } else {
+                println!("走査: {completed}/{}ケース", m.cases.len());
+            }
         })?;
-        println!("走査を保存しました: {}", output.join("scan.json").display());
-        if manifest.cases.iter().any(|c| c.state == "failed") {
-            return Err("走査で失敗したケースがあります。scan.jsonを確認してください".into());
+        let summary_path = output.join("scan.json");
+        say(format!("走査を保存しました: {}", summary_path.display()));
+        let count = |state: &str| manifest.cases.iter().filter(|c| c.state == state).count();
+        let failed = count("failed");
+        let mut summary = json!({
+            "ok": failed == 0, "command": args[0].trim_start_matches("--"),
+            "output": summary_path, "cases": manifest.cases.len(),
+            "completed": count("completed"), "failed": failed,
+        });
+        if failed > 0 {
+            summary["error"] = "走査で失敗したケースがあります。scan.jsonを確認してください".into();
         }
-        return Ok(());
+        return Ok(summary);
     }
     let replay = if args[0] == "--replay" {
         args.remove(0);
@@ -321,31 +348,37 @@ fn run() -> Result<(), Box<dyn Error>> {
     if let Some(w) = wavelength {
         project.monochromatic_override_um = Some(w);
     }
-    if let Some(path) = export_zmx {
-        zemax::export(&project, &path)?;
+    if let Some(path) = &export_zmx {
+        zemax::export(&project, path)?;
     }
     if inspect {
         if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
             fs::create_dir_all(parent)?;
         }
         project.save(&output)?;
-        println!(
+        say(format!(
             "読込結果: 光源{}個、面{}個、材料{}個",
             project.scene.sources.len(),
             project.scene.surfaces.len(),
             project.scene.materials.len()
-        );
-        for component in project.compatibility_report().components {
-            println!(
+        ));
+        let compatibility = project.compatibility_report();
+        for component in &compatibility.components {
+            say(format!(
                 "{}{}",
                 component.name,
                 if component.enabled { "" } else { " [無効]" }
-            );
-            for entry in component.entries {
-                println!("  {}: {}", entry.status.label(), entry.message);
+            ));
+            for entry in &component.entries {
+                say(format!("  {}: {}", entry.status.label(), entry.message));
             }
         }
-        return Ok(());
+        return Ok(json!({
+            "ok": true, "command": "inspect", "output": output, "exported_zmx": export_zmx,
+            "sources": project.scene.sources.len(), "surfaces": project.scene.surfaces.len(),
+            "materials": project.scene.materials.len(), "traceable": compatibility.traceable,
+            "compatibility": compatibility,
+        }));
     }
     let mut spec: Scene = match &replay {
         Some(r) => r.calculation.scene.clone(),
@@ -447,25 +480,25 @@ fn run() -> Result<(), Box<dyn Error>> {
     };
     let reference = report.budget.launched;
     let raw = serde_json::to_value(&report.budget)?;
-    let percentages: serde_json::Map<String, serde_json::Value> = raw
+    let percentages: serde_json::Map<String, Value> = raw
         .as_object()
         .unwrap()
         .iter()
         .map(|(key, value)| {
             (
                 key.clone(),
-                serde_json::json!(100.0 * value.as_f64().unwrap() / reference),
+                json!(100.0 * value.as_f64().unwrap() / reference),
             )
         })
         .collect();
     let closure = (report.budget.accounted() - reference) / reference;
-    let detector_percentages: serde_json::Map<String, serde_json::Value> = report
+    let detector_percentages: serde_json::Map<String, Value> = report
         .detectors
         .iter()
         .map(|d| {
             (
                 d.name.clone(),
-                serde_json::json!(100.0 * d.weights.iter().sum::<f64>() / reference),
+                json!(100.0 * d.weights.iter().sum::<f64>() / reference),
             )
         })
         .collect();
@@ -473,7 +506,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         .surfaces
         .iter()
         .map(|s| {
-            serde_json::json!({
+            json!({
                 "name": s.name, "incident": 100.0*s.incident_weight/reference,
                 "transmitted": 100.0*s.transmitted_weight/reference,
                 "reflected": 100.0*s.reflected_weight/reference,
@@ -490,11 +523,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         pool.current_num_threads(),
         options,
     );
-    let result = serde_json::json!({
+    let result = json!({
         "format": RUN_FORMAT, "calculation": calculation, "trace_seconds": median,
         "schema_version": 2, "scene": scene.spec, "reference_weight": reference,
-        "budget_percent_of_reference": percentages,
-        "detector_percent_of_reference": detector_percentages,
+        "budget_percent_of_reference": percentages.clone(),
+        "detector_percent_of_reference": detector_percentages.clone(),
         "surface_encounter_percent_of_reference": surface_percentages,
         "relative_budget_closure_error": closure, "benchmark": benchmark, "report": report,
     });
@@ -502,38 +535,59 @@ fn run() -> Result<(), Box<dyn Error>> {
         fs::create_dir_all(parent)?;
     }
     fs::write(&output, serde_json::to_vec_pretty(&result)?)?;
-    println!("基準: {} = 100%", scene.spec.reference_plane);
-    println!(
+    let detected_percent =
+        100.0 * result["report"]["budget"]["detected"].as_f64().unwrap() / reference;
+    say(format!("基準: {} = 100%", scene.spec.reference_plane));
+    say(format!(
         "発射光線数: {}; 検出光量: {:.6}%",
-        input_count,
-        100.0 * result["report"]["budget"]["detected"].as_f64().unwrap() / reference
-    );
-    println!(
+        input_count, detected_percent
+    ));
+    say(format!(
         "追跡時間の中央値: {:.3} ms; {:.3}百万光線/秒; {}スレッド",
         median * 1000.0,
         input_count as f64 / median / 1e6,
         pool.current_num_threads()
-    );
-    println!(
+    ));
+    say(format!(
         "光量収支の誤差: {:.3e}; レポート: {}",
         closure,
         output.display()
-    );
+    ));
     let budget = &result["report"]["budget"];
+    let mut warnings = Vec::new();
     if ["numerical_failure", "medium_mismatch", "interaction_limit"]
         .iter()
         .any(|key| budget[key].as_f64().unwrap() > 0.0)
     {
-        eprintln!(
-            "未解決の光線重みがあります。保存したレポートのnumerical_failure・medium_mismatch・interaction_limitを確認してください。"
-        );
+        let warning = "未解決の光線重みがあります。保存したレポートのnumerical_failure・medium_mismatch・interaction_limitを確認してください。";
+        eprintln!("{warning}");
+        warnings.push(warning);
     }
-    Ok(())
+    Ok(json!({
+        "ok": true, "command": if replay.is_some() { "replay" } else { "trace" },
+        "output": output, "format": RUN_FORMAT, "schema_version": 2,
+        "reference_plane": scene.spec.reference_plane, "launched_rays": input_count,
+        "detected_percent_of_reference": detected_percent,
+        "budget_percent_of_reference": percentages,
+        "detector_percent_of_reference": detector_percentages,
+        "relative_budget_closure_error": closure, "median_seconds": median,
+        "worker_threads": pool.current_num_threads(), "warnings": warnings,
+    }))
 }
 
 fn main() {
-    if let Err(error) = run() {
+    let mut args: Vec<String> = env::args().skip(1).collect();
+    let json = args.iter().any(|a| a == "--json");
+    args.retain(|a| a != "--json");
+    let summary =
+        run(args, json).unwrap_or_else(|error| json!({ "ok": false, "error": error.to_string() }));
+    if json {
+        println!("{summary}");
+    }
+    if let Some(error) = summary["error"].as_str() {
         eprintln!("エラー: {error}");
+    }
+    if summary["ok"] != true {
         std::process::exit(1);
     }
 }

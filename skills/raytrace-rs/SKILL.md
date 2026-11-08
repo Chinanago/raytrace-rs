@@ -16,6 +16,7 @@ The CLI runs models and writes calculation records. The GUI provides component p
 
 ## Load and calculate
 
+- If `--help` lists `--json`, add it to every command: stdout becomes one JSON line with `ok`, `command`, `output` (the saved file) and key results, or `ok: false` with `error` and exit code 1. Read details from the `output` file.
 - Load `.zmx` or project JSON. `--inspect` imports and saves without tracing, and prints a compatibility report distinguishing used definitions, preserved-only data, required conditions and unsupported entries. Trace compatibility depends on those entries, even if parsing succeeds.
 - ZMX imports resolve AGF materials and referenced STEP geometry. The workflow reference describes their search locations. Import diagnostics identify missing dependencies and unsupported definitions.
 - Sequential mode follows the prescribed surface order, transmission and explicit mirrors; TIR terminates the ray. Non-sequential mode follows nearest hits and splits Fresnel reflection/transmission branches. Assembly projects use non-sequential tracing.

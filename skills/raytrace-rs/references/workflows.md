@@ -6,6 +6,19 @@
 2. Otherwise check `raytrace-rs` on PATH, an extracted Windows package, or the current raytrace-rs source checkout. The release CLI is `raytrace-rs.exe`; a Windows source build places it in `target/release`. The GUI is `raytrace-gui.exe`.
 3. Check `--version` and `--help` before using version-specific arguments. The skill directory and application checkout can be separate.
 
+## Machine-readable output
+
+Builds whose `--help` lists `--json` accept it with every command. stdout then holds exactly one JSON line; human messages and scan progress go to stderr.
+
+| Command | Summary fields besides `ok`, `command`, `output` |
+|---|---|
+| trace / `--replay` | `launched_rays`, `reference_plane`, `detected_percent_of_reference`, `budget_percent_of_reference`, `detector_percent_of_reference`, `relative_budget_closure_error`, `median_seconds`, `worker_threads`, `warnings` |
+| `--inspect` | `traceable`, `sources`, `surfaces`, `materials`, `compatibility` (the full compatibility report), `exported_zmx` |
+| `--scan` / `--resume-scan` | `cases`, `completed`, `failed` |
+| `--convergence` | `cases`, `comparisons`, `failed` |
+
+Failures print `{"ok": false, "error": "..."}` and exit with code 1. Without `--json` (v0.11.0 and earlier), parse the saved `--output` file instead of stdout.
+
 Upstream: [source](https://github.com/Chinanago/raytrace-rs), [Windows releases](https://github.com/Chinanago/raytrace-rs/releases).
 
 The baseline below is **v0.11.0**. For another installed version, use its matching documentation:
