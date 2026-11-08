@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "raytrace-rs": {
+      "command": "raytrace-rs",
+      "args": ["mcp"]
+    }
+  }
+}

@@ -9,7 +9,7 @@
     {
       "name": "raytrace-rs",
       "source": "./",
-      "description": "Load ZMX/JSON optical models, trace them with the raytrace-rs CLI and read the JSON results",
+      "description": "Load ZMX/JSON optical models, trace them with the raytrace-rs CLI or its MCP server (raytrace-rs mcp) and read the JSON results",
       "license": "MIT",
       "homepage": "https://github.com/Chinanago/raytrace-rs",
       "repository": "https://github.com/Chinanago/raytrace-rs",

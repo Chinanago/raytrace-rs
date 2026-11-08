@@ -41,6 +41,7 @@ __pycache__/
 !/tests/fixtures/step_legacy_hits.json
 !/schemas/*.schema.json
 !/.claude-plugin/marketplace.json
+!/.mcp.json
 *.csv
 *.npz
 *.npy
