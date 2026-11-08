@@ -30,9 +30,13 @@ LinuxのクラウドサンドボックスではGUIを除く次のセットを使
 ```bash
 cargo build --locked -p raytrace-cli
 cargo fmt --all --check
-cargo clippy --locked -p raytrace-core -p raytrace-formats -p raytrace-io -p raytrace-app -p raytrace-cli -p raytrace-rs --all-features --all-targets -- -D warnings
-cargo test --locked -p raytrace-core -p raytrace-formats -p raytrace-io -p raytrace-app -p raytrace-cli -p raytrace-rs --all-features
+cargo clippy --locked -p raytrace-core -p raytrace-formats -p raytrace-io -p raytrace-app -p raytrace-cli -p raytrace-rs -p xtask --all-features --all-targets -- -D warnings
+cargo test --locked -p raytrace-core -p raytrace-formats -p raytrace-io -p raytrace-app -p raytrace-cli -p raytrace-rs -p xtask --all-features
+cargo xtask layers   # 層の順序、GUI依存の隔離、計算核の純粋さ（docs/DESIGN.md 4章）
+cargo xtask wasm     # L0〜L4のWASMビルド（要 rustup target add wasm32-unknown-unknown）
 ```
+
+新しいクレートを足すときは `xtask/src/main.rs` の `LAYERS` と `docs/DESIGN.md` の4章に層を書き加えます。
 
 単一テストは `cargo test --locked -p raytrace-rs --test engine <テスト名>` のように実行します。GUIはLinuxでビルドできませんが、型検査とClippyはWindowsターゲットで実行できます（GUIのテストはWindows CIで実行）。
 

@@ -23,7 +23,7 @@ FILES = {
     "scripts/check_publish.py", "scripts/zemax_exchange_probe.py",
     "scripts/opticstudio_nsc_probe.py", "examples/nsc_reference.rs",
     "scripts/benchmark_compare.py",
-    "AGENTS.md", "CLAUDE.md", ".claude-plugin/marketplace.json",
+    "AGENTS.md", "CLAUDE.md", ".claude-plugin/marketplace.json", ".cargo/config.toml", "xtask/Cargo.toml",
     "skills/raytrace-rs/SKILL.md", "skills/raytrace-rs/LICENSE",
     "skills/raytrace-rs/agents/openai.yaml", "skills/raytrace-rs/references/workflows.md",
 }
@@ -64,7 +64,7 @@ def main():
         mode, _, stage = metadata.split()
         path = name.decode("utf-8")
         part = PurePosixPath(path)
-        source = part.suffix == ".rs" and part.parts[0] in {"src", "tests"}
+        source = part.suffix == ".rs" and part.parts[0] in {"src", "tests", "xtask"}
         source = source or (
             len(part.parts) >= 3
             and part.parts[0] == "crates"

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/raytrace-core", "crates/raytrace-formats", "crates/raytrace-io", "crates/raytrace-app", "crates/raytrace-cli", "crates/raytrace-gui"]
+members = ["crates/raytrace-core", "crates/raytrace-formats", "crates/raytrace-io", "crates/raytrace-app", "crates/raytrace-cli", "crates/raytrace-gui", "xtask"]
 resolver = "2"
 
 [workspace.package]

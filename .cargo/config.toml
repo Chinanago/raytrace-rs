@@ -1,0 +1,3 @@
+[alias]
+# Development checks: `cargo xtask layers`, `cargo xtask wasm` (see docs/DESIGN.md §4).
+xtask = "run --quiet --package xtask --"
