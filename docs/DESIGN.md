@@ -178,20 +178,31 @@ Design（文書）
 | 発見 | `command.list` と `command.describe` で、コマンドの一覧とスキーマを問い合わせられる |
 | 対話 | プログラムからの呼び出しはダイアログを開かない |
 
-### 最初のコマンド体系（案）
+### コマンド体系（段階3で確定）
 
-| 領域 | コマンド |
+| 領域 | コマンド | 種類 |
+|---|---|---|
+| `app` | `version` | 問い合わせ |
+| `command` | `list`、`describe` | 問い合わせ |
+| `schema` | `get`（`name` のスキーマを返す、`output` で書き出す） | 問い合わせ |
+| `doc` | `new`、`open`（ZMX・設計JSON・光学系JSONを開いてセッションの文書にする）、`save`、`get`（文書を返す）、`inspect`（互換性レポート）、`export_zmx` | 変更・問い合わせ |
+| `doc` | `set`（文書の1か所を書き換える）、`replace`（文書全体を置き換える） | 変更 |
+| `component` | `add`（ファイルの取り込み、ロッド、スクリーン）、`remove`、`duplicate` | 変更 |
+| `analysis` | `trace` | 問い合わせ（長い計算） |
+| `study` | `scan`、`resume`、`convergence`、`open` | 長い計算・問い合わせ |
+| `run` | `open`、`replay`、`save`、`export_screen` | 問い合わせ・長い計算 |
+| `session` | `undo`、`redo`、`status` | 変更・問い合わせ |
+
+| 項目 | 決定 |
 |---|---|
-| `doc` | `new`、`open`、`save`、`import`（ZMX・STEP）、`export`（ZMX）、`get` |
-| `component` | `add`、`remove`、`set`（寸法・材料など）、`place`（配置・変換）、`enable` |
-| `source`・`detector` | `set` |
-| `analysis` | `trace`、`budget`、`screen`（分布・断面・半値幅・ROI）、`compatibility` |
-| `study` | `scan`、`resume`、`convergence` |
-| `run` | `replay`、`open`、`save`、`export_screen` |
-| `session` | `undo`、`redo`、`status`、`job.status`、`job.cancel` |
-| `command` | `list`、`describe` |
-
-現在の `engine::Request` のコマンドは、この体系へ名前を変えて移します。
+| 編集の汎用コマンド | `doc.set {path, value}` は文書の1か所をJSON Pointerで指定して書き換える。配列の要素は添字のほか `@<ID>`（`/occurrences/@rod-4/pose/translation_mm/2`）で指定できる。書き換え後の文書をスキーマどおりに読み直し、展開できることを確かめてから確定する。こうすると、文書のスキーマに載っている項目はすべて、専用コマンドを足さずに編集できる |
+| 構造の変更 | 部品の追加・削除・複製のように、IDの払い出しや関連の整理が要る操作は専用コマンドにする |
+| 一回限りの呼び出し | 文書を使うコマンドは `model`（パス・設計・光学系）を省略できる。省略するとセッションの文書を使う。CLIは呼び出しごとに新しいセッションを作るので、従来どおり `model` を渡す |
+| 取り消し | 変更コマンドの前に文書を丸ごと保持する（文書は共有参照で持つので複製は安い）。失敗した変更は文書も履歴も変えない |
+| 版番号 | 変更が確定するたびに1増える。変更コマンドは `expected_revision` を受け付け、一致しなければ `revision` エラーで拒否する。応答に現在の版番号を含める |
+| ジョブ | 段階3では、長い計算は呼び出し側のスレッドで同期的に実行し、中止と進捗は制御オブジェクトで渡す（GUIは作業スレッドから呼ぶ）。IDで扱う非同期ジョブはMCP（段階5）で必要になった時点で入れる |
+| スキーマ | 各コマンドは入力と出力のスキーマを持つ。`schema name=request` はコマンド登録から生成する（`command` で分岐し、各コマンドの入力を並べる） |
+| クレート | `raytrace-app` を `raytrace-engine` に改名し、セッションとコマンド登録を置く |
 
 ## 8. 計算パイプライン
 
