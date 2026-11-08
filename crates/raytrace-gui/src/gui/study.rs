@@ -181,14 +181,13 @@ impl App {
     }
     pub(super) fn configure_study(&mut self) {
         let parameter =
-            if self.design.is_assembly() {
-                self.design
-                    .occurrences
-                    .get(self.component)
-                    .map(|o| Parameter::ComponentPosition {
+            if self.design().is_assembly() {
+                self.design().occurrences.get(self.component).map(|o| {
+                    Parameter::ComponentPosition {
                         occurrence: o.id.clone(),
                         axis: 2,
-                    })
+                    }
+                })
             } else {
                 self.compiled.scene.surfaces.get(self.selected).map(|s| {
                     Parameter::SurfacePosition {
@@ -205,7 +204,7 @@ impl App {
         self.study.rays = self.preview_limit.unwrap_or(256);
     }
     fn set_study_parameter(&mut self, parameter: Parameter) {
-        let value = parameter.value(&self.design).unwrap_or(0.55) * scale(&parameter);
+        let value = parameter.value(self.design()).unwrap_or(0.55) * scale(&parameter);
         let spread = if parameter == Parameter::Wavelength {
             20.0
         } else if matches!(parameter, Parameter::RodSize { .. }) {
@@ -226,7 +225,7 @@ impl App {
         }
     }
     fn launch_study(&mut self, ctx: &egui::Context, resume: bool) {
-        self.commit_edit();
+        self.end_gesture();
         let prepared = (|| -> Result<(StudyJob, PathBuf), String> {
             if resume {
                 self.study
@@ -295,7 +294,7 @@ impl App {
                 return Err("同名の走査記録があります。新しい保存先を指定してください".into());
             }
             let request = StudyJob::Scan(Box::new(ScanRequest {
-                model: Some(ModelInput::Design(Box::new(self.design.clone()))),
+                model: Some(ModelInput::Design(Box::new(self.design().clone()))),
                 catalogs: Vec::new(),
                 plan,
                 output: dir.clone(),
@@ -348,12 +347,8 @@ impl App {
         });
     }
     pub(super) fn adopt_record(&mut self, record: RunRecord) {
-        self.commit_edit();
-        self.viewing_explicit_record = matches!(
-            record.calculation.input,
-            raytrace_io::record::LaunchInput::Explicit { .. }
-        );
-        self.design = record.calculation.design.clone();
+        self.end_gesture();
+        let mut design = record.calculation.design.clone();
         let mut sources = record.calculation.scene.sources.iter();
         let copy = |s: &mut Source, actual: &Source| {
             s.count = actual.count;
@@ -362,12 +357,12 @@ impl App {
             s.wavelength_um = actual.wavelength_um;
             s.total_weight = actual.total_weight;
         };
-        if self.design.is_assembly() {
-            for i in 0..self.design.occurrences.len() {
-                if !self.design.occurrences[i].enabled {
+        if design.is_assembly() {
+            for i in 0..design.occurrences.len() {
+                if !design.occurrences[i].enabled {
                     continue;
                 }
-                if let Some(part) = self.design.occurrence_part_mut(i) {
+                if let Some(part) = design.occurrence_part_mut(i) {
                     for s in &mut part.scene.sources {
                         if let Some(actual) = sources.next() {
                             copy(s, actual);
@@ -375,30 +370,34 @@ impl App {
                     }
                 }
             }
-        } else if let Some(part) = self.design.lone_system_mut() {
+        } else if let Some(part) = design.lone_system_mut() {
             for s in &mut part.scene.sources {
                 if let Some(actual) = sources.next() {
                     copy(s, actual);
                 }
             }
         }
-        match self.design.compile() {
-            Ok(compiled) => self.compiled = compiled,
-            Err(error) => {
-                self.error = Some(error.to_string());
-                return;
-            }
+        // The record's document starts a new history; a document that does not compile is
+        // refused by the session and reported.
+        if !self.start_document(Some(design)) {
+            return;
         }
+        self.viewing_explicit_record = matches!(
+            record.calculation.input,
+            raytrace_io::record::LaunchInput::Explicit { .. }
+        );
         self.preview_limit = None;
         self.component = 0;
         self.selected = 0;
         self.source = 0;
         self.detector = 0;
-        self.reset_history(true);
-        self.dirty = false;
         self.camera = LayoutCamera::default();
+        let Some(design) = self.session.design().cloned() else {
+            return;
+        };
         self.result = Some(ResultView {
-            revision: self.history.revision,
+            design,
+            preview_limit: None,
             scene: record.calculation.scene.clone(),
             calculation: record.calculation,
             report: record.report,
@@ -407,7 +406,6 @@ impl App {
             screen: None,
             roi_cache: None,
         });
-        self.stale = false;
         self.view = View::Screen;
         self.status = "保存された計算結果を表示しています".into();
         self.remember_path();
@@ -431,10 +429,11 @@ mod tests {
         let mut app = App::demo();
         let ctx = egui::Context::default();
         install(&ctx);
-        for s in &mut app.design.occurrence_part_mut(0).unwrap().scene.sources {
-            s.count = 2_000_000;
-        }
-        app.recompile();
+        test_support::set_document(&mut app, |design| {
+            for s in &mut design.occurrence_part_mut(0).unwrap().scene.sources {
+                s.count = 2_000_000;
+            }
+        });
         app.run(&ctx);
         let deadline = Instant::now() + Duration::from_secs(5);
         while app.job.is_some() {
@@ -448,10 +447,11 @@ mod tests {
                 .is_some_and(|e| e.contains("合計1〜2,000,000"))
         );
         app.error = None;
-        for s in &mut app.design.occurrence_part_mut(0).unwrap().scene.sources {
-            s.count = 32;
-        }
-        app.recompile();
+        test_support::set_document(&mut app, |design| {
+            for s in &mut design.occurrence_part_mut(0).unwrap().scene.sources {
+                s.count = 32;
+            }
+        });
         app.run(&ctx);
         app.control
             .as_ref()
@@ -507,8 +507,8 @@ mod tests {
         );
         assert!(!r.report.paths.is_empty());
         assert_eq!(r.calculation.input_count(), 64);
-        assert_eq!(app.design.occurrences[2].pose.translation_mm.0[2], 68.0);
-        assert!(!app.stale);
+        assert_eq!(app.design().occurrences[2].pose.translation_mm.0[2], 68.0);
+        assert!(!app.is_stale());
         assert_eq!(app.view, View::Screen);
         app.study.pair = [0, 2];
         app.load_comparison(&ctx);

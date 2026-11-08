@@ -1,4 +1,5 @@
 use super::*;
+use crate::gui::edit::current;
 
 impl App {
     pub(in crate::gui) fn study_window(&mut self, ctx: &egui::Context) {
@@ -41,17 +42,15 @@ impl App {
                     .show(ui, |ui| {
                         ui.add_enabled_ui(self.job.is_none(), |ui| {
                             let old = self.study.parameter.clone();
-                            let options = parameters(&self.design);
+                            let options = parameters(current(&self.session));
                             egui::ComboBox::from_id_salt("scan_parameter")
                                 .width(410.0)
-                                .selected_text(
-                                    old.as_ref().map_or("対象を選択".into(), |p| {
-                                        p.label(&self.design)
-                                    }),
-                                )
+                                .selected_text(old.as_ref().map_or("対象を選択".into(), |p| {
+                                    p.label(current(&self.session))
+                                }))
                                 .show_ui(ui, |ui| {
                                     for p in options {
-                                        let label = p.label(&self.design);
+                                        let label = p.label(current(&self.session));
                                         ui.selectable_value(
                                             &mut self.study.parameter,
                                             Some(p),
@@ -86,7 +85,7 @@ impl App {
                                 });
                             }
                             egui::CollapsingHeader::new("2軸の走査・値の連動").show(ui, |ui| {
-                                let options = parameters(&self.design);
+                                let options = parameters(current(&self.session));
                                 let mut enabled = self.study.secondary.is_some();
                                 if checkbox(ui, &mut enabled, "第2軸を追加").changed() {
                                     self.study.secondary = if enabled {
@@ -100,7 +99,8 @@ impl App {
                                     if let Some(p) = &self.study.secondary {
                                         self.study.secondary_values = format!(
                                             "{:.6}",
-                                            p.value(&self.design).unwrap_or(0.) * scale(p)
+                                            p.value(current(&self.session)).unwrap_or(0.)
+                                                * scale(p)
                                         );
                                     }
                                 }
@@ -111,12 +111,13 @@ impl App {
                                         "secondary_axis",
                                         p,
                                         &options,
-                                        &self.design,
+                                        current(&self.session),
                                     );
                                     if *p != previous {
                                         self.study.secondary_values = format!(
                                             "{:.6}",
-                                            p.value(&self.design).unwrap_or(0.) * scale(p)
+                                            p.value(current(&self.session)).unwrap_or(0.)
+                                                * scale(p)
                                         );
                                     }
                                     ui.horizontal(|ui| {
@@ -135,7 +136,7 @@ impl App {
                                             "link_source",
                                             &mut l.source,
                                             &options,
-                                            &self.design,
+                                            current(&self.session),
                                         );
                                         ui.label("連動先");
                                         parameter_choice(
@@ -143,7 +144,7 @@ impl App {
                                             "link_target",
                                             &mut l.target,
                                             &options,
-                                            &self.design,
+                                            current(&self.session),
                                         );
                                         ui.horizontal(|ui| {
                                             ui.label("先 = 元 ×");
@@ -172,8 +173,8 @@ impl App {
                                         })
                                         .cloned()
                                 {
-                                    let offset = target.value(&self.design).unwrap_or(0.)
-                                        - source.value(&self.design).unwrap_or(0.);
+                                    let offset = target.value(current(&self.session)).unwrap_or(0.)
+                                        - source.value(current(&self.session)).unwrap_or(0.);
                                     self.study.links.push(ParameterLink {
                                         source,
                                         target,

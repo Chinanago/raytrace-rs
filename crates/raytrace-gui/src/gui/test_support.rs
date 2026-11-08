@@ -16,7 +16,7 @@ pub(super) fn frame(
     ctx: &egui::Context,
     events: Vec<egui::Event>,
 ) -> egui::FullOutput {
-    run_ui(
+    let output = run_ui(
         ctx,
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -33,7 +33,9 @@ pub(super) fn frame(
             app.content(ui);
             app.details_window(ui.ctx(), workspace);
         },
-    )
+    );
+    app.finish_frame(ctx);
+    output
 }
 
 pub(super) fn text_rect(output: &egui::FullOutput, text: &str) -> Option<egui::Rect> {
@@ -72,17 +74,26 @@ pub(super) fn click(app: &mut App, ctx: &egui::Context, p: Pos2) -> egui::FullOu
     )
 }
 
+/// Replace the document with an edited copy as a new document: no history, nothing unsaved.
+/// The tests use it to set up the document they then look at.
+pub(super) fn set_document(app: &mut App, edit: impl FnOnce(&mut Design)) {
+    let mut design = app.design().clone();
+    edit(&mut design);
+    assert!(app.start_document(Some(design)), "{:?}", app.error);
+}
+
 pub(super) fn calculate_demo(app: &mut App) {
     use raytrace_core::trace::{TraceOptions, trace};
-    let mut scene = app.design.trace_scene().unwrap();
+    let mut scene = app.design().trace_scene().unwrap();
     for source in &mut scene.sources {
         source.count = 64;
     }
     let prepared = scene.clone().prepare().unwrap();
     let rays = prepared.generate_rays().unwrap();
     app.result = Some(ResultView {
-        revision: app.history.revision,
-        calculation: RunContext::capture(&app.design, &scene, None, 1, TraceOptions::default()),
+        design: app.session.design().unwrap().clone(),
+        preview_limit: app.preview_limit,
+        calculation: RunContext::capture(app.design(), &scene, None, 1, TraceOptions::default()),
         scene,
         report: trace(&prepared, &rays, TraceOptions::default()),
         seconds: 0.0,

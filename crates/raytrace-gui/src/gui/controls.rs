@@ -1,3 +1,4 @@
+use super::edit::{Edits, current};
 use super::*;
 
 impl App {
@@ -12,7 +13,6 @@ impl App {
             });
             if old_preview != preview {
                 self.preview_limit = preview.then_some(256);
-                self.changed();
             }
             ui.label(
                 egui::RichText::new(
@@ -21,7 +21,8 @@ impl App {
                 .size(SIZE_BODY_LARGE)
                 .color(TEXT_MUTED),
             );
-            let mut changed = false;
+            let mut edits = Edits::default();
+            let design = current(&self.session);
             if let Some(first) = self.compiled.scene.sources.first() {
                 let mut count = first.count;
                 let mut sampling = first.sampling;
@@ -42,13 +43,11 @@ impl App {
                     )
                     .changed()
                 {
-                    edit_sources(&mut self.design, |s| s.count = count);
-                    changed = true;
+                    edits.extend(source_edits(design, Some(count), None));
                 }
                 ui.label("サンプリング");
                 if sampling_control(ui, &mut sampling) {
-                    edit_sources(&mut self.design, |s| s.sampling = sampling);
-                    changed = true;
+                    edits.extend(source_edits(design, None, Some(sampling)));
                 }
                 if mixed {
                     ui.label(
@@ -65,7 +64,7 @@ impl App {
                 );
             }
             section_label(ui, "追跡方式");
-            if self.design.is_assembly() {
+            if design.is_assembly() {
                 ui.label("非シーケンシャル");
                 ui.label(
                     egui::RichText::new("組立光学系は、光線が次に当たる部品を探索して追跡します。")
@@ -73,14 +72,17 @@ impl App {
                         .color(TEXT_MUTED),
                 );
             } else {
-                let mut mode = self.design.trace_mode();
+                let mut mode = design.trace_mode();
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut mode, Mode::Sequential, "シーケンシャル");
                     ui.selectable_value(&mut mode, Mode::NonSequential, "非シーケンシャル");
                 });
-                if mode != self.design.trace_mode() {
-                    self.design.set_trace_mode(mode);
-                    changed = true;
+                if mode != design.trace_mode() {
+                    // A single system keeps its mode in the part as well as in the design.
+                    if let Some(part) = design.lone_system() {
+                        edits.set(format!("/parts/@{}/scene/mode", part.id.as_str()), &mode);
+                    }
+                    edits.set("/mode", &mode);
                 }
             }
             ui.add_space(12.0);
@@ -91,20 +93,45 @@ impl App {
                 });
                 ui.horizontal(|ui| {
                     ui.label("最大相互作用回数");
-                    changed |= ui
+                    let mut depth = design.settings_ref().max_depth;
+                    if ui
                         .add(
-                            egui::DragValue::new(&mut self.design.settings_mut().max_depth)
+                            egui::DragValue::new(&mut depth)
                                 .range(1..=1000)
                                 .clamp_existing_to_range(false),
                         )
-                        .changed();
+                        .changed()
+                    {
+                        // The settings of a single system are those of its part.
+                        let settings = design.lone_system().map_or_else(
+                            || "/settings".to_string(),
+                            |part| format!("/parts/@{}/scene/settings", part.id.as_str()),
+                        );
+                        edits.set(format!("{settings}/max_depth"), &depth);
+                    }
                 });
             });
-            if changed {
-                self.refresh_components();
-            }
+            self.apply(edits);
         });
     }
+}
+
+/// The edits that give the sources of every part, disabled occurrences included, a ray
+/// count and/or a sampling. Sources that already have the value are left alone.
+fn source_edits(design: &Design, count: Option<usize>, sampling: Option<Sampling>) -> Edits {
+    let mut edits = Edits::default();
+    for part in &design.parts {
+        for (i, s) in part.scene.sources.iter().enumerate() {
+            let source = format!("/parts/@{}/scene/sources/{i}", part.id.as_str());
+            if let Some(count) = count.filter(|c| *c != s.count) {
+                edits.set(format!("{source}/count"), &count);
+            }
+            if let Some(sampling) = sampling.filter(|v| *v != s.sampling) {
+                edits.set(format!("{source}/sampling"), &sampling);
+            }
+        }
+    }
+    edits
 }
 
 pub(super) fn section_label(ui: &mut egui::Ui, label: &str) {
@@ -441,15 +468,6 @@ pub(super) fn source_controls(
     changed
 }
 
-/// Apply `edit` to the sources of every part, including those of disabled occurrences.
-fn edit_sources(design: &mut Design, edit: impl Fn(&mut Source)) {
-    for part in &mut design.parts {
-        for s in &mut part.scene.sources {
-            edit(s);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -468,10 +486,17 @@ mod tests {
         design.occurrences[0].pose.translation_mm = V3([2.0, -3.0, 8.0]);
         design.occurrences[0].pose.rotation_deg = V3([7.0, 19.0, 31.0]);
         let before = design.compile().unwrap().scene.sources;
-        edit_sources(&mut design, |s| {
-            s.count = 1024;
-            s.sampling = Sampling::Pseudorandom;
-        });
+        let mut app = App::with_design(design);
+        let mut edits = source_edits(app.design(), Some(1024), None);
+        edits.extend(source_edits(
+            app.design(),
+            None,
+            Some(Sampling::Pseudorandom),
+        ));
+        assert!(app.apply(edits));
+        // One gesture, one undo step, however many sources and values it touches.
+        assert_eq!(app.session.status().undo_depth, 1);
+        let design = app.design();
         let after = design.compile().unwrap().scene.sources;
         for (old, current) in before.iter().zip(&after) {
             assert_eq!(current.count, 1024);

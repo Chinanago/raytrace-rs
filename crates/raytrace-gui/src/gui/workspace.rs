@@ -8,7 +8,7 @@ impl App {
             .frame(egui::Frame::new().fill(BG_CANVAS).inner_margin(20.0))
             .show(ui, |ui| {
                 self.import_notification(ui);
-                if self.stale {
+                if self.is_stale() {
                     ui.horizontal(|ui| {
                         ui.colored_label(
                             WARNING,

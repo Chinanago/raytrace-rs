@@ -6,8 +6,12 @@ use raytrace_core::{
     screen::ScreenAnalysis,
     trace::{Report, TraceControl},
 };
+use raytrace_engine::{
+    Session, commands,
+    engine::{ComponentAddRequest, DocSetRequest},
+};
 use raytrace_io::{
-    design::{self, Compiled, Component, Design, PartKind},
+    design::{self, Compiled, Design, PartKind},
     record::RunContext,
 };
 use std::{
@@ -27,8 +31,8 @@ mod components;
 mod controls;
 mod detector;
 mod diagnostics;
+mod edit;
 mod files;
-mod history;
 mod jobs;
 mod layout;
 mod study;
@@ -97,7 +101,11 @@ impl ScreenDisplay {
 }
 
 struct ResultView {
-    revision: u64,
+    /// The document the result was calculated from. The result is current while the
+    /// session still holds this very value.
+    design: Arc<Design>,
+    /// The ray limit the calculation used.
+    preview_limit: Option<usize>,
     calculation: RunContext,
     scene: Scene,
     report: Report,
@@ -115,8 +123,10 @@ enum Job {
     Cancelled,
     Scanned(Result<Box<raytrace_engine::scan::ScanManifest>, String>),
     LoadedRun(Result<Box<raytrace_io::record::RunRecord>, String>),
-    Added(PartKind, Result<Box<Design>, String>),
-    Loaded(Result<Box<Design>, String>),
+    /// A copy of the session with the part added, and the group of the edit that adds it.
+    Added(PartKind, String, Result<Box<Session>, String>),
+    /// A session that opened the file.
+    Loaded(Result<Box<Session>, String>),
     Traced(Result<Box<ResultView>, String>),
 }
 struct App {
@@ -127,11 +137,17 @@ struct App {
     control: Option<Arc<TraceControl>>,
     study: study::Study,
     camera: LayoutCamera,
-    history: history::History,
-    /// The document. Edit it, then call `refresh_components` so that `compiled` follows.
-    design: Design,
-    /// The compiled design: flat scene, material names and issues.
+    /// The document, its undo history and its change log. Every edit is a command run on
+    /// it (see `edit.rs`); the GUI reads the document with `App::design`.
+    session: Session,
+    /// The compiled design: flat scene, material names and issues. Valid for the session
+    /// revision `compiled_revision`.
     compiled: Compiled,
+    compiled_revision: Option<u64>,
+    /// Numbers the editing gestures; changes of one gesture share a `group`.
+    gesture: u64,
+    gesture_used: bool,
+    selections: Vec<(std::sync::Weak<Design>, edit::Selection)>,
     path: Option<PathBuf>,
     loading_path: Option<PathBuf>,
     result: Option<ResultView>,
@@ -151,9 +167,7 @@ struct App {
     preview_limit: Option<usize>,
     status: String,
     error: Option<String>,
-    dirty: bool,
     last_window_title: Option<String>,
-    stale: bool,
     catalogs: Vec<PathBuf>,
     smoke: Option<PathBuf>,
     smoke_frames: usize,
@@ -170,6 +184,8 @@ impl App {
         app.study.root = raytrace_io::storage::data_dir().join("scans");
         let mut input = None;
         let mut study_input = None;
+        let mut allow_uncoated = false;
+        let mut wavelength_um = None;
         let mut i = 0;
         while i < args.len() {
             match args[i].as_str() {
@@ -228,16 +244,22 @@ impl App {
                     i += 1;
                     app.smoke = args.get(i).map(PathBuf::from);
                 }
-                "--allow-uncoated" => app.design.conditions.allow_uncoated = true,
+                "--allow-uncoated" => allow_uncoated = true,
                 "--wavelength-um" => {
                     i += 1;
-                    app.design.conditions.monochromatic_override_um =
-                        args.get(i).and_then(|s| s.parse().ok());
+                    wavelength_um = args.get(i).and_then(|s| s.parse().ok());
                 }
                 p if !p.starts_with('-') => input = Some(PathBuf::from(p)),
                 _ => (),
             }
             i += 1;
+        }
+        if allow_uncoated || wavelength_um.is_some() {
+            // The conditions belong to the starting document, which is not an edit of it.
+            let mut design = app.design().clone();
+            design.conditions.allow_uncoated |= allow_uncoated;
+            design.conditions.monochromatic_override_um = wavelength_um;
+            app.start_document(Some(design));
         }
         if let Some(dir) = study_input {
             app.study.open = true;
@@ -250,12 +272,9 @@ impl App {
         app
     }
     fn demo() -> Self {
-        let design = design::demo_design().expect("assembly demo");
-        let compiled = design.compile().unwrap_or_else(|_| Compiled {
-            scene: design::empty_scene(""),
-            material_names: Vec::new(),
-            issues: Vec::new(),
-        });
+        Self::with_design(design::demo_design().expect("assembly demo"))
+    }
+    fn with_design(design: Design) -> Self {
         let mut app = Self {
             viewing_explicit_record: false,
             data_directory: PathBuf::from("results/gui_runtime"),
@@ -264,9 +283,16 @@ impl App {
             control: None,
             study: study::Study::default(),
             camera: LayoutCamera::default(),
-            history: history::History::default(),
-            design,
-            compiled,
+            session: Session::new(),
+            compiled: Compiled {
+                scene: design::empty_scene(""),
+                material_names: Vec::new(),
+                issues: Vec::new(),
+            },
+            compiled_revision: None,
+            gesture: 0,
+            gesture_used: false,
+            selections: Vec::new(),
             path: None,
             loading_path: None,
             result: None,
@@ -286,37 +312,15 @@ impl App {
             preview_limit: None,
             status: "準備完了".into(),
             error: None,
-            dirty: false,
             last_window_title: None,
-            stale: false,
             catalogs: Vec::new(),
             smoke: None,
             smoke_frames: 0,
             smoke_ready_at: None,
             screenshot_requested: false,
         };
-        app.reset_history(true);
+        app.start_document(Some(design));
         app
-    }
-    fn changed(&mut self) {
-        self.history.begin();
-        self.dirty = true;
-        self.stale = self
-            .result
-            .as_ref()
-            .is_some_and(|r| r.revision != self.history.revision);
-    }
-    /// Compile the design again after an edit. A design that does not compile keeps the
-    /// previous result and reports the reason.
-    fn recompile(&mut self) {
-        match self.design.compile() {
-            Ok(compiled) => self.compiled = compiled,
-            Err(e) => self.error = Some(e.to_string()),
-        }
-    }
-    fn refresh_components(&mut self) {
-        self.recompile();
-        self.changed();
     }
     fn next_z(&self) -> f64 {
         let mut end = self
@@ -343,19 +347,41 @@ impl App {
         }
         end + 10.0
     }
-    fn append_component(&mut self, mut component: Component) {
-        if component.part.kind != PartKind::Source {
-            component.occurrence.pose.translation_mm.0[2] = self.next_z();
+    /// Add a rod or a screen to the document.
+    fn add_generated(&mut self, kind: PartKind) {
+        let z = self.next_z();
+        self.end_gesture();
+        let group = self.group();
+        let request = ComponentAddRequest {
+            kind: Some(kind),
+            group: Some(group.clone()),
+            ..ComponentAddRequest::default()
+        };
+        if let Some(added) = self.execute(commands::COMPONENT_ADD, request) {
+            self.place_added(&added.occurrence, kind, z, &group);
         }
-        match self.design.add_component(component) {
-            Ok(_) => {
-                self.component = self.design.occurrences.len().saturating_sub(1);
-                self.detector = 0;
-                self.refresh_components();
-                self.status = "部品を追加しました・位置を調整して計算してください".into();
-            }
-            Err(e) => self.error = Some(e.to_string()),
+        self.end_gesture();
+    }
+    /// Select the part that was just added, and put it behind the system unless it is a
+    /// source. The position joins the undo step of the addition.
+    fn place_added(&mut self, occurrence: &str, kind: PartKind, z: f64, group: &str) {
+        if kind != PartKind::Source {
+            let request = DocSetRequest {
+                path: format!("/occurrences/@{occurrence}/pose/translation_mm/2"),
+                value: serde_json::json!(z),
+                group: Some(group.to_string()),
+                expected_revision: None,
+            };
+            self.execute(commands::DOC_SET, request);
         }
+        self.component = self
+            .design()
+            .occurrences
+            .iter()
+            .position(|o| o.id.as_str() == occurrence)
+            .unwrap_or_else(|| self.design().occurrences.len().saturating_sub(1));
+        self.detector = 0;
+        self.status = "部品を追加しました・位置を調整して計算してください".into();
     }
     fn smoke(&mut self, ctx: &egui::Context) {
         let Some(dir) = &self.smoke else {
@@ -380,14 +406,14 @@ impl App {
             let _ = std::fs::create_dir_all(dir);
             let screen = self.result.as_ref().and_then(|r| r.screen.as_ref()).map(|a| serde_json::json!({"peak_weight":a.peak_weight,"peak_position_mm":a.peak_position_mm,"pixel_pitch_mm":a.pixel_pitch_mm,"fwhm_x_mm":a.x_profile.as_ref().and_then(|p|p.half_maximum.width_mm()),"fwhm_y_mm":a.y_profile.as_ref().and_then(|p|p.half_maximum.width_mm())}));
             let status = serde_json::json!({
-                "scene": self.design.display_name(),
+                "scene": self.design().display_name(),
                 "view": format!("{:?}", self.view),
                 "details": self.details.map(|d| format!("{d:?}")),
-                "components": self.design.is_assembly().then_some(self.design.occurrences.len()),
+                "components": self.design().is_assembly().then_some(self.design().occurrences.len()),
                 "sources": self.compiled.scene.sources.len(),
                 "surfaces": self.compiled.scene.surfaces.len(),
                 "issues": self.compiled.issues,
-                "compatibility": self.design.compatibility_report(),
+                "compatibility": self.design().compatibility_report(),
                 "error": self.error,
                 "trace_seconds": self.result.as_ref().map(|r| r.seconds),
                 "budget": self.result.as_ref().map(|r| &r.report.budget),
@@ -426,6 +452,7 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = &ui.ctx().clone();
         self.poll(ctx);
+        self.sync_compiled();
         if self.job.is_none()
             && self.result.is_some()
             && self.error.is_none()
@@ -498,9 +525,7 @@ impl eframe::App for App {
         if self.job.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
-        if !ctx.input(|i| i.pointer.any_down()) && !ctx.egui_wants_keyboard_input() {
-            self.commit_edit();
-        }
+        self.finish_frame(ctx);
         self.update_window_title(ctx);
         self.smoke(ctx);
         let dropped = ctx.input(|i| i.raw.dropped_files.first().map(|f| f.path().to_path_buf()));

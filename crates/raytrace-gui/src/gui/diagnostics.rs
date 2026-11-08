@@ -1,4 +1,5 @@
 use super::controls::{number_row, section_label};
+use super::edit::Edits;
 use super::*;
 
 impl App {
@@ -58,28 +59,31 @@ impl App {
 
     fn import_report(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         ui.add_enabled_ui(self.job.is_none(), |ui| {
-            let mut changed = false;
             section_label(ui, "計算に使う条件");
+            let mut edits = Edits::default();
             if self.compiled.issues.iter().any(|i| i.code == "coating") || self.compiled.scene.surfaces.iter().any(|s| s.coating.is_some()) {
-                changed |= checkbox(ui, &mut self.design.conditions.allow_uncoated, "未コートFresnelで計算").changed();
+                let mut allow = self.design().conditions.allow_uncoated;
+                if checkbox(ui, &mut allow, "未コートFresnelで計算").changed() {
+                    edits.set("/conditions/allow_uncoated", &allow);
+                }
                 ui.label(egui::RichText::new("元のコーティング名を保持し、界面の反射率は未コートとして計算します。").size(SIZE_CAPTION).color(TEXT_MUTED));
             }
-            let mut mono = self.design.conditions.monochromatic_override_um.is_some();
+            let mut mono = self.design().conditions.monochromatic_override_um.is_some();
             if checkbox(ui, &mut mono, "全光源の計算波長を単色で指定").changed() {
-                self.design.conditions.monochromatic_override_um = mono.then_some(0.465);
-                changed = true;
+                edits.set("/conditions/monochromatic_override_um", &mono.then_some(0.465));
             }
-            if let Some(value) = self.design.conditions.monochromatic_override_um.as_mut() {
-                let mut nm = *value * 1000.0;
+            self.apply(edits);
+            if let Some(value) = self.design().conditions.monochromatic_override_um {
+                let mut nm = value * 1000.0;
                 if number_row(ui, "計算波長", &mut nm, " nm", 1.0, 100.0..=20000.0) {
-                    *value = nm / 1000.0;
-                    changed = true;
+                    let mut edits = Edits::default();
+                    edits.set("/conditions/monochromatic_override_um", &(nm / 1000.0));
+                    self.apply(edits);
                 }
             }
-            if changed { self.changed(); }
             if let Some(r) = &self.result
                 && !r.calculation.pupils.is_empty() {
-                    egui::CollapsingHeader::new(if self.stale { "前回の計算結果の入射瞳" } else { "この計算結果の入射瞳" }).show(ui, |ui| {
+                    egui::CollapsingHeader::new(if self.is_stale() { "前回の計算結果の入射瞳" } else { "この計算結果の入射瞳" }).show(ui, |ui| {
                         for pupil in &r.calculation.pupils {
                             ui.label(format!("光源 {}", pupil.source_index + 1));
                             if let Some(g) = &pupil.geometry {
@@ -94,11 +98,11 @@ impl App {
                     });
                 }
             section_label(ui, "読込の確認");
-            let report = self.design.compatibility_report();
+            let report = self.design().compatibility_report();
             ui.label(egui::RichText::new(if report.traceable { "指定した条件で計算できます" } else { "計算前に確認が必要な項目があります" })
                 .color(if report.traceable { SUCCESS } else { WARNING }));
             for component in report.components {
-                let has_issues = component.entries.iter().any(|e| import_entry_needs_review(&self.design, &component, e));
+                let has_issues = component.entries.iter().any(|e| import_entry_needs_review(self.design(), &component, e));
                 ui.horizontal(|ui| {
                 egui::CollapsingHeader::new(format!("{}{}", component.name, if component.enabled { "" } else { "（使用停止）" }))
                     .id_salt(("compatibility", component.occurrence.clone())).default_open(has_issues).show(ui, |ui| {
@@ -138,7 +142,7 @@ impl App {
             ui.label("計算後に光量収支を表示します。");
             return;
         };
-        if self.stale {
+        if self.is_stale() {
             ui.colored_label(WARNING, "前回の計算結果");
         }
         let b = &r.report.budget;
@@ -263,7 +267,7 @@ impl App {
                 }
                 if ui
                     .add_enabled(
-                        !self.stale && d.surface.is_some(),
+                        !self.is_stale() && d.surface.is_some(),
                         egui::Button::new("配置で確認"),
                     )
                     .clicked()
@@ -288,7 +292,7 @@ impl App {
         if let Some(surface) = locate {
             self.details = None;
             self.view = View::Layout;
-            if self.design.is_assembly() {
+            if self.design().is_assembly() {
                 if let Some(index) = r.scene.surfaces[surface]
                     .name
                     .split(':')
@@ -342,7 +346,7 @@ fn import_entry_needs_review(
 
 impl App {
     pub(super) fn import_notification(&mut self, ui: &mut egui::Ui) {
-        let report = self.design.compatibility_report();
+        let report = self.design().compatibility_report();
         let entries: Vec<_> = report
             .components
             .iter()
@@ -350,7 +354,7 @@ impl App {
             .flat_map(|c| {
                 c.entries
                     .iter()
-                    .filter(|e| import_entry_needs_review(&self.design, c, e))
+                    .filter(|e| import_entry_needs_review(self.design(), c, e))
             })
             .collect();
         if !entries.is_empty() {
@@ -470,11 +474,13 @@ mod tests {
         assert!(text_rect(&out, "読込レポート").is_none());
         for blocking in [false, true] {
             app.details = None;
-            app.design.occurrence_part_mut(0).unwrap().issues = vec![design::Issue {
-                code: "unsupported_test".into(),
-                message: "読込の確認が必要です".into(),
-                blocking,
-            }];
+            set_document(&mut app, |design| {
+                design.occurrence_part_mut(0).unwrap().issues = vec![design::Issue {
+                    code: "unsupported_test".into(),
+                    message: "読込の確認が必要です".into(),
+                    blocking,
+                }];
+            });
             let out = frame(&mut app, &ctx, vec![]);
             assert!(text_rect(&out, "読込で確認が必要な項目が 1 件あります").is_some());
             let pos = text_rect(&out, "確認").unwrap().center();
@@ -500,12 +506,13 @@ mod tests {
         install(&ctx);
         ctx.style_mut_of(egui::Theme::Light, |s| s.animation_time = 0.0);
         let mut app = App::demo();
-        for source in &mut app.design.occurrence_part_mut(0).unwrap().scene.sources {
-            source.medium = 1;
-            source.count = 4;
-        }
-        app.recompile();
-        let scene = app.design.trace_scene().unwrap();
+        set_document(&mut app, |design| {
+            for source in &mut design.occurrence_part_mut(0).unwrap().scene.sources {
+                source.medium = 1;
+                source.count = 4;
+            }
+        });
+        let scene = app.design().trace_scene().unwrap();
         let prepared = scene.clone().prepare().unwrap();
         let rays = prepared.generate_rays().unwrap();
         let report = trace(&prepared, &rays, TraceOptions::default());
@@ -515,10 +522,17 @@ mod tests {
             display_percent(report.diagnostics[0].weight * 100.0 / report.budget.launched),
             scene.surfaces[report.diagnostics[0].surface.unwrap()].name
         );
-        let before = serde_json::to_value(&app.design).unwrap();
+        let before = serde_json::to_value(app.design()).unwrap();
         app.result = Some(ResultView {
-            revision: app.history.revision,
-            calculation: RunContext::capture(&app.design, &scene, None, 1, TraceOptions::default()),
+            design: app.session.design().unwrap().clone(),
+            preview_limit: app.preview_limit,
+            calculation: RunContext::capture(
+                app.design(),
+                &scene,
+                None,
+                1,
+                TraceOptions::default(),
+            ),
             scene,
             report,
             seconds: 0.1,
@@ -579,6 +593,6 @@ mod tests {
         assert_eq!(app.view, View::Layout);
         assert_eq!(app.component, 1);
         assert_eq!(app.details, None);
-        assert_eq!(before, serde_json::to_value(&app.design).unwrap());
+        assert_eq!(before, serde_json::to_value(app.design()).unwrap());
     }
 }

@@ -42,6 +42,7 @@ impl App {
     }
 
     pub(super) fn screen_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let stale = self.is_stale();
         let Some(r) = self.result.as_mut() else {
             ui.vertical_centered(|ui| {
                 ui.add_space(ui.available_height() * 0.35);
@@ -91,7 +92,7 @@ impl App {
             .show(ui, |ui| {
                 draw_detector(ui, ctx, r, self.detector, height, &mut self.screen_display);
                 ui.add_space(8.0);
-                if self.stale {
+                if stale {
                     ui.label(egui::RichText::new("前回の計算結果を表示中").color(TEXT_MUTED));
                 }
             });

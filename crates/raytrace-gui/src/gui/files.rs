@@ -1,9 +1,9 @@
 use super::*;
 use raytrace_engine::{
-    Session, commands,
+    commands,
     engine::{
-        DocOpenRequest, DocSaveRequest, EngineError, ExportZmxRequest, ModelInput, RunOpenRequest,
-        SaveRunRequest,
+        ComponentAddRequest, DocOpenRequest, DocSaveRequest, EngineError, ExportZmxRequest,
+        RunOpenRequest, SaveRunRequest,
     },
 };
 
@@ -52,10 +52,7 @@ impl App {
                             if let Some(control) = &self.control {
                                 control.cancel.store(true, Ordering::Relaxed);
                             } else {
-                                if self.viewing_explicit_record {
-                                    self.viewing_explicit_record = false;
-                                    self.changed();
-                                }
+                                self.viewing_explicit_record = false;
                                 self.run(ctx);
                             }
                         }
@@ -63,13 +60,13 @@ impl App {
                             self.details = Some(Details::Calculation);
                         }
                         ui.add_enabled_ui(self.job.is_none(), |ui| {
-                            if history_button(ui, self.history.can_redo(), "↷")
+                            if history_button(ui, self.can_redo(), "↷")
                                 .on_hover_text("やり直す (Ctrl+Y)")
                                 .clicked()
                             {
                                 self.redo();
                             }
-                            if history_button(ui, self.history.can_undo(), "↶")
+                            if history_button(ui, self.can_undo(), "↶")
                                 .on_hover_text("元に戻す (Ctrl+Z)")
                                 .clicked()
                             {
@@ -88,12 +85,15 @@ impl App {
     }
 
     pub(super) fn update_window_title(&mut self, ctx: &egui::Context) {
-        let name = if self.design.display_name().trim().is_empty() {
+        let name = if self.design().display_name().trim().is_empty() {
             "新規の光学系"
         } else {
-            self.design.display_name()
+            self.design().display_name()
         };
-        let title = format!("{}{name} — Raytrace", if self.dirty { "*" } else { "" });
+        let title = format!(
+            "{}{name} — Raytrace",
+            if self.is_dirty() { "*" } else { "" }
+        );
         if self.last_window_title.as_ref() != Some(&title) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.last_window_title = Some(title);
@@ -106,8 +106,7 @@ impl App {
             ui.close();
         }
         if ui.button("新規の光学系").clicked() {
-            self.replace_design(Design::empty(), Some(256), 0);
-            self.changed();
+            self.replace_design(None, Some(256), 0);
             self.status = "部品を追加して光学系を組み立てます".into();
             ui.close();
         }
@@ -137,13 +136,13 @@ impl App {
                 .add_filter("Raytrace", &["json"])
                 .save_file()
             {
+                self.end_gesture();
                 let request = DocSaveRequest {
-                    design: Some(Box::new(self.design.clone())),
+                    design: None,
                     output: Some(path.clone()),
                 };
-                match Session::new().run(commands::DOC_SAVE, request) {
+                match self.session.run(commands::DOC_SAVE, request) {
                     Ok(_) => {
-                        self.mark_saved();
                         self.path = Some(path);
                         self.remember_path();
                         self.status = "プロジェクトを保存しました".into();
@@ -196,7 +195,10 @@ impl App {
             }
         }
         if ui
-            .add_enabled(!self.design.is_assembly(), egui::Button::new("ZMX書出し…"))
+            .add_enabled(
+                !self.design().is_assembly(),
+                egui::Button::new("ZMX書出し…"),
+            )
             .on_hover_text("組立光学系はJSONプロジェクトで保存します")
             .clicked()
         {
@@ -207,11 +209,11 @@ impl App {
                 .save_file()
             {
                 let request = ExportZmxRequest {
-                    model: Some(ModelInput::Design(Box::new(self.design.clone()))),
+                    model: None,
                     catalogs: Vec::new(),
                     output: path,
                 };
-                match Session::new().run(commands::DOC_EXPORT_ZMX, request) {
+                match self.session.run(commands::DOC_EXPORT_ZMX, request) {
                     Ok(_) => self.status = "ZMXを書き出しました".into(),
                     Err(e) => self.error = Some(e.to_string()),
                 }
@@ -220,7 +222,7 @@ impl App {
         ui.separator();
         ui.menu_button("サンプルを開く", |ui| {
             if ui.button("光源＋レンズ＋ロッド").clicked() {
-                self.replace_design(design::demo_design().expect("assembly demo"), None, 2);
+                self.replace_design(Some(design::demo_design().expect("assembly demo")), None, 2);
                 self.run(ctx);
                 ui.close();
             }
@@ -240,7 +242,7 @@ impl App {
             ] {
                 if ui.button(name).clicked() {
                     self.replace_design(
-                        Design::from_scene(serde_json::from_str(text).unwrap()),
+                        Some(Design::from_scene(serde_json::from_str(text).unwrap())),
                         None,
                         0,
                     );
@@ -251,8 +253,9 @@ impl App {
         });
     }
 
-    fn replace_design(&mut self, design: Design, preview: Option<usize>, component: usize) {
-        self.design = design;
+    /// Start a new document (empty without `design`) and reset what the GUI shows of the
+    /// previous one.
+    fn replace_design(&mut self, design: Option<Design>, preview: Option<usize>, component: usize) {
         self.viewing_explicit_record = false;
         self.path = None;
         self.loading_path = None;
@@ -263,13 +266,10 @@ impl App {
         self.source_selected = false;
         self.detector = 0;
         self.preview_limit = preview;
-        self.dirty = false;
-        self.stale = false;
         self.view = View::Layout;
         self.error = None;
-        self.recompile();
+        self.start_document(design);
         self.camera = LayoutCamera::default();
-        self.reset_history(true);
     }
 
     pub(super) fn add_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -286,39 +286,47 @@ impl App {
         }
         ui.separator();
         if ui.button("ロッド").clicked() {
-            let demo: Scene =
-                serde_json::from_str(include_str!("../../../../examples/integrator_rod.json"))
-                    .unwrap();
-            self.append_component(Component::rod(demo.materials[1].clone(), "Silica".into()));
+            self.add_generated(PartKind::Rod);
             ui.close();
         }
         if ui.button("スクリーン").clicked() {
-            self.append_component(Component::detector());
+            self.add_generated(PartKind::Detector);
             ui.close();
         }
     }
 
+    /// Import a file as a part. A copy of the session reads the file on a worker and runs
+    /// `component.add`; the session takes the copy over when it is done.
     pub(super) fn add_file(&mut self, path: PathBuf, kind: PartKind, ctx: &egui::Context) {
         self.status = "部品を読込中…".into();
-        let request = DocOpenRequest {
-            path,
+        self.end_gesture();
+        let group = self.group();
+        self.end_gesture();
+        let request = ComponentAddRequest {
+            path: Some(path.clone()),
+            kind: Some(kind),
             catalogs: self.catalogs.clone(),
-            include_design: true,
-            expected_revision: None,
+            group: Some(group.clone()),
+            ..ComponentAddRequest::default()
         };
-        self.submit(ctx, false, None, move |session, context| {
-            Job::Added(
-                kind,
-                match session.call(commands::DOC_OPEN, request, context) {
-                    Ok(opened) => opened
-                        .design
-                        .ok_or_else(|| "部品の内容が返されませんでした".to_string()),
-                    Err(e) if matches!(e.code, "run_record" | "study_directory") => {
-                        Err("部品にはZMXまたはプロジェクトJSONを指定してください".into())
-                    }
-                    Err(e) => Err(e.message),
-                },
-            )
+        let session = self.session.clone();
+        self.submit_on(session, ctx, false, None, move |session, context| {
+            let not_a_part = || "部品にはZMXまたはプロジェクトJSONを指定してください".to_string();
+            let added = if path.is_dir() {
+                Err(not_a_part())
+            } else {
+                session
+                    .call(commands::COMPONENT_ADD, request, context)
+                    .map(|_| Box::new(std::mem::take(session)))
+                    .map_err(|e| {
+                        if e.message.starts_with("計算記録は") {
+                            not_a_part()
+                        } else {
+                            e.message
+                        }
+                    })
+            };
+            Job::Added(kind, group, added)
         });
     }
     pub(super) fn load(&mut self, path: PathBuf, ctx: &egui::Context) {
@@ -327,15 +335,13 @@ impl App {
         let request = DocOpenRequest {
             path: path.clone(),
             catalogs: self.catalogs.clone(),
-            include_design: true,
+            include_design: false,
             expected_revision: None,
         };
         self.submit(ctx, false, None, move |session, context| {
             match session.call(commands::DOC_OPEN, request, context) {
-                Ok(opened) => match opened.design {
-                    Some(design) => Job::Loaded(Ok(design)),
-                    None => Job::Loaded(Err("設計文書が返されませんでした".into())),
-                },
+                // The session that opened the file becomes the GUI's session.
+                Ok(_) => Job::Loaded(Ok(Box::new(std::mem::take(session)))),
                 // A calculation record opens as a result view instead of a design.
                 Err(EngineError {
                     code: "run_record", ..
@@ -389,7 +395,7 @@ mod tests {
         let text = visible_text(&out);
         assert!(!text.contains(&"Raytrace"));
         assert!(!text.contains(&"●"));
-        assert!(!text.contains(&app.design.display_name()));
+        assert!(!text.contains(&app.design().display_name()));
         let calculate = text_rect(&out, "▶  計算する").unwrap();
         let mut previous = None;
         for label in [
@@ -473,11 +479,19 @@ mod tests {
         let ctx = egui::Context::default();
         install(&ctx);
         let mut app = App::demo();
-        let name = app.design.display_name().to_string();
+        let name = app.design().display_name().to_string();
         let out = frame(&mut app, &ctx, vec![]);
         assert_eq!(titles(&out), [format!("{name} — Raytrace")]);
         assert!(titles(&frame(&mut app, &ctx, vec![])).is_empty());
-        app.changed();
+        let mut edits = edit::Edits::default();
+        edits.set(
+            format!(
+                "/occurrences/@{}/pose/translation_mm/2",
+                app.design().occurrences[2].id.as_str()
+            ),
+            &70.0,
+        );
+        assert!(app.apply(edits));
         let out = frame(&mut app, &ctx, vec![]);
         assert_eq!(titles(&out), [format!("*{name} — Raytrace")]);
         app.undo();
@@ -486,13 +500,25 @@ mod tests {
         app.redo();
         let out = frame(&mut app, &ctx, vec![]);
         assert_eq!(titles(&out), [format!("*{name} — Raytrace")]);
-        app.mark_saved();
+        let saved = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+            .join("target/gui_title_tests")
+            .join(std::process::id().to_string())
+            .join("saved.raytrace.json");
+        app.session
+            .run(
+                commands::DOC_SAVE,
+                DocSaveRequest {
+                    design: None,
+                    output: Some(saved),
+                },
+            )
+            .unwrap();
         let out = frame(&mut app, &ctx, vec![]);
         assert_eq!(titles(&out), [format!("{name} — Raytrace")]);
-        app.design.set_display_name("別の光学系");
+        set_document(&mut app, |d| d.set_display_name("別の光学系"));
         let out = frame(&mut app, &ctx, vec![]);
         assert_eq!(titles(&out), ["別の光学系 — Raytrace"]);
-        app.design.set_display_name("");
+        set_document(&mut app, |d| d.set_display_name(""));
         let out = frame(&mut app, &ctx, vec![]);
         assert_eq!(titles(&out), ["新規の光学系 — Raytrace"]);
         assert!(titles(&frame(&mut app, &ctx, vec![])).is_empty());
