@@ -2,6 +2,7 @@
 mod fixtures;
 
 use raytrace_rs::{
+    engine::{self, Outcome, RecordInput, ReplayRequest, Request},
     model::{Material, Sampling},
     record::{RUN_FORMAT, RunContext, RunRecord},
     trace::{TraceControl, TraceOptions, trace, trace_generated, trace_generated_controlled},
@@ -206,6 +207,27 @@ fn cancellation_and_progress() {
     );
 }
 
+/// Rerun a record through the engine `replay` request and return its report as JSON.
+fn replay(record: &RunRecord) -> Result<serde_json::Value, engine::EngineError> {
+    let request = Request::Replay(ReplayRequest {
+        record: RecordInput::Record(Box::new(record.clone())),
+        threads: None,
+        repeat: 1,
+        warmup: false,
+        terminals: None,
+        paths: None,
+        output: None,
+        include_record: true,
+    });
+    match engine::execute(request)? {
+        Outcome::Traced(result) => {
+            let run = result.record.expect("the record was requested");
+            Ok(serde_json::to_value(&run.report).unwrap())
+        }
+        _ => panic!("replay returns a trace result"),
+    }
+}
+
 #[test]
 fn record_replay_streams_and_keeps_validation() {
     let project = raytrace_rs::assembly::demo_project().unwrap();
@@ -230,13 +252,13 @@ fn record_replay_streams_and_keeps_validation() {
         };
         assert_eq!(
             serde_json::to_value(&expected).unwrap(),
-            serde_json::to_value(record.replay().unwrap()).unwrap()
+            replay(&record).unwrap()
         );
         if let raytrace_rs::record::LaunchInput::Generated { count, .. } =
             &mut record.calculation.input
         {
             *count += 1;
-            assert!(record.replay().is_err());
+            assert!(replay(&record).is_err());
             if let raytrace_rs::record::LaunchInput::Generated {
                 count,
                 sampling_revision,
@@ -245,7 +267,7 @@ fn record_replay_streams_and_keeps_validation() {
                 *count -= 1;
                 *sampling_revision = u32::MAX;
             }
-            assert!(record.replay().is_err());
+            assert!(replay(&record).is_err());
         }
     }
 }

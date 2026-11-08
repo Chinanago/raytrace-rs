@@ -2,6 +2,7 @@
 pub mod convergence;
 pub mod engine;
 pub mod nsc_reference;
+pub mod pipeline;
 pub mod scan;
 pub mod validation;
 

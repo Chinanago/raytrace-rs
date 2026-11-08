@@ -1,16 +1,15 @@
 //! Parameter studies with immutable inputs, affine links and resumable cases.
-use crate::Result;
-use raytrace_core::{
-    model::Interaction,
-    screen::ScreenAnalysis,
-    trace::{TraceControl, TraceOptions, trace_generated_controlled},
+use crate::{
+    Result,
+    pipeline::{
+        self, Completion, LaunchRequest, LimitViolation, Limits, MAX_CASE_RAYS, MAX_SCREEN_PIXELS,
+        SceneOverrides, Schedule,
+    },
 };
-use raytrace_io::{
-    project::Project,
-    record::{RunContext, RunRecord},
-};
+use raytrace_core::trace::{TraceControl, TraceOptions};
+use raytrace_io::{project::Project, record::RunRecord};
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path, sync::atomic::Ordering, time::Instant};
+use std::{fs, path::Path, sync::atomic::Ordering};
 
 /// Scanned value. Indices are zero-based; axis 0/1/2 is X/Y/Z.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -316,7 +315,7 @@ impl ScanManifest {
             || !(1..=64).contains(&plan.threads)
             || plan
                 .rays_per_source
-                .is_some_and(|n| n == 0 || n > 2_000_000)
+                .is_some_and(|n| n == 0 || n > MAX_CASE_RAYS)
         {
             return Err(crate::Error::Plan(
                 "走査の点数・光線数・スレッド数が不正です".into(),
@@ -467,62 +466,76 @@ impl ScanManifest {
                     self.cases[i].secondary_value,
                 )?;
                 let mut scene = project.trace_scene()?;
-                if let Some(n) = self.plan.rays_per_source {
-                    for s in &mut scene.sources {
-                        s.count = n;
-                    }
-                }
-                let total: u128 = scene.sources.iter().map(|s| s.count as u128).sum();
-                if total == 0 || total > 2_000_000 {
-                    return Err(crate::Error::Plan(
-                        "各ケースの光線数合計は1〜2,000,000本で指定してください".into(),
-                    ));
-                }
-                if scene.surfaces.iter().any(|s| matches!(s.interaction,Interaction::Detector{pixels} if pixels[0].saturating_mul(pixels[1])>1_000_000)) {return Err(crate::Error::Plan("スクリーンは100万画素までです".into()));}
+                pipeline::configure_scene(
+                    &mut scene,
+                    &SceneOverrides {
+                        rays_per_source: self.plan.rays_per_source,
+                        ..SceneOverrides::default()
+                    },
+                );
+                pipeline::check_limits(
+                    &scene,
+                    Limits {
+                        max_rays: MAX_CASE_RAYS,
+                        max_screen_pixels: Some(MAX_SCREEN_PIXELS),
+                    },
+                )
+                .map_err(|violation| {
+                    crate::Error::Plan(
+                        match violation {
+                            LimitViolation::Rays { .. } => {
+                                "各ケースの光線数合計は1〜2,000,000本で指定してください"
+                            }
+                            LimitViolation::ScreenPixels { .. } => "スクリーンは100万画素までです",
+                        }
+                        .into(),
+                    )
+                })?;
                 let prepared = scene.clone().prepare()?;
-                let start = Instant::now();
-                let Some(report) = pool.install(|| {
-                    trace_generated_controlled(&prepared, TraceOptions::default(), control)
-                })?
+                let launch = pipeline::resolve_launch(&prepared, LaunchRequest::Generated)?;
+                let options = TraceOptions::default();
+                let Completion::Done(timed) = pipeline::run_timed(
+                    &pool,
+                    &prepared,
+                    &launch,
+                    options,
+                    control,
+                    Schedule::once(),
+                )?
                 else {
                     return Ok(None);
                 };
-                let seconds = start.elapsed().as_secs_f64();
-                let power = report.budget.launched;
-                if !power.is_finite() || power <= 0.0 {
+                let (report, seconds) = (timed.report, timed.timings.median());
+                let Some(power) = pipeline::launched_power(&report) else {
                     return Err(crate::Error::Plan(
                         "発射基準光量は正の有限値で指定してください".into(),
                     ));
-                }
-                let mut detectors = Vec::new();
-                for d in &report.detectors {
-                    let a = ScreenAnalysis::from_detector(d)?;
-                    detectors.push(DetectorMetrics {
-                        name: d.name.clone(),
-                        received_percent: 100.0 * d.weights.iter().sum::<f64>()
-                            / report.budget.launched,
-                        fwhm_mm: [
-                            a.x_profile.as_ref().and_then(|p| p.half_maximum.width_mm()),
-                            a.y_profile.as_ref().and_then(|p| p.half_maximum.width_mm()),
-                        ],
-                    });
-                }
+                };
+                let detectors = report
+                    .detectors
+                    .iter()
+                    .map(|d| {
+                        let stats = pipeline::detector_stats(d, power)?;
+                        Ok(DetectorMetrics {
+                            name: stats.name,
+                            received_percent: stats.received_percent,
+                            fwhm_mm: stats.fwhm_mm,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
                 let file = format!("case_{i:04}.raytrace-run.json");
-                RunContext::capture(
-                    &project,
-                    &scene,
-                    None,
-                    self.plan.threads,
-                    TraceOptions::default(),
-                )
-                .save(&report, seconds, &dir.join(&file))?;
+                pipeline::capture(&project, &scene, &launch, self.plan.threads, options).save(
+                    &report,
+                    seconds,
+                    &dir.join(&file),
+                )?;
                 Ok(Some(ScanCase {
                     value: self.cases[i].value,
                     secondary_value: self.cases[i].secondary_value,
                     state: "completed".into(),
                     error: None,
                     run_file: Some(file),
-                    detected_percent: Some(100.0 * report.budget.detected / report.budget.launched),
+                    detected_percent: Some(pipeline::detected_percent(&report, power)),
                     detectors,
                     trace_seconds: Some(seconds),
                 }))

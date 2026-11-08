@@ -1,9 +1,10 @@
-//! Self-contained calculation conditions and replay, separate from the editable project.
+//! Self-contained calculation conditions and their validation, separate from the editable project.
+//! Tracing a record is a pipeline stage in `raytrace_app::pipeline`.
 use crate::Result;
 use crate::{compatibility::CompatibilityReport, project::Project};
 use raytrace_core::{
     model::{PreparedScene, Ray, Scene},
-    trace::{Report, TraceOptions, trace, trace_generated},
+    trace::{Report, TraceOptions},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -183,31 +184,6 @@ impl RunContext {
         Ok(())
     }
 
-    pub fn trace(&self) -> Result<Report> {
-        let prepared = self.scene.clone().prepare()?;
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(self.worker_threads)
-            .build()
-            .map_err(|e| crate::Error::Record(format!("スレッドプールを作成できません: {e}")))?;
-        match self.input {
-            LaunchInput::Generated { .. } => {
-                self.validate_generated(&prepared)?;
-                let report = pool.install(|| trace_generated(&prepared, self.trace_options))?;
-                if prepared.spec.sources.is_empty()
-                    || !report.budget.launched.is_finite()
-                    || report.budget.launched <= 0.
-                {
-                    return Err(crate::Error::Record("計算記録の発射光量が不正です".into()));
-                }
-                Ok(report)
-            }
-            LaunchInput::Explicit { .. } => {
-                let rays = self.rays()?;
-                Ok(pool.install(|| trace(&prepared, &rays, self.trace_options)))
-            }
-        }
-    }
-
     pub fn rays(&self) -> Result<Vec<Ray>> {
         if self.worker_threads == 0 {
             return Err(crate::Error::Record(
@@ -276,10 +252,6 @@ pub struct RunRecord {
     pub report: Report,
 }
 impl RunRecord {
-    pub fn replay(&self) -> Result<Report> {
-        self.calculation.trace()
-    }
-
     pub fn open(path: &Path) -> Result<Self> {
         let bytes = fs::read(path).map_err(|e| crate::Error::io(path, e))?;
         let record: Self = serde_json::from_slice(&bytes)

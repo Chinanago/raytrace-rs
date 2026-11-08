@@ -17,7 +17,7 @@ Rust製の幾何光学レイトレーサーです。ZMX・JSONの光学系を読
 | `crates/raytrace-core` | 形状・光源・追跡・コーティング・分散・スクリーン解析の計算核 |
 | `crates/raytrace-formats` | ZMX／AGF／SPCD・STEPの入出力（プロジェクトモデルに依存しない） |
 | `crates/raytrace-io` | `Project`・組立・計算記録・互換性レポート・出力 |
-| `crates/raytrace-app` | JSONエンジン（`src/engine.rs`・`src/engine/run.rs`）、パラメーター走査・収束確認・検証ケース |
+| `crates/raytrace-app` | JSONエンジン（`src/engine.rs`・`src/engine/run.rs`）、計算パイプラインの各段（`src/pipeline.rs`。追跡ループはここだけ）、パラメーター走査・収束確認・検証ケース |
 | `crates/raytrace-cli` | CLI `raytrace-rs`。独自のオプションはなく、引数をリクエストのフィールドに組み立てて応答を出力するだけ（`src/main.rs`） |
 | `crates/raytrace-gui` | egui製GUI `raytrace-gui`。編集・描画・表示の後処理とリクエストの作成 |
 | `schemas/` | `schema output=schemas` が生成するJSONスキーマ（コミット対象） |

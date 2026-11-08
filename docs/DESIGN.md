@@ -128,7 +128,7 @@ Design（文書）
 | 安定したID | 走査の対象などを部品番号・面番号で参照している |
 | すべての操作はコマンド（P2） | 計算と読込・保存は `engine::Request` に統一済み。編集はGUIが `Project` を直接書き換え、エージェントはJSONを手で編集する |
 | セッション | エンジンは一回限りの呼び出しだけで、文書を開いたまま操作できない。取り消しはGUIの中だけにある |
-| 計算は1本のパイプライン（P3） | 「展開 → 上書き → 準備 → 追跡 → 記録」が4か所に重複している（`engine/run.rs`、`scan.rs`、`convergence.rs`、`record.rs`） |
+| 計算は1本のパイプライン（P3） | 段階1で実現済み。上書き・上限・発射の確定・追跡・記録・解析の各段が `raytrace_app::pipeline`（`crates/raytrace-app/src/pipeline.rs`）にあり、`engine/run.rs`・`scan.rs`・`convergence.rs` が共有する。`record.rs` から追跡を除いた |
 | 解析は登録制（P9） | 光量比・半値幅・ROIが、エンジン・出力処理・GUIに散在している |
 | 外部形式は境界で変換（P6） | 文書が元ZMXと取り込みの問題点を抱え、計算記録も文書全体を含む |
 | 層の自動検査（P4） | 実現済み。`cargo xtask layers` が層の順序・GUI依存の隔離・計算核の純粋さを、`cargo xtask wasm` がL0〜L4のWASMビルドをCIで検査する |

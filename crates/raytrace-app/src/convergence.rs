@@ -1,13 +1,19 @@
 //! Controlled ray-count, seed, pixel-grid and CAD-tessellation comparisons.
-use crate::Result;
-use raytrace_core::{
-    model::{Interaction, Shape},
-    screen::ScreenAnalysis,
-    trace::{DetectorMap, TraceOptions, trace_generated},
+use crate::{
+    Result,
+    pipeline::{
+        self, LaunchRequest, Limits, MAX_CASE_RAYS, MAX_SCREEN_PIXELS, ProjectOverrides,
+        SceneOverrides, Schedule,
+    },
 };
-use raytrace_io::{project::Project, record::RunContext};
+use raytrace_core::{
+    model::Shape,
+    screen::ScreenAnalysis,
+    trace::{DetectorMap, TraceControl, TraceOptions},
+};
+use raytrace_io::project::Project;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::Path, time::Instant};
+use std::{fs, path::Path};
 
 /// `plan` of the `convergence` command. Every combination is traced.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
@@ -46,11 +52,10 @@ impl Default for ConvergencePlan {
 impl ConvergencePlan {
     fn validate(&self) -> Result<()> {
         if !(1..=64).contains(&self.threads)
-            || self.ray_counts.iter().any(|&n| n == 0 || n > 2_000_000)
-            || self
-                .pixels
-                .iter()
-                .any(|p| p.contains(&0) || p[0].checked_mul(p[1]).is_none_or(|n| n > 1_000_000))
+            || self.ray_counts.iter().any(|&n| n == 0 || n > MAX_CASE_RAYS)
+            || self.pixels.iter().any(|p| {
+                p.contains(&0) || p[0].checked_mul(p[1]).is_none_or(|n| n > MAX_SCREEN_PIXELS)
+            })
             || self.cad_deflections_mm.is_empty()
             || self
                 .cad_deflections_mm
@@ -212,6 +217,7 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
         distribution_definition: "L1 sum of differences in integrated pixel power / each launch reference. Area-overlap rebinning to a common grid of at most 64x64, assuming uniform power within original pixels. Reference is the largest ray/pixel count, smallest CAD deflection, or first seed, with other axes fixed. This is a sensitivity comparison, not an automatic convergence certificate.".into(),
         timing_definition: "One trace per case, including report accumulation; excludes model loading, tessellation, preparation, source generation and file output. No benchmark warmup or median is applied.".into(),
     };
+    let control = TraceControl::default();
     let mut maps: Vec<Vec<DetectorMap>> = Vec::new();
     let pixel_options = axis_options(&plan.pixels);
     for &cad in &plan.cad_deflections_mm {
@@ -247,59 +253,70 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
                             .as_ref()
                             .map_err(|e| crate::Error::Plan(e.clone()))?
                             .clone();
-                        project.allow_uncoated |= plan.allow_uncoated;
-                        if plan.wavelength_um.is_some() {
-                            project.monochromatic_override_um = plan.wavelength_um;
-                        }
+                        pipeline::configure_project(
+                            &mut project,
+                            ProjectOverrides {
+                                allow_uncoated: plan.allow_uncoated,
+                                wavelength_um: plan.wavelength_um,
+                            },
+                        );
                         let mut scene = project.trace_scene()?;
-                        for (i, source) in scene.sources.iter_mut().enumerate() {
-                            if let Some(n) = count {
-                                source.count = n;
-                            }
-                            if let Some(s) = seed {
-                                source.seed = s.wrapping_add(i as u64);
-                            }
-                        }
-                        for surface in &mut scene.surfaces {
-                            if let Interaction::Detector { pixels: ref mut p } = surface.interaction
-                                && let Some(pixels) = pixels
-                            {
-                                *p = pixels;
-                            }
-                            if let Shape::TriangleMesh { triangles, .. } = &surface.shape {
-                                row.triangles += triangles.len();
-                            }
-                        }
-                        row.cad_applied = native && project.cad_deflection_mm.is_some();
-                        let total: u128 = scene.sources.iter().map(|s| s.count as u128).sum();
-                        if total == 0 || total > 2_000_000 {
-                            return Err(crate::Error::Plan(
-                                "各ケースの光線数合計は1〜2,000,000本で指定してください".into(),
-                            ));
-                        }
-                        let prepared = scene.clone().prepare()?;
-                        let started = Instant::now();
-                        let report =
-                            pool.install(|| trace_generated(&prepared, TraceOptions::default()))?;
-                        row.trace_seconds = started.elapsed().as_secs_f64();
-                        row.rays = total as usize;
-                        row.reference_weight = report.budget.launched;
-                        let budget = serde_json::to_value(&report.budget)
-                            .map_err(|e| raytrace_io::Error::json(None, e))?;
-                        row.budget_percent_of_reference = budget
-                            .as_object()
-                            .unwrap()
+                        pipeline::configure_scene(
+                            &mut scene,
+                            &SceneOverrides {
+                                rays_per_source: count,
+                                seed,
+                                detector_pixels: pixels,
+                                ..SceneOverrides::default()
+                            },
+                        );
+                        row.triangles = scene
+                            .surfaces
                             .iter()
-                            .map(|(k, v)| {
-                                (
-                                    k.clone(),
-                                    100.0 * v.as_f64().unwrap() / row.reference_weight,
-                                )
+                            .map(|s| match &s.shape {
+                                Shape::TriangleMesh { triangles, .. } => triangles.len(),
+                                _ => 0,
                             })
-                            .collect();
+                            .sum();
+                        row.cad_applied = native && project.cad_deflection_mm.is_some();
+                        pipeline::check_limits(
+                            &scene,
+                            Limits {
+                                max_rays: MAX_CASE_RAYS,
+                                max_screen_pixels: None,
+                            },
+                        )
+                        .map_err(|_| {
+                            crate::Error::Plan(
+                                "各ケースの光線数合計は1〜2,000,000本で指定してください".into(),
+                            )
+                        })?;
+                        let prepared = scene.clone().prepare()?;
+                        let launch = pipeline::resolve_launch(&prepared, LaunchRequest::Generated)?;
+                        let options = TraceOptions::default();
+                        let timed = pipeline::run_timed(
+                            &pool,
+                            &prepared,
+                            &launch,
+                            options,
+                            &control,
+                            Schedule::once(),
+                        )?
+                        .into_result()?;
+                        let report = timed.report;
+                        row.trace_seconds = timed.timings.median();
+                        row.rays = launch.count();
+                        row.reference_weight =
+                            pipeline::launched_power(&report).ok_or_else(|| {
+                                crate::Error::Plan(
+                                    "発射基準光量は正の有限値で指定してください".into(),
+                                )
+                            })?;
+                        row.budget_percent_of_reference =
+                            pipeline::budget_percent(&report, row.reference_weight)?;
                         row.reference_plane = scene.reference_plane.clone();
                         row.detected_percent =
-                            100.0 * report.budget.detected / row.reference_weight;
+                            pipeline::detected_percent(&report, row.reference_weight);
                         row.unresolved_percent = 100.0
                             * (report.budget.numerical_failure
                                 + report.budget.medium_mismatch
@@ -308,23 +325,13 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
                             / row.reference_weight;
                         let mut coarse = Vec::new();
                         for map in &report.detectors {
-                            let analysis = ScreenAnalysis::from_detector(map)?;
+                            let stats = pipeline::detector_stats(map, row.reference_weight)?;
                             row.detectors.push(DetectorSummary {
-                                name: map.name.clone(),
-                                received_percent: 100.0 * map.weights.iter().sum::<f64>()
-                                    / row.reference_weight,
-                                pixel_pitch_mm: analysis.pixel_pitch_mm,
-                                peak_position_mm: analysis.peak_position_mm,
-                                fwhm_mm: [
-                                    analysis
-                                        .x_profile
-                                        .as_ref()
-                                        .and_then(|p| p.half_maximum.width_mm()),
-                                    analysis
-                                        .y_profile
-                                        .as_ref()
-                                        .and_then(|p| p.half_maximum.width_mm()),
-                                ],
+                                name: stats.name,
+                                received_percent: stats.received_percent,
+                                pixel_pitch_mm: stats.pixel_pitch_mm,
+                                peak_position_mm: stats.peak_position_mm,
+                                fwhm_mm: stats.fwhm_mm,
                             });
                             let minimum = [0, 1].map(|a| {
                                 plan.pixels
@@ -339,18 +346,8 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
                         }
                         if plan.save_runs {
                             let name = format!("case_{index:04}.raytrace-run.json");
-                            RunContext::capture(
-                                &project,
-                                &scene,
-                                None,
-                                plan.threads,
-                                TraceOptions::default(),
-                            )
-                            .save(
-                                &report,
-                                row.trace_seconds,
-                                &output.join(&name),
-                            )?;
+                            pipeline::capture(&project, &scene, &launch, plan.threads, options)
+                                .save(&report, row.trace_seconds, &output.join(&name))?;
                             row.run_file = Some(name);
                         }
                         Ok(coarse)

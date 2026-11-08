@@ -3,13 +3,13 @@ use super::{
     EngineError, ModelInput, RaysInput, ReplayRequest, TraceRequest, TraceResult, create_parent,
     load, load_record,
 };
+use crate::pipeline::{
+    self, Launch, LaunchRequest, Limits, ProjectOverrides, SceneOverrides, Schedule,
+};
 use raytrace_core::{
     math::V3,
     model::{Interaction, Mode, PreparedScene, Ray, Scene},
-    trace::{
-        Report, TraceControl, TraceOptions, trace as trace_rays, trace_controlled,
-        trace_generated_controlled,
-    },
+    trace::{Report, TraceControl, TraceOptions},
 };
 use raytrace_io::{
     project::Project,
@@ -17,7 +17,7 @@ use raytrace_io::{
     zemax,
 };
 use serde::Serialize;
-use std::{collections::BTreeMap, collections::HashSet, fs, path::Path, time::Instant};
+use std::{collections::BTreeMap, fs, path::Path};
 
 /// Timing of the repeated trace; see `timed_scope` for what is measured.
 #[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
@@ -73,21 +73,10 @@ pub struct RunOutput {
     pub report: Report,
 }
 
-/// Launch rays before the scene is prepared and validated.
-enum Launch {
-    Generated,
-    /// Rays from a request or CSV; validated against the prepared scene.
-    Explicit(Vec<Ray>),
-    /// Rays of an explicit-input record, validated when the record was opened.
-    Recorded(Vec<Ray>),
-    /// Generated input of a record; the source settings must still match.
-    RecordedGenerated(Box<RunContext>),
-}
-
 struct Calculation {
     project: Project,
     scene: Scene,
-    launch: Launch,
+    launch: LaunchRequest,
     options: TraceOptions,
     threads: Option<usize>,
     repeat: usize,
@@ -102,48 +91,53 @@ pub(super) fn trace(r: TraceRequest, control: &TraceControl) -> Result<TraceResu
     };
     let mut project = load(r.model, &r.catalogs)?;
     let o = r.overrides;
-    project.allow_uncoated |= o.ignore_coatings;
-    if let Some(w) = o.wavelength_um {
-        project.monochromatic_override_um = Some(w);
-    }
+    pipeline::configure_project(
+        &mut project,
+        ProjectOverrides {
+            allow_uncoated: o.ignore_coatings,
+            wavelength_um: o.wavelength_um,
+        },
+    );
     if let Some(path) = &r.export_zmx {
         zemax::export(&project, path)?;
     }
     let mut scene = project.trace_scene()?;
-    for source in &mut scene.sources {
-        if let Some(sampling) = o.sampling {
-            source.sampling = sampling;
-        }
-        if let Some(count) = o.rays_per_source {
-            source.count = count;
-        }
-        if let Some(limit) = o.max_rays_per_source {
-            source.count = source.count.min(limit);
-        }
+    if o.mode == Some(Mode::Sequential) && project.assembly.is_some() {
+        return Err(EngineError::invalid(
+            "組立光学系は非シーケンシャルで追跡してください",
+        ));
     }
-    if let Some(mode) = o.mode {
-        if project.assembly.is_some() && mode == Mode::Sequential {
-            return Err(EngineError::invalid(
-                "組立光学系は非シーケンシャルで追跡してください",
-            ));
-        }
-        scene.mode = mode;
-    }
+    pipeline::configure_scene(
+        &mut scene,
+        &SceneOverrides {
+            mode: o.mode,
+            sampling: o.sampling,
+            rays_per_source: o.rays_per_source,
+            max_rays_per_source: o.max_rays_per_source,
+            ..SceneOverrides::default()
+        },
+    );
     reject_overwrite(r.output.as_deref(), model_path.as_deref())?;
     let launch = match r.rays {
-        Some(RaysInput::Csv(path)) => Launch::Explicit(read_csv(&path)?),
-        Some(RaysInput::Rays(rays)) => Launch::Explicit(rays),
+        Some(RaysInput::Csv(path)) => LaunchRequest::Explicit(read_csv(&path)?),
+        Some(RaysInput::Rays(rays)) => LaunchRequest::Explicit(rays),
         None => {
-            if let Some(max) = r.max_total_rays {
-                let total: u128 = scene.sources.iter().map(|s| s.count as u128).sum();
-                if total == 0 || total > max as u128 {
-                    return Err(EngineError::new(
-                        "limit",
-                        format!("光線数は合計1〜{}本で指定してください", grouped(max)),
-                    ));
-                }
+            if let Some(max) = r.max_total_rays
+                && pipeline::check_limits(
+                    &scene,
+                    Limits {
+                        max_rays: max,
+                        max_screen_pixels: None,
+                    },
+                )
+                .is_err()
+            {
+                return Err(EngineError::new(
+                    "limit",
+                    format!("光線数は合計1〜{}本で指定してください", grouped(max)),
+                ));
             }
-            Launch::Generated
+            LaunchRequest::Generated
         }
     };
     let output = run(
@@ -176,10 +170,7 @@ pub(super) fn replay(r: ReplayRequest, control: &TraceControl) -> Result<TraceRe
         options.path_launch_count = paths;
     }
     let calculation = record.calculation;
-    let launch = match &calculation.input {
-        LaunchInput::Explicit { .. } => Launch::Recorded(calculation.rays()?),
-        LaunchInput::Generated { .. } => Launch::RecordedGenerated(Box::new(calculation.clone())),
-    };
+    let launch = LaunchRequest::from_record(&calculation)?;
     let output = run(
         Calculation {
             project: calculation.project,
@@ -210,9 +201,7 @@ fn reject_overwrite(output: Option<&Path>, input: Option<&Path>) -> Result<(), E
 }
 
 fn run(c: Calculation, control: &TraceControl) -> Result<RunOutput, EngineError> {
-    if c.repeat == 0 {
-        return Err(EngineError::invalid("繰返し回数は正の値で指定してください"));
-    }
+    let schedule = Schedule::new(c.warmup, c.repeat)?;
     let mut builder = rayon::ThreadPoolBuilder::new();
     if let Some(n) = c.threads {
         if n == 0 {
@@ -224,89 +213,30 @@ fn run(c: Calculation, control: &TraceControl) -> Result<RunOutput, EngineError>
         .build()
         .map_err(|e| EngineError::new("limit", format!("スレッドプールを作成できません: {e}")))?;
     let scene = c.scene.prepare()?;
-    let rays = match c.launch {
-        Launch::Generated => None,
-        Launch::Explicit(mut rays) => {
-            let mut ids = HashSet::new();
-            for ray in &mut rays {
-                if !ids.insert(ray.id) {
-                    return Err(EngineError::new(
-                        "invalid_ray",
-                        "発射光線IDが重複しています",
-                    ));
-                }
-                ray.validate(&scene)?;
-            }
-            Some(rays)
-        }
-        Launch::Recorded(rays) => Some(rays),
-        Launch::RecordedGenerated(calculation) => {
-            calculation.validate_generated(&scene)?;
-            None
-        }
-    };
-    let input_count = match &rays {
-        Some(rays) => {
-            if !rays.iter().map(|r| r.weight).sum::<f64>().is_finite()
-                || rays.iter().all(|r| r.weight == 0.0)
-            {
-                return Err(EngineError::new(
-                    "invalid_ray",
-                    "発射光線の重み合計は正の有限値にしてください",
-                ));
-            }
-            rays.len()
-        }
-        None => scene.ray_generator()?.len(),
-    };
-    if input_count == 0 {
-        return Err(EngineError::invalid(
-            "光源または明示入力の光線を指定してください",
-        ));
-    }
-    let once = || -> Result<Report, EngineError> {
-        match &rays {
-            Some(rays) => trace_controlled(&scene, rays, c.options, control),
-            None => trace_generated_controlled(&scene, c.options, control)?,
-        }
-        .ok_or_else(EngineError::cancelled)
-    };
-    if c.warmup {
-        std::hint::black_box(pool.install(once)?);
-    }
-    let mut timings = Vec::with_capacity(c.repeat);
-    let mut report = None;
-    for _ in 0..c.repeat {
-        let start = Instant::now();
-        let result = pool.install(once)?;
-        timings.push(start.elapsed().as_secs_f64());
-        report = Some(result);
-    }
-    let mut report = report.expect("repeat is positive");
-    let reference = report.budget.launched;
-    if !reference.is_finite() || reference <= 0. {
-        return Err(EngineError::new(
+    let launch = pipeline::resolve_launch(&scene, c.launch)?;
+    let timed =
+        pipeline::run_timed(&pool, &scene, &launch, c.options, control, schedule)?.into_result()?;
+    let mut report = timed.report;
+    let timings = timed.timings;
+    let input_count = launch.count();
+    let reference = pipeline::launched_power(&report).ok_or_else(|| {
+        EngineError::new(
             "invalid_ray",
             "発射光線の重み合計は正の有限値にしてください",
-        ));
-    }
-    timings.sort_by(f64::total_cmp);
-    let median = if c.repeat.is_multiple_of(2) {
-        (timings[c.repeat / 2 - 1] + timings[c.repeat / 2]) * 0.5
-    } else {
-        timings[c.repeat / 2]
-    };
+        )
+    })?;
+    let median = timings.median();
     let threads = pool.current_num_threads();
     let warmup = if c.warmup { ", and one warmup" } else { "" };
     let benchmark = Benchmark {
         repetitions: c.repeat,
         worker_threads: threads,
         input_rays: input_count,
-        minimum_seconds: timings[0],
+        minimum_seconds: timings.minimum(),
         median_seconds: median,
         launched_rays_per_second: input_count as f64 / median,
         surface_intersections_per_second: report.surface_intersections as f64 / median,
-        timed_scope: if rays.is_some() {
+        timed_scope: if launch.rays().is_some() {
             format!(
                 "Trace, branch traversal, and report accumulation; excludes scene/ray input, JSON output{warmup}"
             )
@@ -316,34 +246,12 @@ fn run(c: Calculation, control: &TraceControl) -> Result<RunOutput, EngineError>
             )
         },
     };
-    let calculation =
-        RunContext::capture(&c.project, &scene.spec, rays.as_deref(), threads, c.options);
-    if c.preview_paths > 0 && rays.is_none() {
+    let calculation = pipeline::capture(&c.project, &scene.spec, &launch, threads, c.options);
+    if c.preview_paths > 0 && launch.rays().is_none() {
         report.paths = pool.install(|| preview_paths(&scene, c.preview_paths))?;
     }
-    let budget =
-        serde_json::to_value(&report.budget).map_err(|e| raytrace_io::Error::json(None, e))?;
-    let budget_percent_of_reference = budget
-        .as_object()
-        .expect("the budget serializes as an object")
-        .iter()
-        .map(|(key, value)| {
-            (
-                key.clone(),
-                100.0 * value.as_f64().unwrap_or(0.0) / reference,
-            )
-        })
-        .collect();
-    let detector_percent_of_reference = report
-        .detectors
-        .iter()
-        .map(|d| {
-            (
-                d.name.clone(),
-                100.0 * d.weights.iter().sum::<f64>() / reference,
-            )
-        })
-        .collect();
+    let budget_percent_of_reference = pipeline::budget_percent(&report, reference)?;
+    let detector_percent_of_reference = pipeline::detector_percents(&report, reference);
     let surface_encounter_percent_of_reference = report
         .surfaces
         .iter()
@@ -402,7 +310,10 @@ fn finish(
         exported_zmx,
         reference_plane: record.scene.reference_plane.clone(),
         launched_rays: record.benchmark.input_rays,
-        detected_percent_of_reference: 100.0 * budget.detected / record.reference_weight,
+        detected_percent_of_reference: pipeline::detected_percent(
+            &record.report,
+            record.reference_weight,
+        ),
         budget_percent_of_reference: record.budget_percent_of_reference.clone(),
         detector_percent_of_reference: record.detector_percent_of_reference.clone(),
         relative_budget_closure_error: record.relative_budget_closure_error,
@@ -443,14 +354,16 @@ fn preview_paths(
         }
         layer += 1;
     }
-    Ok(trace_rays(
+    Ok(pipeline::trace_once(
         scene,
-        &preview,
+        &Launch::from_rays(preview),
         TraceOptions {
             keep_terminals: false,
             path_launch_count: n as u64,
         },
-    )
+        &TraceControl::default(),
+    )?
+    .into_result()?
     .paths)
 }
 
@@ -501,14 +414,17 @@ pub(super) fn viewer_paths(
             *pixels = [1, 1];
         }
     }
-    Ok(trace_rays(
+    let path_launch_count = rays.len() as u64;
+    Ok(pipeline::trace_once(
         &geometry.prepare()?,
-        &rays,
+        &Launch::from_rays(rays),
         TraceOptions {
             keep_terminals: false,
-            path_launch_count: rays.len() as u64,
+            path_launch_count,
         },
-    )
+        &TraceControl::default(),
+    )?
+    .into_result()?
     .paths)
 }
 

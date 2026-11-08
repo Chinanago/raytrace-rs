@@ -9,6 +9,12 @@ pub enum Error {
     Io(#[from] raytrace_io::Error),
     #[error("{0}")]
     Plan(String),
+    /// Launch rays that cannot be traced (duplicate ids, no positive weight).
+    #[error("{0}")]
+    InvalidRay(String),
+    /// A calculation request that names no rays or an impossible run schedule.
+    #[error("{0}")]
+    InvalidInput(String),
     #[error("{total} ケース中 {failed} ケースが失敗しました。概要を確認してください: {summary}", summary = .summary.display())]
     CasesFailed {
         failed: usize,
@@ -27,6 +33,8 @@ impl Error {
             Self::Core(error) => error.code(),
             Self::Io(error) => error.code(),
             Self::Plan(_) => "plan",
+            Self::InvalidRay(_) => "invalid_ray",
+            Self::InvalidInput(_) => "invalid_request",
             Self::CasesFailed { .. } => "cases_failed",
             Self::Cancelled => "cancelled",
         }

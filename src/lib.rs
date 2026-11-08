@@ -1,5 +1,5 @@
 //! A small geometric-optics kernel. Lengths are mm; wavelengths are micrometres.
-pub use raytrace_app::{convergence, engine, scan, validation};
+pub use raytrace_app::{convergence, engine, pipeline, scan, validation};
 pub use raytrace_core::{
     coating, dispersion, geometry, illumination, math, mesh, model, sampling, screen, spectrum,
     trace,
