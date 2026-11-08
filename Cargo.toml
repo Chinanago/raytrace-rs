@@ -13,7 +13,7 @@ repository = "https://github.com/Chinanago/raytrace-rs"
 thiserror = "2"
 rayon = "1"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_json = { version = "1", features = ["float_roundtrip", "raw_value"] }
 encoding_rs = "0.8"
 libm = "0.2"
 spade = "2.15.1"

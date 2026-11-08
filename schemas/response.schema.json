@@ -1,39 +1,1750 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Response",
-  "description": "CLI output envelope: `ok`, the request `command`, then `result` and/or `error`.",
-  "type": "object",
-  "properties": {
-    "command": {
-      "type": "string"
-    },
-    "error": {
-      "anyOf": [
-        {
+  "description": "One line printed by the CLI per request. `result` follows the command.",
+  "oneOf": [
+    {
+      "title": "app.version",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "app.version",
+            "version"
+          ]
+        },
+        "error": {
           "$ref": "#/$defs/ErrorInfo"
         },
-        {
-          "type": "null"
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "VersionResult",
+          "description": "`app.version`.",
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "version"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
         }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
       ]
     },
-    "ok": {
-      "type": "boolean"
-    },
-    "result": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/Outcome"
+    {
+      "title": "command.list",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "command.list"
+          ]
         },
-        {
-          "type": "null"
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "CommandList",
+          "description": "`command.list`: every registered command and the deprecated short names.",
+          "type": "object",
+          "properties": {
+            "aliases": {
+              "description": "Deprecated short names of the previous interface and the command each one runs.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            "commands": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/CommandSummary"
+              }
+            }
+          },
+          "required": [
+            "commands",
+            "aliases"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
         }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "command.describe",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "command.describe"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "CommandDescription",
+          "description": "`command.describe`: a command with its input and output JSON Schemas.",
+          "type": "object",
+          "properties": {
+            "aliases": {
+              "description": "Deprecated short names that run this command.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "id": {
+              "type": "string"
+            },
+            "input_schema": {
+              "description": "Schema of the parameters (the request fields except `command`).",
+              "$ref": "#/$defs/Schema"
+            },
+            "kind": {
+              "$ref": "#/$defs/Kind"
+            },
+            "output_schema": {
+              "description": "Schema of `result`.",
+              "$ref": "#/$defs/Schema"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "summary",
+            "kind",
+            "aliases",
+            "input_schema",
+            "output_schema"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "schema.get",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "schema.get",
+            "schema"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "SchemaResult",
+          "description": "The schema itself, or the file or directory it was written to.",
+          "type": "object",
+          "properties": {
+            "output": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Schema"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "doc.new",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "doc.new"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "DocSummary",
+          "description": "What a document looks like, without its content.",
+          "type": "object",
+          "properties": {
+            "assembly": {
+              "description": "False for a single unplaced system, which is traced verbatim.",
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            },
+            "occurrences": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "parts": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "name",
+            "parts",
+            "occurrences",
+            "assembly"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "doc.open",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "doc.open",
+            "open"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "DocOpened",
+          "description": "Result of `doc.open`.",
+          "type": "object",
+          "properties": {
+            "assembly": {
+              "description": "False for a single unplaced system, which is traced verbatim.",
+              "type": "boolean"
+            },
+            "design": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Design"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "occurrences": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "parts": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "name",
+            "parts",
+            "occurrences",
+            "assembly"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "doc.save",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "doc.save",
+            "save_design"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "Saved",
+          "description": "Result of commands that write one file or directory.",
+          "type": "object",
+          "properties": {
+            "output": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "output"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "doc.get",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "doc.get"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "DocGetResult",
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "value": true
+          },
+          "required": [
+            "path",
+            "value"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "doc.inspect",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "doc.inspect",
+            "inspect"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "InspectResult",
+          "type": "object",
+          "properties": {
+            "compatibility": {
+              "$ref": "#/$defs/CompatibilityReport"
+            },
+            "design": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Design"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "exported_zmx": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "materials": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "output": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "sources": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "surfaces": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "traceable": {
+              "description": "False when an enabled component has a `requires_override` or `unsupported` entry.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "sources",
+            "surfaces",
+            "materials",
+            "traceable",
+            "compatibility"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "doc.export_zmx",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "doc.export_zmx",
+            "export_zmx"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "Saved",
+          "description": "Result of commands that write one file or directory.",
+          "type": "object",
+          "properties": {
+            "output": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "output"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "doc.set",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "doc.set"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "DocSetResult",
+          "description": "What a document looks like, without its content.",
+          "type": "object",
+          "properties": {
+            "assembly": {
+              "description": "False for a single unplaced system, which is traced verbatim.",
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            },
+            "occurrences": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "parts": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "path": {
+              "description": "The pointer as applied, with `@<id>` replaced by indices.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "name",
+            "parts",
+            "occurrences",
+            "assembly"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "doc.replace",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "doc.replace"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "DocSummary",
+          "description": "What a document looks like, without its content.",
+          "type": "object",
+          "properties": {
+            "assembly": {
+              "description": "False for a single unplaced system, which is traced verbatim.",
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            },
+            "occurrences": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "parts": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "name",
+            "parts",
+            "occurrences",
+            "assembly"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "component.add",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "component.add"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "ComponentAdded",
+          "description": "What a document looks like, without its content.",
+          "type": "object",
+          "properties": {
+            "assembly": {
+              "description": "False for a single unplaced system, which is traced verbatim.",
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            },
+            "occurrence": {
+              "type": "string"
+            },
+            "occurrences": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "part": {
+              "type": "string"
+            },
+            "parts": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "part",
+            "occurrence",
+            "name",
+            "parts",
+            "occurrences",
+            "assembly"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "component.remove",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "component.remove"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "ComponentChanged",
+          "description": "What a document looks like, without its content.",
+          "type": "object",
+          "properties": {
+            "assembly": {
+              "description": "False for a single unplaced system, which is traced verbatim.",
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "The occurrence that was removed, or the new copy.",
+              "type": "string"
+            },
+            "occurrences": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "parts": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "occurrence",
+            "name",
+            "parts",
+            "occurrences",
+            "assembly"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "component.duplicate",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "component.duplicate"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "ComponentChanged",
+          "description": "What a document looks like, without its content.",
+          "type": "object",
+          "properties": {
+            "assembly": {
+              "description": "False for a single unplaced system, which is traced verbatim.",
+              "type": "boolean"
+            },
+            "name": {
+              "type": "string"
+            },
+            "occurrence": {
+              "description": "The occurrence that was removed, or the new copy.",
+              "type": "string"
+            },
+            "occurrences": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "parts": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "occurrence",
+            "name",
+            "parts",
+            "occurrences",
+            "assembly"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "analysis.trace",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "analysis.trace",
+            "trace"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "TraceResult",
+          "type": "object",
+          "properties": {
+            "budget_percent_of_reference": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "detected_percent_of_reference": {
+              "type": "number",
+              "format": "double"
+            },
+            "detector_percent_of_reference": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "exported_zmx": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "launched_rays": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "median_seconds": {
+              "type": "number",
+              "format": "double"
+            },
+            "output": {
+              "description": "Saved calculation record, if `output` was given.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "record": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RunOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reference_plane": {
+              "type": "string"
+            },
+            "relative_budget_closure_error": {
+              "type": "number",
+              "format": "double"
+            },
+            "warnings": {
+              "description": "Unresolved weight and other conditions worth checking in the record.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "worker_threads": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "reference_plane",
+            "launched_rays",
+            "detected_percent_of_reference",
+            "budget_percent_of_reference",
+            "detector_percent_of_reference",
+            "relative_budget_closure_error",
+            "median_seconds",
+            "worker_threads",
+            "warnings"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "run.replay",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "run.replay",
+            "replay"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "TraceResult",
+          "type": "object",
+          "properties": {
+            "budget_percent_of_reference": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "detected_percent_of_reference": {
+              "type": "number",
+              "format": "double"
+            },
+            "detector_percent_of_reference": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number",
+                "format": "double"
+              }
+            },
+            "exported_zmx": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "launched_rays": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "median_seconds": {
+              "type": "number",
+              "format": "double"
+            },
+            "output": {
+              "description": "Saved calculation record, if `output` was given.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "record": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RunOutput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reference_plane": {
+              "type": "string"
+            },
+            "relative_budget_closure_error": {
+              "type": "number",
+              "format": "double"
+            },
+            "warnings": {
+              "description": "Unresolved weight and other conditions worth checking in the record.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "worker_threads": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "reference_plane",
+            "launched_rays",
+            "detected_percent_of_reference",
+            "budget_percent_of_reference",
+            "detector_percent_of_reference",
+            "relative_budget_closure_error",
+            "median_seconds",
+            "worker_threads",
+            "warnings"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "run.open",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "run.open"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "RunOpened",
+          "type": "object",
+          "properties": {
+            "record": {
+              "$ref": "#/$defs/RunRecord"
+            }
+          },
+          "required": [
+            "record"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "run.save",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "run.save",
+            "save_run"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "Saved",
+          "description": "Result of commands that write one file or directory.",
+          "type": "object",
+          "properties": {
+            "output": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "output"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "run.export_screen",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "run.export_screen",
+            "export_screen"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "Saved",
+          "description": "Result of commands that write one file or directory.",
+          "type": "object",
+          "properties": {
+            "output": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "output"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "study.scan",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "study.scan",
+            "scan"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "ScanResult",
+          "type": "object",
+          "properties": {
+            "cases": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "completed": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "directory": {
+              "type": "string"
+            },
+            "failed": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "manifest": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ScanManifest"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "output": {
+              "description": "The saved `scan.json`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "output",
+            "directory",
+            "cases",
+            "completed",
+            "failed"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "study.resume",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "study.resume",
+            "resume_scan"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "ScanResult",
+          "type": "object",
+          "properties": {
+            "cases": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "completed": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "directory": {
+              "type": "string"
+            },
+            "failed": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "manifest": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ScanManifest"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "output": {
+              "description": "The saved `scan.json`.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "output",
+            "directory",
+            "cases",
+            "completed",
+            "failed"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "study.convergence",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "study.convergence",
+            "convergence"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "ConvergenceResult",
+          "type": "object",
+          "properties": {
+            "cases": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "comparisons": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "output": {
+              "description": "The saved `convergence.json`.",
+              "type": "string"
+            },
+            "report": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ConvergenceReport"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "output",
+            "cases",
+            "comparisons",
+            "failed"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "study.open",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "study.open"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "StudyOpened",
+          "type": "object",
+          "properties": {
+            "manifest": {
+              "$ref": "#/$defs/ScanManifest"
+            }
+          },
+          "required": [
+            "manifest"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "session.undo",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "session.undo"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "SessionStatus",
+          "description": "`session.status`: the state of the session without the document.",
+          "type": "object",
+          "properties": {
+            "can_redo": {
+              "type": "boolean"
+            },
+            "can_undo": {
+              "type": "boolean"
+            },
+            "catalogs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "dirty": {
+              "description": "The document has changes that are not saved.",
+              "type": "boolean"
+            },
+            "document": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DocSummary"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "has_document": {
+              "type": "boolean"
+            },
+            "path": {
+              "description": "File the document was opened from or last saved to.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "redo_depth": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "undo_depth": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "revision",
+            "has_document",
+            "dirty",
+            "can_undo",
+            "can_redo",
+            "undo_depth",
+            "redo_depth",
+            "catalogs"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "session.redo",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "session.redo"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "SessionStatus",
+          "description": "`session.status`: the state of the session without the document.",
+          "type": "object",
+          "properties": {
+            "can_redo": {
+              "type": "boolean"
+            },
+            "can_undo": {
+              "type": "boolean"
+            },
+            "catalogs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "dirty": {
+              "description": "The document has changes that are not saved.",
+              "type": "boolean"
+            },
+            "document": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DocSummary"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "has_document": {
+              "type": "boolean"
+            },
+            "path": {
+              "description": "File the document was opened from or last saved to.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "redo_depth": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "undo_depth": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "revision",
+            "has_document",
+            "dirty",
+            "can_undo",
+            "can_redo",
+            "undo_depth",
+            "redo_depth",
+            "catalogs"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
+      ]
+    },
+    {
+      "title": "session.status",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "session.status"
+          ]
+        },
+        "error": {
+          "$ref": "#/$defs/ErrorInfo"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "title": "SessionStatus",
+          "description": "`session.status`: the state of the session without the document.",
+          "type": "object",
+          "properties": {
+            "can_redo": {
+              "type": "boolean"
+            },
+            "can_undo": {
+              "type": "boolean"
+            },
+            "catalogs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "dirty": {
+              "description": "The document has changes that are not saved.",
+              "type": "boolean"
+            },
+            "document": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/DocSummary"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "has_document": {
+              "type": "boolean"
+            },
+            "path": {
+              "description": "File the document was opened from or last saved to.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "redo_depth": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            },
+            "revision": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "undo_depth": {
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "revision",
+            "has_document",
+            "dirty",
+            "can_undo",
+            "can_redo",
+            "undo_depth",
+            "redo_depth",
+            "catalogs"
+          ]
+        },
+        "revision": {
+          "description": "Revision of the session after the command.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "ok",
+        "command",
+        "revision"
       ]
     }
-  },
-  "required": [
-    "ok",
-    "command"
   ],
   "$defs": {
     "Aperture": {
@@ -358,6 +2069,26 @@
             "coefficients"
           ]
         }
+      ]
+    },
+    "CommandSummary": {
+      "description": "One entry of `command.list`.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/Kind"
+        },
+        "summary": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "summary",
+        "kind"
       ]
     },
     "CompatibilityEntry": {
@@ -742,46 +2473,6 @@
         "timing_definition"
       ]
     },
-    "ConvergenceResult": {
-      "type": "object",
-      "properties": {
-        "cases": {
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0
-        },
-        "comparisons": {
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0
-        },
-        "failed": {
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0
-        },
-        "output": {
-          "description": "The saved `convergence.json`.",
-          "type": "string"
-        },
-        "report": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ConvergenceReport"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "required": [
-        "output",
-        "cases",
-        "comparisons",
-        "failed"
-      ]
-    },
     "Design": {
       "description": "The design document. Compile it with [`Design::compile`] or [`Design::trace_scene`].",
       "type": "object",
@@ -1125,64 +2816,41 @@
         "gaussian_width_mm"
       ]
     },
-    "Document": {
-      "description": "A document returned by `open`.",
-      "oneOf": [
-        {
-          "type": "object",
-          "properties": {
-            "design": {
-              "$ref": "#/$defs/Design"
-            },
-            "kind": {
-              "type": "string",
-              "const": "design"
-            }
-          },
-          "required": [
-            "kind",
-            "design"
-          ]
+    "DocSummary": {
+      "description": "What a document looks like, without its content.",
+      "type": "object",
+      "properties": {
+        "assembly": {
+          "description": "False for a single unplaced system, which is traced verbatim.",
+          "type": "boolean"
         },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "run"
-            },
-            "record": {
-              "$ref": "#/$defs/RunRecord"
-            }
-          },
-          "required": [
-            "kind",
-            "record"
-          ]
+        "name": {
+          "type": "string"
         },
-        {
-          "type": "object",
-          "properties": {
-            "kind": {
-              "type": "string",
-              "const": "scan"
-            },
-            "manifest": {
-              "$ref": "#/$defs/ScanManifest"
-            }
-          },
-          "required": [
-            "kind",
-            "manifest"
-          ]
+        "occurrences": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "parts": {
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
         }
+      },
+      "required": [
+        "name",
+        "parts",
+        "occurrences",
+        "assembly"
       ]
     },
     "ErrorInfo": {
+      "title": "ErrorInfo",
       "type": "object",
       "properties": {
         "code": {
-          "description": "Stable snake_case identifier, e.g. `io`, `invalid_json`, `invalid_request`,\n`invalid_scene`, `design`, `zmx`, `plan`, `cases_failed`, `cancelled`.",
+          "description": "Stable snake_case identifier, e.g. `io`, `invalid_json`, `invalid_request`,\n`invalid_scene`, `design`, `zmx`, `plan`, `cases_failed`, `cancelled`, `revision`,\n`no_document`.",
           "type": "string"
         },
         "message": {
@@ -1193,62 +2861,6 @@
       "required": [
         "code",
         "message"
-      ]
-    },
-    "InspectResult": {
-      "type": "object",
-      "properties": {
-        "compatibility": {
-          "$ref": "#/$defs/CompatibilityReport"
-        },
-        "design": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Design"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "exported_zmx": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "materials": {
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0
-        },
-        "output": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "sources": {
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0
-        },
-        "surfaces": {
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0
-        },
-        "traceable": {
-          "description": "False when an enabled component has a `requires_override` or `unsupported` entry.",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "sources",
-        "surfaces",
-        "materials",
-        "traceable",
-        "compatibility"
       ]
     },
     "Interaction": {
@@ -1409,6 +3021,26 @@
         "code",
         "message",
         "blocking"
+      ]
+    },
+    "Kind": {
+      "description": "What a command may do.",
+      "oneOf": [
+        {
+          "description": "Reads the document or files and never changes the document. Undo is not involved.",
+          "type": "string",
+          "const": "query"
+        },
+        {
+          "description": "Changes the document: undoable, bumps the revision, accepts `expected_revision`.",
+          "type": "string",
+          "const": "mutation"
+        },
+        {
+          "description": "A long calculation. It runs on the calling thread; cancellation and progress come\nthrough the [`Context`].",
+          "type": "string",
+          "const": "job"
+        }
       ]
     },
     "LaunchInput": {
@@ -1828,60 +3460,6 @@
       },
       "required": [
         "wavelength_um"
-      ]
-    },
-    "Outcome": {
-      "description": "Result of one request; the shape follows the request `command`.",
-      "anyOf": [
-        {
-          "type": "object",
-          "properties": {
-            "version": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "version"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "schema": {
-              "$ref": "#/$defs/Schema"
-            }
-          },
-          "required": [
-            "schema"
-          ]
-        },
-        {
-          "$ref": "#/$defs/Document"
-        },
-        {
-          "$ref": "#/$defs/InspectResult"
-        },
-        {
-          "$ref": "#/$defs/TraceResult"
-        },
-        {
-          "$ref": "#/$defs/ScanResult"
-        },
-        {
-          "$ref": "#/$defs/ConvergenceResult"
-        },
-        {
-          "description": "`save_design`, `save_run`, `export_zmx` and `export_screen`.",
-          "type": "object",
-          "properties": {
-            "output": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "output"
-          ]
-        }
       ]
     },
     "Parameter": {
@@ -2881,50 +4459,6 @@
       },
       "additionalProperties": false
     },
-    "ScanResult": {
-      "type": "object",
-      "properties": {
-        "cases": {
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0
-        },
-        "completed": {
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0
-        },
-        "directory": {
-          "type": "string"
-        },
-        "failed": {
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0
-        },
-        "manifest": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ScanManifest"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "output": {
-          "description": "The saved `scan.json`.",
-          "type": "string"
-        }
-      },
-      "required": [
-        "output",
-        "directory",
-        "cases",
-        "completed",
-        "failed"
-      ]
-    },
     "Scene": {
       "description": "Optical model: materials, surfaces, sources and trace limits.\nLengths are mm and wavelengths are micrometres. `examples/*.json` use this format.",
       "type": "object",
@@ -3549,91 +5083,6 @@
       "required": [
         "keep_terminals",
         "path_launch_count"
-      ]
-    },
-    "TraceResult": {
-      "type": "object",
-      "properties": {
-        "budget_percent_of_reference": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "number",
-            "format": "double"
-          }
-        },
-        "detected_percent_of_reference": {
-          "type": "number",
-          "format": "double"
-        },
-        "detector_percent_of_reference": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "number",
-            "format": "double"
-          }
-        },
-        "exported_zmx": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "launched_rays": {
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0
-        },
-        "median_seconds": {
-          "type": "number",
-          "format": "double"
-        },
-        "output": {
-          "description": "Saved calculation record, if `output` was given.",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "record": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/RunOutput"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "reference_plane": {
-          "type": "string"
-        },
-        "relative_budget_closure_error": {
-          "type": "number",
-          "format": "double"
-        },
-        "warnings": {
-          "description": "Unresolved weight and other conditions worth checking in the record.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
-        "worker_threads": {
-          "type": "integer",
-          "format": "uint",
-          "minimum": 0
-        }
-      },
-      "required": [
-        "reference_plane",
-        "launched_rays",
-        "detected_percent_of_reference",
-        "budget_percent_of_reference",
-        "detector_percent_of_reference",
-        "relative_budget_closure_error",
-        "median_seconds",
-        "worker_threads",
-        "warnings"
       ]
     },
     "Vignetting": {

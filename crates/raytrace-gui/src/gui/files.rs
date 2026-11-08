@@ -1,7 +1,10 @@
 use super::*;
-use raytrace_engine::engine::{
-    self, Document, ExportZmxRequest, ModelInput, OpenRequest, Outcome, Request, SaveDesignRequest,
-    SaveRunRequest,
+use raytrace_engine::{
+    Session, commands,
+    engine::{
+        DocOpenRequest, DocSaveRequest, EngineError, ExportZmxRequest, ModelInput, RunOpenRequest,
+        SaveRunRequest,
+    },
 };
 
 impl App {
@@ -134,11 +137,11 @@ impl App {
                 .add_filter("Raytrace", &["json"])
                 .save_file()
             {
-                let request = Request::SaveDesign(SaveDesignRequest {
-                    design: Box::new(self.design.clone()),
-                    output: path.clone(),
-                });
-                match engine::execute(request) {
+                let request = DocSaveRequest {
+                    design: Some(Box::new(self.design.clone())),
+                    output: Some(path.clone()),
+                };
+                match Session::new().run(commands::DOC_SAVE, request) {
                     Ok(_) => {
                         self.mark_saved();
                         self.path = Some(path);
@@ -161,11 +164,11 @@ impl App {
                 .save_file()
             {
                 let record = self.result.as_ref().unwrap().record(false);
-                let request = Request::SaveRun(SaveRunRequest {
+                let request = SaveRunRequest {
                     record: Box::new(record),
                     output: path,
-                });
-                match engine::execute(request) {
+                };
+                match Session::new().run(commands::RUN_SAVE, request) {
                     Ok(_) => self.status = "計算時の条件と結果を保存しました".into(),
                     Err(e) => self.error = Some(e.to_string()),
                 }
@@ -203,12 +206,12 @@ impl App {
                 .add_filter("Zemax", &["zmx"])
                 .save_file()
             {
-                let request = Request::ExportZmx(ExportZmxRequest {
-                    model: ModelInput::Design(Box::new(self.design.clone())),
+                let request = ExportZmxRequest {
+                    model: Some(ModelInput::Design(Box::new(self.design.clone()))),
                     catalogs: Vec::new(),
                     output: path,
-                });
-                match engine::execute(request) {
+                };
+                match Session::new().run(commands::DOC_EXPORT_ZMX, request) {
                     Ok(_) => self.status = "ZMXを書き出しました".into(),
                     Err(e) => self.error = Some(e.to_string()),
                 }
@@ -297,17 +300,22 @@ impl App {
 
     pub(super) fn add_file(&mut self, path: PathBuf, kind: PartKind, ctx: &egui::Context) {
         self.status = "部品を読込中…".into();
-        let request = Request::Open(OpenRequest {
+        let request = DocOpenRequest {
             path,
             catalogs: self.catalogs.clone(),
-            viewer_paths: false,
-        });
-        self.submit(ctx, request, false, None, move |result| {
+            include_design: true,
+            expected_revision: None,
+        };
+        self.submit(ctx, false, None, move |session, context| {
             Job::Added(
                 kind,
-                match result {
-                    Ok(Outcome::Opened(Document::Design { design })) => Ok(design),
-                    Ok(_) => Err("部品にはZMXまたはプロジェクトJSONを指定してください".into()),
+                match session.call(commands::DOC_OPEN, request, context) {
+                    Ok(opened) => opened
+                        .design
+                        .ok_or_else(|| "部品の内容が返されませんでした".to_string()),
+                    Err(e) if matches!(e.code, "run_record" | "study_directory") => {
+                        Err("部品にはZMXまたはプロジェクトJSONを指定してください".into())
+                    }
                     Err(e) => Err(e.message),
                 },
             )
@@ -316,16 +324,37 @@ impl App {
     pub(super) fn load(&mut self, path: PathBuf, ctx: &egui::Context) {
         self.status = "ファイルを読込中…".into();
         self.loading_path = Some(path.clone());
-        let request = Request::Open(OpenRequest {
-            path,
+        let request = DocOpenRequest {
+            path: path.clone(),
             catalogs: self.catalogs.clone(),
-            viewer_paths: true,
-        });
-        self.submit(ctx, request, false, None, |result| match result {
-            Ok(Outcome::Opened(Document::Design { design })) => Job::Loaded(Ok(design)),
-            Ok(Outcome::Opened(Document::Run { record })) => Job::LoadedRun(Ok(record)),
-            Ok(_) => Job::Loaded(Err("走査記録は「走査記録を開く…」から開いてください".into())),
-            Err(e) => Job::Loaded(Err(e.message)),
+            include_design: true,
+            expected_revision: None,
+        };
+        self.submit(ctx, false, None, move |session, context| {
+            match session.call(commands::DOC_OPEN, request, context) {
+                Ok(opened) => match opened.design {
+                    Some(design) => Job::Loaded(Ok(design)),
+                    None => Job::Loaded(Err("設計文書が返されませんでした".into())),
+                },
+                // A calculation record opens as a result view instead of a design.
+                Err(EngineError {
+                    code: "run_record", ..
+                }) => {
+                    let request = RunOpenRequest {
+                        path,
+                        viewer_paths: true,
+                    };
+                    match session.call(commands::RUN_OPEN, request, context) {
+                        Ok(opened) => Job::LoadedRun(Ok(opened.record)),
+                        Err(e) => Job::LoadedRun(Err(e.message)),
+                    }
+                }
+                Err(EngineError {
+                    code: "study_directory",
+                    ..
+                }) => Job::Loaded(Err("走査記録は「走査記録を開く…」から開いてください".into())),
+                Err(e) => Job::Loaded(Err(e.message)),
+            }
         });
     }
 }

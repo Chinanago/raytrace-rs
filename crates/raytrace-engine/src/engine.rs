@@ -1,91 +1,41 @@
-//! JSON request/response entry point shared by the CLI and the GUI.
+//! Shared types of the commands: inputs, results, errors and the response envelope.
 //!
-//! Every calculation and file operation is one [`Request`]. The CLI turns its arguments
-//! into a request generically (`raytrace-rs COMMAND field=value ...` or `run REQUEST.json`);
-//! the GUI builds the same values in memory. [`execute`] runs a request and [`respond`]
-//! wraps the outcome in the [`Response`] envelope printed by the CLI. The `schema`
-//! command (`raytrace-rs schema name=request`) describes both formats.
-mod run;
+//! Every calculation and file operation is a command of the registry ([`crate::command`])
+//! run by a [`Session`](crate::Session). The input types here are the typed parameters of
+//! those commands: the CLI builds the same values from `FIELD=text` arguments (or
+//! `{"command": ID, ...}` JSON) and the GUI builds them in memory. `schema.get name=request`
+//! describes all commands, and `command.describe` one of them.
+pub(crate) mod run;
 
 use crate::{convergence, scan};
 use raytrace_core::{
-    model::{Mode, Ray, Sampling, Scene},
+    model::{Material, Mode, Ray, Sampling, Scene},
     screen::ScreenRoi,
-    trace::TraceControl,
 };
+use raytrace_doc::PartKind;
 use raytrace_io::{
     compatibility::CompatibilityReport,
     design::{self, Design},
     export::DisplaySettings,
     record::{RUN_FORMAT, RunRecord},
-    zemax,
 };
 pub use run::{Benchmark, RunOutput, SurfacePercent};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, path::Path, path::PathBuf};
-
-/// One operation. `command` selects the operation; the other fields depend on it.
-#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "command", rename_all = "snake_case")]
-pub enum Request {
-    /// Report the software version.
-    Version,
-    /// Return one JSON Schema, or write schemas to files.
-    Schema(SchemaRequest),
-    /// Load a design, ZMX, calculation record or scan directory and return it.
-    Open(OpenRequest),
-    /// Load a model, report its compatibility and optionally save it as a design file.
-    Inspect(InspectRequest),
-    /// Trace a model and return (and optionally save) the calculation record.
-    Trace(TraceRequest),
-    /// Rerun a calculation record with its recorded optical conditions.
-    Replay(ReplayRequest),
-    /// Run a parameter scan into a new directory.
-    Scan(ScanRequest),
-    /// Continue the unfinished cases of a scan directory.
-    ResumeScan(ResumeScanRequest),
-    /// Trace the model with varied ray counts, seeds, pixels and CAD deflections.
-    Convergence(ConvergenceRequest),
-    /// Save a design as JSON.
-    SaveDesign(SaveDesignRequest),
-    /// Save a calculation record as JSON.
-    SaveRun(SaveRunRequest),
-    /// Export a standalone model as ZMX.
-    ExportZmx(ExportZmxRequest),
-    /// Write CSV/PNG/metadata files for one screen of a calculation record.
-    ExportScreen(ExportScreenRequest),
-}
-
-impl Request {
-    /// The `command` value of this request.
-    pub fn command(&self) -> &'static str {
-        match self {
-            Self::Version => "version",
-            Self::Schema(_) => "schema",
-            Self::Open(_) => "open",
-            Self::Inspect(_) => "inspect",
-            Self::Trace(_) => "trace",
-            Self::Replay(_) => "replay",
-            Self::Scan(_) => "scan",
-            Self::ResumeScan(_) => "resume_scan",
-            Self::Convergence(_) => "convergence",
-            Self::SaveDesign(_) => "save_design",
-            Self::SaveRun(_) => "save_run",
-            Self::ExportZmx(_) => "export_zmx",
-            Self::ExportScreen(_) => "export_screen",
-        }
-    }
-}
+use std::{any::Any, collections::BTreeMap, fs, path::Path, path::PathBuf};
 
 /// An optical model given by file path or inline JSON. Exactly one key.
+///
+/// Commands that work on a document accept it as the optional `model`. Without it they use
+/// the document of the session. With it they work on that model only and leave the session
+/// unchanged (one-shot use).
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelInput {
     /// `.zmx`, design JSON, legacy project JSON or scene JSON file.
     Path(PathBuf),
-    /// Inline design JSON (the `schema name=design` format).
+    /// Inline design JSON (the `schema.get name=design` format).
     Design(Box<Design>),
-    /// Inline scene JSON (the `schema name=scene` format, as in `examples/*.json`).
+    /// Inline scene JSON (the `schema.get name=scene` format, as in `examples/*.json`).
     Scene(Box<Scene>),
 }
 
@@ -123,185 +73,17 @@ pub struct Overrides {
     pub ignore_coatings: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+/// Parameters of a command that takes none.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct OpenRequest {
-    /// File, or a scan directory containing `scan.json`.
-    pub path: PathBuf,
-    /// Extra AGF catalog folders for ZMX import.
-    #[serde(default)]
-    pub catalogs: Vec<PathBuf>,
-    /// For calculation records: retrace up to 64 sample rays to draw light paths.
-    #[serde(default)]
-    pub viewer_paths: bool,
-}
+pub struct Empty {}
 
-#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct InspectRequest {
-    pub model: ModelInput,
-    /// Extra AGF catalog folders for ZMX import.
-    #[serde(default)]
-    pub catalogs: Vec<PathBuf>,
-    /// Save the imported design JSON here.
-    #[serde(default)]
-    pub output: Option<PathBuf>,
-    /// Also export the model as ZMX (standalone models only).
-    #[serde(default)]
-    pub export_zmx: Option<PathBuf>,
-    #[serde(default)]
-    pub ignore_coatings: bool,
-    #[serde(default)]
-    pub wavelength_um: Option<f64>,
-    /// Return the imported design in the result.
-    #[serde(default)]
-    pub include_design: bool,
-}
+// ---- app, schema, command -------------------------------------------------------------
 
-#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct TraceRequest {
-    pub model: ModelInput,
-    /// Extra AGF catalog folders for ZMX import.
-    #[serde(default)]
-    pub catalogs: Vec<PathBuf>,
-    /// Explicit launch rays; omitted uses the model sources.
-    #[serde(default)]
-    pub rays: Option<RaysInput>,
-    #[serde(default)]
-    pub overrides: Overrides,
-    /// Worker threads; omitted uses the runtime default.
-    #[serde(default)]
-    pub threads: Option<usize>,
-    /// Timed repetitions; `benchmark` reports their median.
-    #[serde(default = "one")]
-    pub repeat: usize,
-    /// Run one untimed trace before the timed repetitions.
-    #[serde(default)]
-    pub warmup: bool,
-    /// Save terminal rays in the report.
-    #[serde(default)]
-    pub terminals: bool,
-    /// Save every path segment of the first N launch rays in input order.
-    #[serde(default)]
-    pub paths: u64,
-    /// Replace `report.paths` with up to N sample rays spread over all sources (GUI preview).
-    #[serde(default)]
-    pub preview_paths: usize,
-    /// Reject generated runs with more launch rays than this.
-    #[serde(default)]
-    pub max_total_rays: Option<usize>,
-    /// Also export the effective model as ZMX before tracing.
-    #[serde(default)]
-    pub export_zmx: Option<PathBuf>,
-    /// Save the calculation record (the `schema name=run` format) here.
-    #[serde(default)]
-    pub output: Option<PathBuf>,
-    /// Return the full calculation record in the result.
-    #[serde(default)]
-    pub include_record: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ReplayRequest {
-    pub record: RecordInput,
-    /// Worker threads; omitted uses the recorded count.
-    #[serde(default)]
-    pub threads: Option<usize>,
-    #[serde(default = "one")]
-    pub repeat: usize,
-    #[serde(default)]
-    pub warmup: bool,
-    /// Override the recorded terminal-ray setting.
-    #[serde(default)]
-    pub terminals: Option<bool>,
-    /// Override the recorded path count.
-    #[serde(default)]
-    pub paths: Option<u64>,
-    #[serde(default)]
-    pub output: Option<PathBuf>,
-    #[serde(default)]
-    pub include_record: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ScanRequest {
-    pub model: ModelInput,
-    /// Extra AGF catalog folders for ZMX import.
-    #[serde(default)]
-    pub catalogs: Vec<PathBuf>,
-    pub plan: scan::ScanPlan,
-    /// New directory for `scan.json` and the case records.
-    pub output: PathBuf,
-    /// Return the scan manifest in the result.
-    #[serde(default)]
-    pub include_manifest: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ResumeScanRequest {
-    pub directory: PathBuf,
-    #[serde(default)]
-    pub include_manifest: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConvergenceRequest {
-    /// Model file (`model.path`); CAD deflection comparisons need the original
-    /// STEP-referencing ZMX, because each case re-reads it.
-    pub model: ModelInput,
-    #[serde(default)]
-    pub plan: convergence::ConvergencePlan,
-    /// Directory for `convergence.json` and the case records.
-    pub output: PathBuf,
-    #[serde(default)]
-    pub include_report: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SaveDesignRequest {
-    pub design: Box<Design>,
-    pub output: PathBuf,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SaveRunRequest {
-    pub record: Box<RunRecord>,
-    pub output: PathBuf,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ExportZmxRequest {
-    pub model: ModelInput,
-    /// Extra AGF catalog folders for ZMX import.
-    #[serde(default)]
-    pub catalogs: Vec<PathBuf>,
-    pub output: PathBuf,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ExportScreenRequest {
-    pub record: RecordInput,
-    /// Zero-based index into `report.detectors`.
-    #[serde(default)]
-    pub detector: usize,
-    /// Output directory.
-    pub output: PathBuf,
-    #[serde(default = "default_display")]
-    pub display: DisplaySettings,
-    /// Local-mm position of the extra X/Y profiles.
-    #[serde(default)]
-    pub cursor_mm: Option<[f64; 2]>,
-    #[serde(default)]
-    pub roi: Option<ScreenRoi>,
+/// `app.version`.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct VersionResult {
+    pub version: String,
 }
 
 /// `name` alone returns that schema; with `output` it is written to that file.
@@ -315,19 +97,28 @@ pub struct SchemaRequest {
     pub output: Option<PathBuf>,
 }
 
-/// Names accepted by the `schema` command.
+/// The schema itself, or the file or directory it was written to.
+#[derive(Debug, Default, Serialize, schemars::JsonSchema)]
+pub struct SchemaResult {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<schemars::Schema>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output: Option<PathBuf>,
+}
+
+/// Names accepted by `schema.get`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SchemaName {
-    /// Request accepted by `raytrace-rs run`.
+    /// Request accepted by `raytrace-rs run`: one entry per command.
     Request,
-    /// Response printed by the CLI.
+    /// Response printed by the CLI: the result of each command.
     Response,
     /// Optical model, as in `examples/*.json`.
     Scene,
-    /// Design JSON saved by the GUI and `inspect`.
+    /// Design JSON saved by the GUI and `doc.save`.
     Design,
-    /// Calculation record saved by `trace` and `replay`.
+    /// Calculation record saved by `analysis.trace` and `run.replay`.
     Run,
     ScanPlan,
     /// `scan.json` in a scan directory.
@@ -364,66 +155,194 @@ impl SchemaName {
     }
 }
 
-fn one() -> usize {
-    1
+/// `command.describe`.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DescribeRequest {
+    /// Command id such as `analysis.trace` (a deprecated alias such as `trace` also works).
+    pub id: String,
 }
-fn default_display() -> DisplaySettings {
-    DisplaySettings {
-        peak_normalized: false,
-        square_root: false,
-        maximum_percent: None,
+
+/// One entry of `command.list`.
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
+pub struct CommandSummary {
+    pub id: String,
+    pub summary: String,
+    pub kind: crate::command::Kind,
+}
+
+/// `command.list`: every registered command and the deprecated short names.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct CommandList {
+    pub commands: Vec<CommandSummary>,
+    /// Deprecated short names of the previous interface and the command each one runs.
+    pub aliases: BTreeMap<String, String>,
+}
+
+/// `command.describe`: a command with its input and output JSON Schemas.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct CommandDescription {
+    pub id: String,
+    pub summary: String,
+    pub kind: crate::command::Kind,
+    /// Deprecated short names that run this command.
+    pub aliases: Vec<String>,
+    /// Schema of the parameters (the request fields except `command`).
+    pub input_schema: schemars::Schema,
+    /// Schema of `result`.
+    pub output_schema: schemars::Schema,
+}
+
+// ---- documents --------------------------------------------------------------------------
+
+/// What a document looks like, without its content.
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
+pub struct DocSummary {
+    pub name: String,
+    pub parts: usize,
+    pub occurrences: usize,
+    /// False for a single unplaced system, which is traced verbatim.
+    pub assembly: bool,
+}
+
+impl DocSummary {
+    pub fn of(design: &Design) -> Self {
+        Self {
+            name: design.display_name().to_string(),
+            parts: design.parts.len(),
+            occurrences: design.occurrences.len(),
+            assembly: design.is_assembly(),
+        }
     }
 }
 
-/// CLI output envelope: `ok`, the request `command`, then `result` and/or `error`.
+/// `doc.new`: start an empty assembly as the session document.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct DocNewRequest {
+    /// Document name; omitted keeps the default.
+    pub name: Option<String>,
+    /// Extra AGF catalog folders for later ZMX imports in this session.
+    pub catalogs: Vec<PathBuf>,
+    /// Reject the command unless the session is at this revision.
+    pub expected_revision: Option<u64>,
+}
+
+/// `doc.open`: open a ZMX, design JSON, legacy project JSON or scene JSON as the session document.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DocOpenRequest {
+    pub path: PathBuf,
+    /// Extra AGF catalog folders for ZMX import; they stay with the session.
+    #[serde(default)]
+    pub catalogs: Vec<PathBuf>,
+    /// Also return the opened design in the result.
+    #[serde(default)]
+    pub include_design: bool,
+    /// Reject the command unless the session is at this revision.
+    #[serde(default)]
+    pub expected_revision: Option<u64>,
+}
+
+/// Result of `doc.open`.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-pub struct Response {
-    pub ok: bool,
-    pub command: String,
+pub struct DocOpened {
+    pub path: PathBuf,
+    #[serde(flatten)]
+    pub summary: DocSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<ErrorInfo>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub result: Option<Outcome>,
+    pub design: Option<Box<Design>>,
 }
 
-#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
-pub struct ErrorInfo {
-    /// Stable snake_case identifier, e.g. `io`, `invalid_json`, `invalid_request`,
-    /// `invalid_scene`, `design`, `zmx`, `plan`, `cases_failed`, `cancelled`.
-    pub code: String,
-    /// Japanese message for people.
-    pub message: String,
+/// `doc.get`: a JSON Pointer into the design JSON (the whole design by default).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct DocGetRequest {
+    /// JSON Pointer such as `/occurrences/@rod-4/pose`; elements of arrays can be given by
+    /// index or as `@<id>`.
+    pub path: String,
+    /// Read this model instead of the session document.
+    pub model: Option<ModelInput>,
 }
 
-/// Result of one request; the shape follows the request `command`.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-#[serde(untagged)]
-#[allow(clippy::large_enum_variant)]
-pub enum Outcome {
-    Version {
-        version: String,
-    },
-    Schema {
-        schema: schemars::Schema,
-    },
-    Opened(Document),
-    Inspected(InspectResult),
-    Traced(TraceResult),
-    Scanned(ScanResult),
-    Converged(ConvergenceResult),
-    /// `save_design`, `save_run`, `export_zmx` and `export_screen`.
-    Saved {
-        output: PathBuf,
-    },
+pub struct DocGetResult {
+    pub path: String,
+    pub value: serde_json::Value,
 }
 
-/// A document returned by `open`.
+/// `doc.replace`: replace the whole document (undoable).
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DocReplaceRequest {
+    pub design: Box<Design>,
+    /// Reject the command unless the session is at this revision.
+    #[serde(default)]
+    pub expected_revision: Option<u64>,
+}
+
+/// `doc.set`: replace one place of the document, found by JSON Pointer (undoable).
+///
+/// The edited design must read back as a design and compile; otherwise nothing changes.
+/// `id`, `format` and `next_id` cannot be changed, and parts and occurrences cannot be added or
+/// removed this way (use the `component.*` commands).
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DocSetRequest {
+    /// JSON Pointer such as `/occurrences/@rod-4/pose/translation_mm/2`. An array element is
+    /// addressed by index or as `@<id>`, matching the `id` field of the element.
+    pub path: String,
+    /// The new JSON value.
+    pub value: serde_json::Value,
+    /// Reject the command unless the session is at this revision.
+    #[serde(default)]
+    pub expected_revision: Option<u64>,
+}
+
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Document {
-    Design { design: Box<Design> },
-    Run { record: Box<RunRecord> },
-    Scan { manifest: Box<scan::ScanManifest> },
+pub struct DocSetResult {
+    /// The pointer as applied, with `@<id>` replaced by indices.
+    pub path: String,
+    #[serde(flatten)]
+    pub summary: DocSummary,
+}
+
+/// `doc.save`: write a design as JSON.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DocSaveRequest {
+    /// Design to save; omitted saves the session document.
+    #[serde(default)]
+    pub design: Option<Box<Design>>,
+    /// Destination; omitted overwrites the file the session document was opened from or
+    /// saved to.
+    #[serde(default)]
+    pub output: Option<PathBuf>,
+}
+
+/// `doc.inspect`: report the compatibility of a model.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InspectRequest {
+    /// Omitted inspects the session document.
+    #[serde(default)]
+    pub model: Option<ModelInput>,
+    /// Extra AGF catalog folders for ZMX import.
+    #[serde(default)]
+    pub catalogs: Vec<PathBuf>,
+    /// Save the inspected design JSON here.
+    #[serde(default)]
+    pub output: Option<PathBuf>,
+    /// Also export the model as ZMX (standalone models only).
+    #[serde(default)]
+    pub export_zmx: Option<PathBuf>,
+    #[serde(default)]
+    pub ignore_coatings: bool,
+    #[serde(default)]
+    pub wavelength_um: Option<f64>,
+    /// Return the inspected design in the result.
+    #[serde(default)]
+    pub include_design: bool,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -438,6 +357,178 @@ pub struct InspectResult {
     pub compatibility: CompatibilityReport,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub design: Option<Box<Design>>,
+}
+
+/// `doc.export_zmx`.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExportZmxRequest {
+    /// Omitted exports the session document.
+    #[serde(default)]
+    pub model: Option<ModelInput>,
+    /// Extra AGF catalog folders for ZMX import.
+    #[serde(default)]
+    pub catalogs: Vec<PathBuf>,
+    pub output: PathBuf,
+}
+
+/// Result of commands that write one file or directory.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct Saved {
+    pub output: PathBuf,
+}
+
+// ---- components -----------------------------------------------------------------------
+
+/// `component.add`: import a file as a part, or add a generated rod or screen (undoable).
+///
+/// With `path`, the file is imported as a `source`, `optic` (default) or `system` part. Without
+/// it, `kind` must be `rod` or `detector`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct ComponentAddRequest {
+    /// ZMX, design JSON or scene JSON to import.
+    pub path: Option<PathBuf>,
+    /// `source`, `optic` or `system` for a file; `rod` or `detector` without one.
+    pub kind: Option<PartKind>,
+    /// Extra AGF catalog folders for ZMX import (default: those of the session).
+    pub catalogs: Vec<PathBuf>,
+    /// Name of the new placement; omitted uses the name of the part.
+    pub name: Option<String>,
+    /// Material of a rod; omitted uses fused silica.
+    pub material: Option<Material>,
+    /// Display name of the material of a rod.
+    pub material_name: Option<String>,
+    /// Reject the command unless the session is at this revision.
+    pub expected_revision: Option<u64>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ComponentAdded {
+    pub part: String,
+    pub occurrence: String,
+    #[serde(flatten)]
+    pub summary: DocSummary,
+}
+
+/// `component.remove` and `component.duplicate`: one occurrence by id.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ComponentRef {
+    /// Occurrence id such as `rod-4`.
+    pub occurrence: String,
+    /// Reject the command unless the session is at this revision.
+    #[serde(default)]
+    pub expected_revision: Option<u64>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ComponentChanged {
+    /// The occurrence that was removed, or the new copy.
+    pub occurrence: String,
+    #[serde(flatten)]
+    pub summary: DocSummary,
+}
+
+// ---- session ----------------------------------------------------------------------------
+
+/// `session.undo` and `session.redo`.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct HistoryRequest {
+    /// Reject the command unless the session is at this revision.
+    pub expected_revision: Option<u64>,
+}
+
+/// `session.status`: the state of the session without the document.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct SessionStatus {
+    pub revision: u64,
+    pub has_document: bool,
+    /// File the document was opened from or last saved to.
+    pub path: Option<PathBuf>,
+    /// The document has changes that are not saved.
+    pub dirty: bool,
+    pub can_undo: bool,
+    pub can_redo: bool,
+    pub undo_depth: usize,
+    pub redo_depth: usize,
+    pub catalogs: Vec<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub document: Option<DocSummary>,
+}
+
+// ---- calculations -----------------------------------------------------------------------
+
+/// `analysis.trace`: trace a model and return (and optionally save) the calculation record.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TraceRequest {
+    /// Omitted traces the session document.
+    #[serde(default)]
+    pub model: Option<ModelInput>,
+    /// Extra AGF catalog folders for ZMX import.
+    #[serde(default)]
+    pub catalogs: Vec<PathBuf>,
+    /// Explicit launch rays; omitted uses the model sources.
+    #[serde(default)]
+    pub rays: Option<RaysInput>,
+    #[serde(default)]
+    pub overrides: Overrides,
+    /// Worker threads; omitted uses the runtime default.
+    #[serde(default)]
+    pub threads: Option<usize>,
+    /// Timed repetitions; `benchmark` reports their median.
+    #[serde(default = "one")]
+    pub repeat: usize,
+    /// Run one untimed trace before the timed repetitions.
+    #[serde(default)]
+    pub warmup: bool,
+    /// Save terminal rays in the report.
+    #[serde(default)]
+    pub terminals: bool,
+    /// Save every path segment of the first N launch rays in input order.
+    #[serde(default)]
+    pub paths: u64,
+    /// Replace `report.paths` with up to N sample rays spread over all sources (GUI preview).
+    #[serde(default)]
+    pub preview_paths: usize,
+    /// Reject generated runs with more launch rays than this.
+    #[serde(default)]
+    pub max_total_rays: Option<usize>,
+    /// Also export the effective model as ZMX before tracing.
+    #[serde(default)]
+    pub export_zmx: Option<PathBuf>,
+    /// Save the calculation record (the `schema.get name=run` format) here.
+    #[serde(default)]
+    pub output: Option<PathBuf>,
+    /// Return the full calculation record in the result.
+    #[serde(default)]
+    pub include_record: bool,
+}
+
+/// `run.replay`: rerun a calculation record with its recorded optical conditions.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReplayRequest {
+    pub record: RecordInput,
+    /// Worker threads; omitted uses the recorded count.
+    #[serde(default)]
+    pub threads: Option<usize>,
+    #[serde(default = "one")]
+    pub repeat: usize,
+    #[serde(default)]
+    pub warmup: bool,
+    /// Override the recorded terminal-ray setting.
+    #[serde(default)]
+    pub terminals: Option<bool>,
+    /// Override the recorded path count.
+    #[serde(default)]
+    pub paths: Option<u64>,
+    #[serde(default)]
+    pub output: Option<PathBuf>,
+    #[serde(default)]
+    pub include_record: bool,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -459,6 +550,77 @@ pub struct TraceResult {
     pub record: Option<Box<RunOutput>>,
 }
 
+/// `run.open`: load a calculation record.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunOpenRequest {
+    pub path: PathBuf,
+    /// Retrace up to 64 sample rays to draw light paths.
+    #[serde(default)]
+    pub viewer_paths: bool,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct RunOpened {
+    pub record: Box<RunRecord>,
+}
+
+/// `run.save`.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SaveRunRequest {
+    pub record: Box<RunRecord>,
+    pub output: PathBuf,
+}
+
+/// `run.export_screen`: write CSV/PNG/metadata files for one screen of a calculation record.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExportScreenRequest {
+    pub record: RecordInput,
+    /// Zero-based index into `report.detectors`.
+    #[serde(default)]
+    pub detector: usize,
+    /// Output directory.
+    pub output: PathBuf,
+    #[serde(default = "default_display")]
+    pub display: DisplaySettings,
+    /// Local-mm position of the extra X/Y profiles.
+    #[serde(default)]
+    pub cursor_mm: Option<[f64; 2]>,
+    #[serde(default)]
+    pub roi: Option<ScreenRoi>,
+}
+
+// ---- studies ----------------------------------------------------------------------------
+
+/// `study.scan`: run a parameter scan into a new directory.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ScanRequest {
+    /// Omitted scans the session document.
+    #[serde(default)]
+    pub model: Option<ModelInput>,
+    /// Extra AGF catalog folders for ZMX import.
+    #[serde(default)]
+    pub catalogs: Vec<PathBuf>,
+    pub plan: scan::ScanPlan,
+    /// New directory for `scan.json` and the case records.
+    pub output: PathBuf,
+    /// Return the scan manifest in the result.
+    #[serde(default)]
+    pub include_manifest: bool,
+}
+
+/// `study.resume`: continue the unfinished cases of a scan directory.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ResumeScanRequest {
+    pub directory: PathBuf,
+    #[serde(default)]
+    pub include_manifest: bool,
+}
+
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct ScanResult {
     /// The saved `scan.json`.
@@ -469,6 +631,23 @@ pub struct ScanResult {
     pub failed: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub manifest: Option<Box<scan::ScanManifest>>,
+}
+
+/// `study.convergence`: trace the model with varied ray counts, seeds, pixels and CAD deflections.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConvergenceRequest {
+    /// Model file (`model.path`); CAD deflection comparisons need the original
+    /// STEP-referencing ZMX, because each case re-reads it. Omitted uses the file of the
+    /// session document, which must have no unsaved changes.
+    #[serde(default)]
+    pub model: Option<ModelInput>,
+    #[serde(default)]
+    pub plan: convergence::ConvergencePlan,
+    /// Directory for `convergence.json` and the case records.
+    pub output: PathBuf,
+    #[serde(default)]
+    pub include_report: bool,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -482,7 +661,116 @@ pub struct ConvergenceResult {
     pub report: Option<Box<convergence::ConvergenceReport>>,
 }
 
-/// Failure of a request, with a stable code and a Japanese message.
+/// `study.open`: load the manifest of a scan directory.
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StudyOpenRequest {
+    /// Directory containing `scan.json`.
+    pub path: PathBuf,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct StudyOpened {
+    pub manifest: Box<scan::ScanManifest>,
+}
+
+fn one() -> usize {
+    1
+}
+fn default_display() -> DisplaySettings {
+    DisplaySettings {
+        peak_normalized: false,
+        square_root: false,
+        maximum_percent: None,
+    }
+}
+
+// ---- envelope, errors, progress ---------------------------------------------------------
+
+/// CLI output envelope: `ok`, the request `command`, the session `revision`, then `error`
+/// and/or `result`.
+#[derive(Serialize)]
+pub struct Response {
+    pub ok: bool,
+    /// The command as written in the request (a deprecated alias is kept as given).
+    pub command: String,
+    /// Revision of the session after the command.
+    pub revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ErrorInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Box<serde_json::value::RawValue>>,
+    /// The typed result, for in-process callers such as the CLI summary.
+    #[serde(skip)]
+    typed: Option<Box<dyn Any>>,
+}
+
+impl Response {
+    pub(crate) fn new(
+        command: &str,
+        revision: u64,
+        error: Option<ErrorInfo>,
+        result: Option<Box<serde_json::value::RawValue>>,
+        typed: Option<Box<dyn Any>>,
+    ) -> Self {
+        Self {
+            ok: error.is_none(),
+            command: command.into(),
+            revision,
+            error,
+            result,
+            typed,
+        }
+    }
+    /// A failed command: no result, the error code and message.
+    pub fn failure(command: &str, revision: u64, error: EngineError) -> Self {
+        Self::new(
+            command,
+            revision,
+            Some(ErrorInfo {
+                code: error.code.into(),
+                message: error.message,
+            }),
+            None,
+            None,
+        )
+    }
+    /// The result as its Rust type, e.g. [`TraceResult`] for `analysis.trace`.
+    pub fn typed<T: 'static>(&self) -> Option<&T> {
+        self.typed.as_deref()?.downcast_ref()
+    }
+    /// The result as a JSON value (`null` when there is none).
+    pub fn result_value(&self) -> serde_json::Value {
+        self.result
+            .as_ref()
+            .and_then(|raw| serde_json::from_str(raw.get()).ok())
+            .unwrap_or(serde_json::Value::Null)
+    }
+}
+
+impl std::fmt::Debug for Response {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Response")
+            .field("ok", &self.ok)
+            .field("command", &self.command)
+            .field("revision", &self.revision)
+            .field("error", &self.error)
+            .field("result", &self.result)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
+pub struct ErrorInfo {
+    /// Stable snake_case identifier, e.g. `io`, `invalid_json`, `invalid_request`,
+    /// `invalid_scene`, `design`, `zmx`, `plan`, `cases_failed`, `cancelled`, `revision`,
+    /// `no_document`.
+    pub code: String,
+    /// Japanese message for people.
+    pub message: String,
+}
+
+/// Failure of a command, with a stable code and a Japanese message.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EngineError {
     pub code: &'static str,
@@ -498,10 +786,17 @@ impl EngineError {
     pub fn cancelled() -> Self {
         Self::new("cancelled", "計算を中止しました")
     }
-    fn invalid(message: impl Into<String>) -> Self {
+    pub(crate) fn invalid(message: impl Into<String>) -> Self {
         Self::new("invalid_request", message)
     }
-    fn io(path: &Path, error: std::io::Error) -> Self {
+    /// The command needs a document and the session has none.
+    pub fn no_document() -> Self {
+        Self::new(
+            "no_document",
+            "文書が開かれていません。doc.open か doc.new で文書を開くか、model を指定してください",
+        )
+    }
+    pub(crate) fn io(path: &Path, error: std::io::Error) -> Self {
         raytrace_io::Error::io(path, error).into()
     }
 }
@@ -527,138 +822,15 @@ coded_error!(
     raytrace_core::Error
 );
 
-/// Progress reported while a request runs. Ray progress of single traces is in
-/// [`TraceControl::completed`] and [`TraceControl::total`].
+/// Progress reported while a command runs. Ray progress of single traces is in
+/// [`TraceControl::completed`](raytrace_core::trace::TraceControl) and `total`.
 #[non_exhaustive]
 pub enum Progress<'a> {
     /// The scan manifest after each case changes state.
     Scan(&'a scan::ScanManifest),
 }
 
-/// Run one request without cancellation or progress callbacks.
-pub fn execute(request: Request) -> Result<Outcome, EngineError> {
-    execute_with(request, &TraceControl::default(), &mut |_| {})
-}
-
-/// Parse a JSON request, run it and wrap the result in the response envelope.
-pub fn execute_json(text: &str) -> Response {
-    match serde_json::from_str::<Request>(text) {
-        Ok(request) => {
-            let command = request.command();
-            respond(command, execute(request))
-        }
-        Err(error) => respond(
-            "unknown",
-            Err(EngineError::invalid(format!(
-                "リクエストJSONが不正です（schema name=request を確認してください）: {error}"
-            ))),
-        ),
-    }
-}
-
-/// Wrap an outcome in the response envelope. Scans and convergence studies with failed
-/// cases keep their result and also report `cases_failed`.
-pub fn respond(command: &str, result: Result<Outcome, EngineError>) -> Response {
-    let (result, error) = match result {
-        Ok(outcome) => {
-            let failed = match &outcome {
-                Outcome::Scanned(s) if s.failed > 0 => Some(format!(
-                    "走査で{}ケースが失敗しました。{}を確認してください",
-                    s.failed,
-                    s.output.display()
-                )),
-                Outcome::Converged(c) if c.failed > 0 => Some(format!(
-                    "収束確認で{}ケースが失敗しました。{}を確認してください",
-                    c.failed,
-                    c.output.display()
-                )),
-                _ => None,
-            };
-            let error = failed.map(|message| ErrorInfo {
-                code: "cases_failed".into(),
-                message,
-            });
-            (Some(outcome), error)
-        }
-        Err(error) => (
-            None,
-            Some(ErrorInfo {
-                code: error.code.into(),
-                message: error.message,
-            }),
-        ),
-    };
-    Response {
-        ok: error.is_none(),
-        command: command.into(),
-        error,
-        result,
-    }
-}
-
-/// Run one request. `control` cancels traces and scans; `progress` receives scan updates.
-pub fn execute_with(
-    request: Request,
-    control: &TraceControl,
-    progress: &mut dyn FnMut(Progress<'_>),
-) -> Result<Outcome, EngineError> {
-    match request {
-        Request::Version => Ok(Outcome::Version {
-            version: env!("CARGO_PKG_VERSION").into(),
-        }),
-        Request::Schema(r) => schemas(r),
-        Request::Open(r) => open(r).map(Outcome::Opened),
-        Request::Inspect(r) => inspect(r).map(Outcome::Inspected),
-        Request::Trace(r) => run::trace(r, control).map(Outcome::Traced),
-        Request::Replay(r) => run::replay(r, control).map(Outcome::Traced),
-        Request::Scan(r) => {
-            if r.output.join("scan.json").exists() {
-                return Err(EngineError::invalid(
-                    "走査の出力先は既に存在します。resume_scan で再開するか、新しいディレクトリを指定してください",
-                ));
-            }
-            let design = load(r.model, &r.catalogs)?;
-            let manifest = scan::ScanManifest::new(&design, r.plan)?;
-            run_scan(manifest, r.output, r.include_manifest, control, progress)
-        }
-        Request::ResumeScan(r) => {
-            let manifest = scan::ScanManifest::open(&r.directory)?;
-            run_scan(manifest, r.directory, r.include_manifest, control, progress)
-        }
-        Request::Convergence(r) => {
-            let ModelInput::Path(model) = r.model else {
-                return Err(EngineError::invalid(
-                    "収束確認のモデルはファイル（model.path）で指定してください",
-                ));
-            };
-            let report = convergence::run(&model, &r.plan, &r.output)?;
-            Ok(Outcome::Converged(ConvergenceResult {
-                output: r.output.join("convergence.json"),
-                cases: report.cases.len(),
-                comparisons: report.comparisons.len(),
-                failed: report.cases.iter().filter(|c| c.error.is_some()).count(),
-                report: r.include_report.then(|| Box::new(report)),
-            }))
-        }
-        Request::SaveDesign(r) => {
-            create_parent(&r.output)?;
-            design::save(&r.design, &r.output)?;
-            Ok(Outcome::Saved { output: r.output })
-        }
-        Request::SaveRun(r) => {
-            r.record
-                .calculation
-                .save(&r.record.report, r.record.trace_seconds, &r.output)?;
-            Ok(Outcome::Saved { output: r.output })
-        }
-        Request::ExportZmx(r) => {
-            let design = load(r.model, &r.catalogs)?;
-            zemax::export(&design, &r.output)?;
-            Ok(Outcome::Saved { output: r.output })
-        }
-        Request::ExportScreen(r) => export_screen(r).map(|output| Outcome::Saved { output }),
-    }
-}
+// ---- helpers shared by the commands -----------------------------------------------------
 
 /// Load a model input as a design.
 pub(crate) fn load(model: ModelInput, catalogs: &[PathBuf]) -> Result<Design, EngineError> {
@@ -672,7 +844,9 @@ pub(crate) fn load(model: ModelInput, catalogs: &[PathBuf]) -> Result<Design, En
     })
 }
 
-fn load_record(record: RecordInput) -> Result<(RunRecord, Option<PathBuf>), EngineError> {
+pub(crate) fn load_record(
+    record: RecordInput,
+) -> Result<(RunRecord, Option<PathBuf>), EngineError> {
     match record {
         RecordInput::Path(path) => Ok((RunRecord::open(&path)?, Some(path))),
         RecordInput::Record(record) => {
@@ -685,154 +859,9 @@ fn load_record(record: RecordInput) -> Result<(RunRecord, Option<PathBuf>), Engi
     }
 }
 
-fn create_parent(path: &Path) -> Result<(), EngineError> {
+pub(crate) fn create_parent(path: &Path) -> Result<(), EngineError> {
     if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
         fs::create_dir_all(parent).map_err(|e| EngineError::io(parent, e))?;
     }
     Ok(())
-}
-
-fn open(r: OpenRequest) -> Result<Document, EngineError> {
-    if r.path.is_dir() {
-        return Ok(Document::Scan {
-            manifest: Box::new(scan::ScanManifest::open(&r.path)?),
-        });
-    }
-    match design::open(&r.path, &r.catalogs) {
-        Ok(design) => Ok(Document::Design {
-            design: Box::new(design),
-        }),
-        // design::open recognises calculation records and refers them to replay.
-        Err(raytrace_io::Error::Project(message)) if message.starts_with("計算記録は") => {
-            let mut record = RunRecord::open(&r.path)?;
-            if r.viewer_paths {
-                record.report.paths = run::viewer_paths(&record)?;
-            }
-            Ok(Document::Run {
-                record: Box::new(record),
-            })
-        }
-        Err(error) => Err(error.into()),
-    }
-}
-
-fn inspect(r: InspectRequest) -> Result<InspectResult, EngineError> {
-    let mut design = load(r.model, &r.catalogs)?;
-    design.conditions.allow_uncoated |= r.ignore_coatings;
-    if let Some(w) = r.wavelength_um {
-        design.conditions.monochromatic_override_um = Some(w);
-    }
-    if let Some(path) = &r.export_zmx {
-        zemax::export(&design, path)?;
-    }
-    if let Some(path) = &r.output {
-        create_parent(path)?;
-        design::save(&design, path)?;
-    }
-    let compatibility = design.compatibility_report();
-    let compiled = design.compile().map_err(raytrace_io::Error::from)?;
-    Ok(InspectResult {
-        output: r.output,
-        exported_zmx: r.export_zmx,
-        sources: compiled.scene.sources.len(),
-        surfaces: compiled.scene.surfaces.len(),
-        materials: compiled.scene.materials.len(),
-        traceable: compatibility.traceable,
-        compatibility,
-        design: r.include_design.then(|| Box::new(design)),
-    })
-}
-
-fn run_scan(
-    mut manifest: scan::ScanManifest,
-    directory: PathBuf,
-    include_manifest: bool,
-    control: &TraceControl,
-    progress: &mut dyn FnMut(Progress<'_>),
-) -> Result<Outcome, EngineError> {
-    manifest.execute(&directory, control, |m| progress(Progress::Scan(m)))?;
-    let count = |state: &str| manifest.cases.iter().filter(|c| c.state == state).count();
-    Ok(Outcome::Scanned(ScanResult {
-        output: directory.join("scan.json"),
-        cases: manifest.cases.len(),
-        completed: count("completed"),
-        failed: count("failed"),
-        directory,
-        manifest: include_manifest.then(|| Box::new(manifest)),
-    }))
-}
-
-fn export_screen(r: ExportScreenRequest) -> Result<PathBuf, EngineError> {
-    let (record, _) = load_record(r.record)?;
-    let map = record
-        .report
-        .detectors
-        .get(r.detector)
-        .ok_or_else(|| EngineError::invalid("出力するスクリーンがありません"))?;
-    let reference = record.report.budget.launched;
-    let calculation = &record.calculation;
-    let scene = &calculation.scene;
-    fs::create_dir_all(&r.output).map_err(|e| EngineError::io(&r.output, e))?;
-    raytrace_io::export::write_screen(
-        &r.output,
-        map,
-        &scene.reference_plane,
-        reference,
-        r.display,
-    )?;
-    raytrace_io::export::write_postprocessing(&r.output, map, reference, r.cursor_mm, r.roi)?;
-    let conditions = serde_json::json!({
-        "calculation_software_version": calculation.software_version, "model": scene.name,
-        "wavelengths_um": calculation.launch_wavelengths_um, "input_rays": calculation.input_count(),
-        "sources": scene.sources, "pupils": calculation.pupils, "trace_settings": scene.settings,
-        "display": r.display,
-    });
-    let path = r.output.join("conditions.json");
-    let bytes = serde_json::to_vec_pretty(&conditions)
-        .map_err(|e| raytrace_io::Error::json(Some(path.clone()), e))?;
-    fs::write(&path, bytes).map_err(|e| EngineError::io(&path, e))?;
-    Ok(r.output)
-}
-
-fn schemas(r: SchemaRequest) -> Result<Outcome, EngineError> {
-    let render = |name: SchemaName| {
-        serde_json::to_string_pretty(&schema(name)).expect("schemas serialize") + "\n"
-    };
-    match (r.name, r.output) {
-        (Some(name), None) => Ok(Outcome::Schema {
-            schema: schema(name),
-        }),
-        (Some(name), Some(output)) => {
-            create_parent(&output)?;
-            fs::write(&output, render(name)).map_err(|e| EngineError::io(&output, e))?;
-            Ok(Outcome::Saved { output })
-        }
-        (None, Some(output)) => {
-            fs::create_dir_all(&output).map_err(|e| EngineError::io(&output, e))?;
-            for name in SchemaName::ALL {
-                let path = output.join(format!("{}.schema.json", name.as_str()));
-                fs::write(&path, render(name)).map_err(|e| EngineError::io(&path, e))?;
-            }
-            Ok(Outcome::Saved { output })
-        }
-        (None, None) => Err(EngineError::invalid(format!(
-            "name か output を指定してください。name: {}",
-            SchemaName::ALL.map(SchemaName::as_str).join(", ")
-        ))),
-    }
-}
-
-fn schema(name: SchemaName) -> schemars::Schema {
-    use schemars::schema_for;
-    match name {
-        SchemaName::Request => schema_for!(Request),
-        SchemaName::Response => schema_for!(Response),
-        SchemaName::Scene => schema_for!(Scene),
-        SchemaName::Design => schema_for!(Design),
-        SchemaName::Run => schema_for!(RunOutput),
-        SchemaName::ScanPlan => schema_for!(scan::ScanPlan),
-        SchemaName::Scan => schema_for!(scan::ScanManifest),
-        SchemaName::ConvergencePlan => schema_for!(convergence::ConvergencePlan),
-        SchemaName::Convergence => schema_for!(convergence::ConvergenceReport),
-    }
 }

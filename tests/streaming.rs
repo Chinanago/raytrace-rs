@@ -2,7 +2,9 @@
 mod fixtures;
 
 use raytrace_rs::{
-    engine::{self, Outcome, RecordInput, ReplayRequest, Request},
+    command::call_once,
+    commands,
+    engine::{self, RecordInput, ReplayRequest},
     model::{Material, Sampling},
     record::{RUN_FORMAT, RunContext, RunRecord},
     trace::{TraceControl, TraceOptions, trace, trace_generated, trace_generated_controlled},
@@ -207,9 +209,9 @@ fn cancellation_and_progress() {
     );
 }
 
-/// Rerun a record through the engine `replay` request and return its report as JSON.
+/// Rerun a record through the engine `run.replay` command and return its report as JSON.
 fn replay(record: &RunRecord) -> Result<serde_json::Value, engine::EngineError> {
-    let request = Request::Replay(ReplayRequest {
+    let request = ReplayRequest {
         record: RecordInput::Record(Box::new(record.clone())),
         threads: None,
         repeat: 1,
@@ -218,14 +220,10 @@ fn replay(record: &RunRecord) -> Result<serde_json::Value, engine::EngineError> 
         paths: None,
         output: None,
         include_record: true,
-    });
-    match engine::execute(request)? {
-        Outcome::Traced(result) => {
-            let run = result.record.expect("the record was requested");
-            Ok(serde_json::to_value(&run.report).unwrap())
-        }
-        _ => panic!("replay returns a trace result"),
-    }
+    };
+    let result = call_once(commands::RUN_REPLAY, request)?;
+    let run = result.record.expect("the record was requested");
+    Ok(serde_json::to_value(&run.report).unwrap())
 }
 
 #[test]

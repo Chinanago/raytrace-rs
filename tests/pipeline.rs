@@ -1,8 +1,10 @@
 //! The engine, scans and convergence studies share the stages of `raytrace_rs::pipeline`.
 use raytrace_rs::{
+    command::call_once,
+    commands,
     convergence::{self, ConvergencePlan},
     design::{self, Design},
-    engine::{self, ModelInput, Outcome, Overrides, Request, TraceRequest},
+    engine::{ModelInput, Overrides, TraceRequest},
     model::{Interaction, Scene},
     pipeline::{self, LaunchRequest, LimitViolation, Limits, SceneOverrides, Schedule},
     record::RunRecord,
@@ -37,8 +39,8 @@ fn lens(count: usize) -> Scene {
 }
 /// The report the engine `trace` request produces for `design`, as JSON.
 fn engine_report(design: Design, rays_per_source: usize) -> serde_json::Value {
-    let request = Request::Trace(TraceRequest {
-        model: ModelInput::Design(Box::new(design)),
+    let request = TraceRequest {
+        model: Some(ModelInput::Design(Box::new(design))),
         catalogs: Vec::new(),
         rays: None,
         overrides: Overrides {
@@ -55,10 +57,8 @@ fn engine_report(design: Design, rays_per_source: usize) -> serde_json::Value {
         export_zmx: None,
         output: None,
         include_record: true,
-    });
-    let Outcome::Traced(result) = engine::execute(request).unwrap() else {
-        panic!("trace returns a trace result")
     };
+    let result = call_once(commands::ANALYSIS_TRACE, request).unwrap();
     serde_json::to_value(&result.record.unwrap().report).unwrap()
 }
 fn saved_report(path: &std::path::Path) -> (Design, serde_json::Value) {

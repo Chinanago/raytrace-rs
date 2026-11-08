@@ -3,7 +3,10 @@ use super::components::short_name;
 const FWHM_HELP: &str = "赤破線：各断面の最大値の50%とその交点。画素中心の値を線形補間。複数の山がある場合は主ピーク周囲の幅です。";
 use super::*;
 use raytrace_core::screen::Profile;
-use raytrace_engine::engine::{ExportScreenRequest, Outcome, RecordInput, Request};
+use raytrace_engine::{
+    commands,
+    engine::{ExportScreenRequest, RecordInput},
+};
 
 impl App {
     pub(super) fn export_current_screen(&mut self, dir: &std::path::Path, ctx: &egui::Context) {
@@ -15,7 +18,7 @@ impl App {
             return;
         }
         let dir = dir.to_path_buf();
-        let request = Request::ExportScreen(ExportScreenRequest {
+        let request = ExportScreenRequest {
             record: RecordInput::Record(Box::new(r.record(false))),
             detector: self.detector,
             output: dir,
@@ -26,14 +29,15 @@ impl App {
             },
             cursor_mm: self.screen_display.cursor_mm,
             roi: self.screen_display.roi,
-        });
+        };
         self.status = "スクリーンを書き出し中…".into();
-        self.submit(ctx, request, false, None, |result| {
-            Job::Exported(match result {
-                Ok(Outcome::Saved { output }) => Ok(output),
-                Ok(_) => Err("書出し以外の結果が返されました".into()),
-                Err(e) => Err(e.message),
-            })
+        self.submit(ctx, false, None, move |session, context| {
+            Job::Exported(
+                session
+                    .call(commands::RUN_EXPORT_SCREEN, request, context)
+                    .map(|saved| saved.output)
+                    .map_err(|e| e.message),
+            )
         });
     }
 

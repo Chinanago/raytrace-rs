@@ -1,7 +1,6 @@
-//! `trace` and `replay`: one calculation, its record and its summary.
+//! `analysis.trace` and `run.replay`: one calculation, its record and its summary.
 use super::{
-    EngineError, ModelInput, RaysInput, ReplayRequest, TraceRequest, TraceResult, create_parent,
-    load, load_record,
+    EngineError, RaysInput, ReplayRequest, TraceRequest, TraceResult, create_parent, load_record,
 };
 use crate::pipeline::{
     self, DesignOverrides, Launch, LaunchRequest, Limits, SceneOverrides, Schedule,
@@ -17,7 +16,11 @@ use raytrace_io::{
     zemax,
 };
 use serde::Serialize;
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 /// Timing of the repeated trace; see `timed_scope` for what is measured.
 #[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
@@ -84,12 +87,14 @@ struct Calculation {
     preview_paths: usize,
 }
 
-pub(super) fn trace(r: TraceRequest, control: &TraceControl) -> Result<TraceResult, EngineError> {
-    let model_path = match &r.model {
-        ModelInput::Path(path) => Some(path.clone()),
-        _ => None,
-    };
-    let mut design = load(r.model, &r.catalogs)?;
+/// Trace `design`, the model of the request (or the session document). `model_path` is the file
+/// it came from, which `output` must not overwrite.
+pub(crate) fn trace(
+    r: TraceRequest,
+    mut design: Design,
+    model_path: Option<PathBuf>,
+    control: &TraceControl,
+) -> Result<TraceResult, EngineError> {
     let o = r.overrides;
     pipeline::configure_design(
         &mut design,
@@ -159,7 +164,7 @@ pub(super) fn trace(r: TraceRequest, control: &TraceControl) -> Result<TraceResu
     finish(output, r.output, r.export_zmx, r.include_record)
 }
 
-pub(super) fn replay(r: ReplayRequest, control: &TraceControl) -> Result<TraceResult, EngineError> {
+pub(crate) fn replay(r: ReplayRequest, control: &TraceControl) -> Result<TraceResult, EngineError> {
     let (record, path) = load_record(r.record)?;
     reject_overwrite(r.output.as_deref(), path.as_deref())?;
     let mut options = record.calculation.trace_options;
@@ -283,8 +288,8 @@ fn run(c: Calculation, control: &TraceControl) -> Result<RunOutput, EngineError>
 
 fn finish(
     record: RunOutput,
-    output: Option<std::path::PathBuf>,
-    exported_zmx: Option<std::path::PathBuf>,
+    output: Option<PathBuf>,
+    exported_zmx: Option<PathBuf>,
     include_record: bool,
 ) -> Result<TraceResult, EngineError> {
     if let Some(path) = &output {
@@ -368,7 +373,7 @@ fn preview_paths(
 }
 
 /// Light paths of up to 64 sample rays of a saved record, for drawing.
-pub(super) fn viewer_paths(
+pub(crate) fn viewer_paths(
     record: &RunRecord,
 ) -> Result<Vec<raytrace_core::trace::PathEvent>, EngineError> {
     let scene = &record.calculation.scene;

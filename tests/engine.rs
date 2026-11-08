@@ -2,8 +2,11 @@
 #[path = "support/cli.rs"]
 mod cli_support;
 use raytrace_rs::{
-    engine::{self, ModelInput, Outcome, Request, SchemaName, TraceRequest},
+    command::{self, call_once},
+    commands,
+    engine::{ModelInput, SchemaName, TraceRequest},
     model::Scene,
+    session::Session,
 };
 use serde_json::{Value, json};
 use std::{
@@ -73,7 +76,7 @@ fn arguments_are_request_fields_and_print_one_json_response() {
     let (ok, trace) = cli(
         &dir,
         &[
-            "trace",
+            "analysis.trace",
             "model.path=input.json",
             "threads:=1",
             "output=run.json",
@@ -83,7 +86,7 @@ fn arguments_are_request_fields_and_print_one_json_response() {
     assert!(ok);
     let [trace] = trace.as_slice() else { panic!() };
     assert_eq!(trace["ok"], true);
-    assert_eq!(trace["command"], "trace");
+    assert_eq!(trace["command"], "analysis.trace");
     assert_eq!(trace["result"]["launched_rays"], 32);
     assert!(
         trace["result"]["detected_percent_of_reference"]
@@ -95,11 +98,11 @@ fn arguments_are_request_fields_and_print_one_json_response() {
 
     let (ok, replay) = cli(
         &dir,
-        &["replay", "record.path=run.json", "output=replay.json"],
+        &["run.replay", "record.path=run.json", "output=replay.json"],
         None,
     );
     assert!(ok);
-    assert_eq!(replay[0]["command"], "replay");
+    assert_eq!(replay[0]["command"], "run.replay");
     assert_eq!(
         replay[0]["result"]["detected_percent_of_reference"],
         trace["result"]["detected_percent_of_reference"]
@@ -107,13 +110,13 @@ fn arguments_are_request_fields_and_print_one_json_response() {
 
     // JSON values can come from files, like scan plans.
     fs::write(dir.join("overrides.json"), r#"{"rays_per_source": 4}"#).unwrap();
-    let (ok, inspect) = cli(&dir, &["inspect", "model.path=input.json"], None);
+    let (ok, inspect) = cli(&dir, &["doc.inspect", "model.path=input.json"], None);
     assert!(ok);
     assert_eq!(inspect[0]["result"]["traceable"], true);
     let (ok, small) = cli(
         &dir,
         &[
-            "trace",
+            "analysis.trace",
             "model.path=input.json",
             "overrides:=@overrides.json",
         ],
@@ -122,7 +125,7 @@ fn arguments_are_request_fields_and_print_one_json_response() {
     assert!(ok);
     assert_eq!(small[0]["result"]["launched_rays"], 8);
 
-    let (ok, missing) = cli(&dir, &["trace", "model.path=missing.json"], None);
+    let (ok, missing) = cli(&dir, &["analysis.trace", "model.path=missing.json"], None);
     assert!(!ok);
     assert_eq!(missing[0]["ok"], false);
     assert_eq!(missing[0]["error"]["code"], "io");
@@ -134,10 +137,14 @@ fn arguments_are_request_fields_and_print_one_json_response() {
     );
 
     // Fields outside the schema are rejected by the same validation as `run`.
-    let (ok, unknown) = cli(&dir, &["trace", "model.path=input.json", "thread:=2"], None);
+    let (ok, unknown) = cli(
+        &dir,
+        &["analysis.trace", "model.path=input.json", "thread:=2"],
+        None,
+    );
     assert!(!ok);
     assert_eq!(unknown[0]["error"]["code"], "invalid_request");
-    let (ok, usage) = cli(&dir, &["trace", "model.path"], None);
+    let (ok, usage) = cli(&dir, &["analysis.trace", "model.path"], None);
     assert!(!ok);
     assert_eq!(usage[0]["error"]["code"], "usage");
     let (ok, command) = cli(&dir, &["--replay", "run.json"], None);
@@ -145,14 +152,14 @@ fn arguments_are_request_fields_and_print_one_json_response() {
     assert_eq!(command[0]["error"]["code"], "usage");
     let (ok, zero) = cli(
         &dir,
-        &["trace", "model.path=input.json", "threads:=0"],
+        &["analysis.trace", "model.path=input.json", "threads:=0"],
         None,
     );
     assert!(!ok);
     assert_eq!(zero[0]["error"]["code"], "invalid_request");
 
     let help = Command::new(cli_support::executable())
-        .args(["trace", "--help"])
+        .args(["analysis.trace", "--help"])
         .output()
         .unwrap();
     let help = String::from_utf8(help.stdout).unwrap();
@@ -163,14 +170,14 @@ fn arguments_are_request_fields_and_print_one_json_response() {
 fn run_reads_a_stream_of_requests_with_inline_models() {
     let dir = folder();
     let requests = [
-        json!({"command": "version"}),
+        json!({"command": "app.version"}),
         json!({
-            "command": "trace",
+            "command": "analysis.trace",
             "model": {"scene": small_lens()},
             "threads": 1,
             "include_record": true,
         }),
-        json!({"command": "trace", "model": {"path": "missing.zmx"}}),
+        json!({"command": "analysis.trace", "model": {"path": "missing.zmx"}}),
         json!({"command": "nonsense"}),
     ]
     .map(|r| r.to_string())
@@ -188,13 +195,13 @@ fn run_reads_a_stream_of_requests_with_inline_models() {
     fs::write(dir.join("request.json"), requests.lines().next().unwrap()).unwrap();
     let (ok, from_file) = cli(&dir, &["run", "request.json"], None);
     assert!(ok);
-    assert_eq!(from_file[0]["command"], "version");
+    assert_eq!(from_file[0]["command"], "app.version");
 }
 
 #[test]
 fn in_process_requests_match_the_cli_and_round_trip_as_json() {
-    let request = Request::Trace(TraceRequest {
-        model: ModelInput::Scene(Box::new(small_lens())),
+    let request = TraceRequest {
+        model: Some(ModelInput::Scene(Box::new(small_lens()))),
         catalogs: Vec::new(),
         rays: None,
         overrides: Default::default(),
@@ -208,20 +215,41 @@ fn in_process_requests_match_the_cli_and_round_trip_as_json() {
         export_zmx: None,
         output: None,
         include_record: true,
-    });
-    // The GUI builds requests in memory; they must mean the same as their JSON form.
+    };
+    // The GUI builds parameters in memory; they must mean the same as their JSON form.
     let text = serde_json::to_string(&request).unwrap();
-    let reparsed: Request = serde_json::from_str(&text).unwrap();
+    let reparsed: TraceRequest = serde_json::from_str(&text).unwrap();
     assert_eq!(serde_json::to_string(&reparsed).unwrap(), text);
 
-    let Outcome::Traced(result) = engine::execute(request).unwrap() else {
-        panic!("trace returns a trace result")
-    };
+    let result = call_once(commands::ANALYSIS_TRACE, request).unwrap();
     let record = result.record.unwrap();
     assert!(!record.report.paths.is_empty(), "preview paths are traced");
 
-    let response =
-        engine::execute_json(&text.replace("\"max_total_rays\":1000", "\"max_total_rays\":10"));
+    // The typed call and the JSON call run the same command and give the same result.
+    let mut session = Session::new();
+    let control = raytrace_rs::trace::TraceControl::default();
+    let response = session.execute(
+        "analysis.trace",
+        serde_json::from_str(&text).unwrap(),
+        &mut command::Context::new(&control),
+    );
+    assert!(response.ok, "{response:?}");
+    assert_eq!(
+        response.result_value()["budget_percent_of_reference"],
+        serde_json::to_value(&record.budget_percent_of_reference).unwrap()
+    );
+    assert!(
+        response
+            .typed::<raytrace_rs::engine::TraceResult>()
+            .is_some()
+    );
+
+    let response = Session::new().execute(
+        "analysis.trace",
+        serde_json::from_str(&text.replace("\"max_total_rays\":1000", "\"max_total_rays\":10"))
+            .unwrap(),
+        &mut command::Context::new(&control),
+    );
     assert!(!response.ok);
     let error = response.error.unwrap();
     assert_eq!(error.code, "limit");
@@ -236,7 +264,7 @@ fn in_process_requests_match_the_cli_and_round_trip_as_json() {
     let (_, cli) = cli(
         &dir,
         &[
-            "trace",
+            "analysis.trace",
             "model.path=input.json",
             "threads:=1",
             "output=run.json",
@@ -252,7 +280,7 @@ fn in_process_requests_match_the_cli_and_round_trip_as_json() {
 #[test]
 fn published_schemas_match_the_engine() {
     let dir = folder();
-    let (ok, _) = cli(&dir, &["schema", "output=schemas"], None);
+    let (ok, _) = cli(&dir, &["schema.get", "output=schemas"], None);
     assert!(ok);
     let published = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("schemas");
     for name in SchemaName::ALL {
@@ -260,10 +288,10 @@ fn published_schemas_match_the_engine() {
         assert_eq!(
             fs::read_to_string(published.join(&file)).unwrap_or_default(),
             fs::read_to_string(dir.join("schemas").join(&file)).unwrap(),
-            "schemas/{file} is stale: run `cargo run -p raytrace-cli -- schema output=schemas`"
+            "schemas/{file} is stale: run `cargo run -p raytrace-cli -- schema.get output=schemas`"
         );
     }
-    let (ok, printed) = cli(&dir, &["schema", "name=scan_plan"], None);
+    let (ok, printed) = cli(&dir, &["schema.get", "name=scan_plan"], None);
     assert!(ok);
     assert_eq!(printed[0]["result"]["schema"]["title"], "ScanPlan");
 }

@@ -1,18 +1,24 @@
-//! Command-line front end of the JSON engine.
+//! Command-line front end of the command registry.
 //!
-//! The CLI has no options of its own. Every argument sets one field of an engine request,
-//! so the request schema (`raytrace-rs schema name=request`) is the complete interface and
-//! `raytrace-rs COMMAND --help` is generated from it:
+//! The CLI has no options of its own. Every argument sets one field of a command's
+//! parameters, so the command schemas (`raytrace-rs command.describe id=COMMAND`) are the
+//! complete interface and `raytrace-rs COMMAND --help` is generated from them:
 //!
 //! ```text
 //! raytrace-rs COMMAND [FIELD=TEXT | FIELD:=JSON | FIELD:=@FILE.json]...
 //! raytrace-rs run REQUEST.json|-
 //! ```
 //!
-//! stdout carries one JSON response per request; people read stderr.
+//! stdout carries one JSON response per request; people read stderr. `run` keeps one session
+//! for the whole stream, so a later request can work on the document an earlier one opened.
 use raytrace_core::trace::TraceControl;
-use raytrace_engine::engine::{
-    self, EngineError, Outcome, Progress, Request, SchemaName, SchemaRequest,
+use raytrace_engine::{
+    Context, Progress, Response, Session, commands,
+    engine::{
+        CommandDescription, CommandList, ConvergenceResult, DescribeRequest, DocOpened, Empty,
+        EngineError, InspectResult, Saved, ScanResult, TraceResult, VersionResult,
+    },
+    registry,
 };
 use serde_json::{Map, Value};
 use std::{
@@ -77,98 +83,100 @@ fn insert(object: &mut Map<String, Value>, path: &[&str], value: Value) -> Resul
 }
 
 /// Japanese lines for stderr.
-fn describe(outcome: &Outcome) -> Vec<String> {
-    match outcome {
-        Outcome::Version { version } => vec![format!("raytrace-rs {version}")],
-        Outcome::Schema { .. } => Vec::new(),
-        Outcome::Opened(_) => vec!["読込完了".into()],
-        Outcome::Inspected(r) => {
-            let mut lines = vec![format!(
-                "読込結果: 光源{}個、面{}個、材料{}個",
-                r.sources, r.surfaces, r.materials
-            )];
-            for component in &r.compatibility.components {
-                lines.push(format!(
-                    "{}{}",
-                    component.name,
-                    if component.enabled { "" } else { " [無効]" }
-                ));
-                for entry in &component.entries {
-                    lines.push(format!("  {}: {}", entry.status.label(), entry.message));
-                }
+fn describe(response: &Response) -> Vec<String> {
+    if let Some(r) = response.typed::<VersionResult>() {
+        return vec![format!("raytrace-rs {}", r.version)];
+    }
+    if let Some(r) = response.typed::<DocOpened>() {
+        return vec![format!(
+            "読込完了: {}（部品{}個、配置{}個）",
+            r.summary.name, r.summary.parts, r.summary.occurrences
+        )];
+    }
+    if let Some(r) = response.typed::<InspectResult>() {
+        let mut lines = vec![format!(
+            "読込結果: 光源{}個、面{}個、材料{}個",
+            r.sources, r.surfaces, r.materials
+        )];
+        for component in &r.compatibility.components {
+            lines.push(format!(
+                "{}{}",
+                component.name,
+                if component.enabled { "" } else { " [無効]" }
+            ));
+            for entry in &component.entries {
+                lines.push(format!("  {}: {}", entry.status.label(), entry.message));
             }
-            lines
         }
-        Outcome::Traced(r) => {
-            let mut lines = vec![
-                format!("基準: {} = 100%", r.reference_plane),
-                format!(
-                    "発射光線数: {}; 検出光量: {:.6}%",
-                    r.launched_rays, r.detected_percent_of_reference
-                ),
-                format!(
-                    "追跡時間の中央値: {:.3} ms; {:.3}百万光線/秒; {}スレッド",
-                    r.median_seconds * 1000.0,
-                    r.launched_rays as f64 / r.median_seconds / 1e6,
-                    r.worker_threads
-                ),
-                format!(
-                    "光量収支の誤差: {:.3e}; 計算記録: {}",
-                    r.relative_budget_closure_error,
-                    r.output.as_ref().map_or_else(
-                        || "保存なし（output で指定）".into(),
-                        |p| p.display().to_string()
-                    )
-                ),
-            ];
-            lines.extend(r.warnings.iter().cloned());
-            lines
-        }
-        Outcome::Scanned(r) => vec![format!(
+        return lines;
+    }
+    if let Some(r) = response.typed::<TraceResult>() {
+        let mut lines = vec![
+            format!("基準: {} = 100%", r.reference_plane),
+            format!(
+                "発射光線数: {}; 検出光量: {:.6}%",
+                r.launched_rays, r.detected_percent_of_reference
+            ),
+            format!(
+                "追跡時間の中央値: {:.3} ms; {:.3}百万光線/秒; {}スレッド",
+                r.median_seconds * 1000.0,
+                r.launched_rays as f64 / r.median_seconds / 1e6,
+                r.worker_threads
+            ),
+            format!(
+                "光量収支の誤差: {:.3e}; 計算記録: {}",
+                r.relative_budget_closure_error,
+                r.output.as_ref().map_or_else(
+                    || "保存なし（output で指定）".into(),
+                    |p| p.display().to_string()
+                )
+            ),
+        ];
+        lines.extend(r.warnings.iter().cloned());
+        return lines;
+    }
+    if let Some(r) = response.typed::<ScanResult>() {
+        return vec![format!(
             "走査を保存しました: {}（{}ケース、完了{}、失敗{}）",
             r.output.display(),
             r.cases,
             r.completed,
             r.failed
-        )],
-        Outcome::Converged(r) => vec![format!(
+        )];
+    }
+    if let Some(r) = response.typed::<ConvergenceResult>() {
+        return vec![format!(
             "収束確認: {}ケース、{}比較、{}失敗; {}",
             r.cases,
             r.comparisons,
             r.failed,
             r.output.display()
-        )],
-        Outcome::Saved { output } => vec![format!("保存しました: {}", output.display())],
+        )];
     }
+    if let Some(Saved { output }) = response.typed::<Saved>() {
+        return vec![format!("保存しました: {}", output.display())];
+    }
+    Vec::new()
 }
 
-fn print(stdout: &mut impl Write, response: &engine::Response) {
-    let line = serde_json::to_string(response).expect("responses serialize");
+fn print(stdout: &mut impl Write, response: &Response) {
+    let line = serde_json::to_string(response).unwrap_or_else(|e| {
+        format!(
+            "{{\"ok\":false,\"command\":\"unknown\",\"revision\":0,\"error\":{{\"code\":\"invalid_json\",\"message\":\"応答をJSONにできません: {e}\"}}}}"
+        )
+    });
     let _ = writeln!(stdout, "{line}");
 }
 
 fn fail(stdout: &mut impl Write, command: &str, error: EngineError) -> bool {
     eprintln!("エラー: {error}");
-    print(stdout, &engine::respond(command, Err(error)));
+    print(stdout, &Response::failure(command, 0, error));
     false
 }
 
-/// Validate one request value, run it and print its response line. Returns success.
-fn perform(value: Value, stdout: &mut impl Write) -> bool {
-    let request = match serde_json::from_value::<Request>(value) {
-        Ok(request) => request,
-        Err(e) => {
-            return fail(
-                stdout,
-                "unknown",
-                EngineError::new(
-                    "invalid_request",
-                    format!("リクエストが不正です（schema name=request を確認してください）: {e}"),
-                ),
-            );
-        }
-    };
-    let command = request.command();
+/// Run one request value in the session and print its response line. Returns success.
+fn perform(session: &mut Session, request: Value, stdout: &mut impl Write) -> bool {
+    let control = TraceControl::default();
     let mut progress = |p: Progress<'_>| {
         if let Progress::Scan(m) = p {
             let done = m
@@ -179,13 +187,13 @@ fn perform(value: Value, stdout: &mut impl Write) -> bool {
             eprintln!("走査: {done}/{}ケース", m.cases.len());
         }
     };
-    let result = engine::execute_with(request, &TraceControl::default(), &mut progress);
-    if let Ok(outcome) = &result {
-        for line in describe(outcome) {
-            eprintln!("{line}");
-        }
+    let response = session.execute_request(
+        request,
+        &mut Context::with_progress(&control, &mut progress),
+    );
+    for line in describe(&response) {
+        eprintln!("{line}");
     }
-    let response = engine::respond(command, result);
     if let Some(error) = &response.error {
         eprintln!("エラー: {}", error.message);
     }
@@ -193,7 +201,7 @@ fn perform(value: Value, stdout: &mut impl Write) -> bool {
     response.ok
 }
 
-/// `run FILE|-`: a stream of JSON requests, one response line each.
+/// `run FILE|-`: a stream of JSON requests in one session, one response line each.
 fn run_requests(source: Option<&String>, stdout: &mut impl Write) -> bool {
     let text = match source.map(String::as_str) {
         None => {
@@ -215,12 +223,13 @@ fn run_requests(source: Option<&String>, stdout: &mut impl Write) -> bool {
             Err(e) => return fail(stdout, "run", raytrace_io::Error::io(path, e).into()),
         },
     };
+    let mut session = Session::new();
     let mut ok = true;
     let mut any = false;
     for value in serde_json::Deserializer::from_str(&text).into_iter::<Value>() {
         any = true;
         ok &= match value {
-            Ok(value) => perform(value, stdout),
+            Ok(value) => perform(&mut session, value, stdout),
             Err(e) => fail(
                 stdout,
                 "unknown",
@@ -234,30 +243,17 @@ fn run_requests(source: Option<&String>, stdout: &mut impl Write) -> bool {
     ok
 }
 
-/// The request schema as JSON, for generated help.
-fn request_schema() -> Value {
-    let request = Request::Schema(SchemaRequest {
-        name: Some(SchemaName::Request),
-        output: None,
-    });
-    match engine::execute(request) {
-        Ok(Outcome::Schema { schema }) => schema.to_value(),
-        _ => unreachable!("the request schema is built in"),
-    }
+/// `command.list` through a throwaway session.
+fn command_list() -> Result<CommandList, EngineError> {
+    Session::new().run(commands::COMMAND_LIST, Empty {})
 }
 
-/// `(command, description, variant schema)` for every request command.
-fn commands(schema: &Value) -> Vec<(String, String, Value)> {
-    schema["oneOf"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|variant| {
-            let name = variant["properties"]["command"]["const"].as_str()?;
-            let text = variant["description"].as_str().unwrap_or_default();
-            Some((name.to_string(), text.to_string(), variant.clone()))
-        })
-        .collect()
+/// `command.describe` through a throwaway session.
+fn command_describe(id: &str) -> Result<CommandDescription, EngineError> {
+    Session::new().run(
+        commands::COMMAND_DESCRIBE,
+        DescribeRequest { id: id.into() },
+    )
 }
 
 /// Follow `$ref` and `anyOf: [X, null]` to the schema that describes a value.
@@ -325,8 +321,30 @@ fn first_line(text: &str) -> &str {
     text.lines().next().unwrap_or_default()
 }
 
-/// Field list of one command, with one level of nested fields and alternatives.
-fn command_help(schema: &Value, name: &str, text: &str, variant: &Value) -> String {
+fn kind_label(kind: raytrace_engine::Kind) -> &'static str {
+    match kind {
+        raytrace_engine::Kind::Query => "問い合わせ（文書を変えない）",
+        raytrace_engine::Kind::Mutation => "変更（文書を変える。session.undo で取り消せる）",
+        raytrace_engine::Kind::Job => "長い計算",
+    }
+}
+
+/// Field list of one command, from its input schema, with one level of nested fields and
+/// alternatives.
+fn command_help(command: &CommandDescription) -> String {
+    let schema = command.input_schema.as_value();
+    let variant = schema;
+    let name = &command.id;
+    let aliases = if command.aliases.is_empty() {
+        String::new()
+    } else {
+        format!("\n旧名（非推奨）: {}", command.aliases.join(", "))
+    };
+    let text = format!(
+        "{}\n種類: {}{aliases}",
+        command.summary,
+        kind_label(command.kind)
+    );
     let required: Vec<&str> = variant["required"]
         .as_array()
         .into_iter()
@@ -396,21 +414,26 @@ fn command_help(schema: &Value, name: &str, text: &str, variant: &Value) -> Stri
     out
 }
 
-fn overview(schema: &Value) -> String {
+fn overview(list: &CommandList) -> String {
     let mut out = String::from(
         "raytrace-rs COMMAND [FIELD=文字列 | FIELD:=JSON | FIELD:=@FILE.json]...\n\
          raytrace-rs run REQUEST.json|-\n\
          raytrace-rs COMMAND --help\n\
          raytrace-rs --version\n\n\
-         引数はリクエストJSONのフィールドをそのまま指定します（a.b=文字列、a.b:=数値や真偽値などのJSON、a.b:=@ファイル）。\n\
-         run はJSONリクエストを実行し、- は標準入力から複数のリクエストを続けて読みます。\n\
-         標準出力: リクエストごとに1行のJSON（schema name=response）。成功時 \"ok\": true と result、失敗時 \"ok\": false と error.code・error.message（終了コード1）。人向けの表示は標準エラーへ出力します。\n\
+         COMMAND は <領域>.<動作> 形式のコマンドIDです。引数はコマンドのパラメーターをそのまま指定します（a.b=文字列、a.b:=数値や真偽値などのJSON、a.b:=@ファイル）。\n\
+         run はJSONリクエスト {\"command\": ID, ...} を実行し、- は標準入力から複数のリクエストを続けて読みます。run の中のリクエストは1つのセッションを共有するため、doc.open で開いた文書を doc.set で編集して analysis.trace で追跡できます。\n\
+         文書を使うコマンドは model を省略するとセッションの文書を使います。コマンドラインの1回の呼び出しは新しいセッションなので、model を指定します。\n\
+         標準出力: リクエストごとに1行のJSON（schema.get name=response）。成功時 \"ok\": true と result、失敗時 \"ok\": false と error.code・error.message（終了コード1）。revision はセッションの版番号です。人向けの表示は標準エラーへ出力します。\n\
          単位: mm、um、任意の光量重み。発射光線の重み合計を100%の基準とします。\n\nコマンド:\n",
     );
-    for (name, text, _) in commands(schema) {
-        out += &format!("  {name:<14} {}\n", first_line(&text));
+    for command in &list.commands {
+        out += &format!("  {:<20} {}\n", command.id, first_line(&command.summary));
     }
-    out += "\n例:\n  raytrace-rs trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 output=results/lens.json\n  raytrace-rs inspect model.path=lens.zmx\n  raytrace-rs scan model.path=examples/sequential_lens.json plan:=@scan_plan.json output=results/scan\n  raytrace-rs schema name=scene\n  echo '{\"command\":\"version\"}' | raytrace-rs run -";
+    out += "\n旧名（非推奨。引き続き使えます）:\n";
+    for (alias, id) in &list.aliases {
+        out += &format!("  {alias:<14} → {id}\n");
+    }
+    out += "\n例:\n  raytrace-rs analysis.trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 output=results/lens.json\n  raytrace-rs doc.inspect model.path=lens.zmx\n  raytrace-rs study.scan model.path=examples/sequential_lens.json plan:=@scan_plan.json output=results/scan\n  raytrace-rs schema.get name=scene\n  echo '{\"command\":\"app.version\"}' | raytrace-rs run -";
     out
 }
 
@@ -418,44 +441,46 @@ fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
     let mut stdout = std::io::stdout().lock();
     let ok = match args.first().map(String::as_str) {
-        None | Some("--help" | "-h" | "help") => {
-            let _ = writeln!(stdout, "{}", overview(&request_schema()));
-            true
-        }
+        None | Some("--help" | "-h" | "help") => match command_list() {
+            Ok(list) => {
+                let _ = writeln!(stdout, "{}", overview(&list));
+                true
+            }
+            Err(error) => fail(&mut stdout, "usage", error),
+        },
         // Plain text: packaging scripts compare it with the crate version.
         Some("--version" | "-V") => {
             let _ = writeln!(stdout, "raytrace-rs {}", env!("CARGO_PKG_VERSION"));
             true
         }
         Some("run") => run_requests(args.get(1), &mut stdout),
-        Some(command) => {
-            let schema = request_schema();
-            let known = commands(&schema);
-            match known.iter().find(|(name, _, _)| name == command) {
-                None => fail(
+        Some(command) => match registry().resolve(command) {
+            None => {
+                let known = registry()
+                    .iter()
+                    .map(|c| c.id)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                fail(
                     &mut stdout,
                     "usage",
-                    usage(format!(
-                        "不明なコマンドです: {command}（{}）",
-                        known
-                            .iter()
-                            .map(|(n, _, _)| n.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )),
-                ),
-                Some((name, text, variant))
-                    if args[1..].iter().any(|a| a == "--help" || a == "-h") =>
-                {
-                    let _ = write!(stdout, "{}", command_help(&schema, name, text, variant));
-                    true
-                }
-                Some(_) => match build(command, &args[1..]) {
-                    Ok(value) => perform(value, &mut stdout),
-                    Err(error) => fail(&mut stdout, command, error),
-                },
+                    usage(format!("不明なコマンドです: {command}（{known}）")),
+                )
             }
-        }
+            Some(spec) if args[1..].iter().any(|a| a == "--help" || a == "-h") => {
+                match command_describe(spec.id) {
+                    Ok(description) => {
+                        let _ = write!(stdout, "{}", command_help(&description));
+                        true
+                    }
+                    Err(error) => fail(&mut stdout, command, error),
+                }
+            }
+            Some(_) => match build(command, &args[1..]) {
+                Ok(value) => perform(&mut Session::new(), value, &mut stdout),
+                Err(error) => fail(&mut stdout, command, error),
+            },
+        },
     };
     let _ = stdout.flush();
     if !ok {
@@ -478,9 +503,9 @@ mod tests {
         ]
         .map(String::from);
         assert_eq!(
-            build("trace", &fields).unwrap(),
+            build("analysis.trace", &fields).unwrap(),
             json!({
-                "command": "trace",
+                "command": "analysis.trace",
                 "model": {"path": "a b.zmx"},
                 "overrides": {"rays_per_source": 1024, "ignore_coatings": true},
                 "output": "1024",
@@ -488,36 +513,45 @@ mod tests {
         );
         for bad in ["model.path", "model..path=x", "command=x", "n:=nope"] {
             assert_eq!(
-                build("trace", &[bad.into()]).unwrap_err().code,
+                build("analysis.trace", &[bad.into()]).unwrap_err().code,
                 "usage",
                 "{bad}"
             );
         }
         let twice = ["output=a", "output=b"].map(String::from);
-        assert_eq!(build("trace", &twice).unwrap_err().code, "usage");
+        assert_eq!(build("analysis.trace", &twice).unwrap_err().code, "usage");
     }
 
     #[test]
     fn help_lists_every_command_and_nested_fields() {
-        let schema = request_schema();
-        let names: Vec<_> = commands(&schema).into_iter().map(|(n, _, _)| n).collect();
-        assert!(
-            names.contains(&"trace".to_string()) && names.contains(&"export_screen".to_string())
-        );
-        let (name, text, variant) = commands(&schema)
-            .into_iter()
-            .find(|(n, _, _)| n == "trace")
-            .unwrap();
-        let help = command_help(&schema, &name, &text, &variant);
+        let list = command_list().unwrap();
+        let ids: Vec<_> = list.commands.iter().map(|c| c.id.as_str()).collect();
         for expected in [
-            "model（必須）",
+            "analysis.trace",
+            "doc.set",
+            "run.export_screen",
+            "session.undo",
+        ] {
+            assert!(ids.contains(&expected), "{expected} missing from {ids:?}");
+        }
+        assert_eq!(list.aliases["trace"], "analysis.trace");
+        let overview = overview(&list);
+        assert!(overview.contains("analysis.trace") && overview.contains("trace"));
+        // An alias describes the command it stands for.
+        let description = command_describe("trace").unwrap();
+        assert_eq!(description.id, "analysis.trace");
+        let help = command_help(&description);
+        for expected in [
+            "model",
             "model.path",
             "model.scene",
             "overrides.rays_per_source",
             "rays.csv",
             "sequential|non_sequential",
+            "旧名（非推奨）: trace",
         ] {
             assert!(help.contains(expected), "{expected} missing from:\n{help}");
         }
+        assert!(!help.contains("model（必須）"), "{help}");
     }
 }

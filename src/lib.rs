@@ -4,7 +4,9 @@ pub use raytrace_core::{
     trace,
 };
 pub use raytrace_doc as doc;
-pub use raytrace_engine::{convergence, engine, pipeline, scan, validation};
+pub use raytrace_engine::{
+    command, commands, convergence, engine, pipeline, scan, session, validation,
+};
 pub use raytrace_io::{cad, compatibility, design, export, record, storage, zemax};
 
 pub mod error {

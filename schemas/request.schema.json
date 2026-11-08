@@ -1,28 +1,72 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Request",
-  "description": "One operation. `command` selects the operation; the other fields depend on it.",
+  "description": "One command: `command` selects it, the other fields are its parameters (see command.describe).",
   "oneOf": [
     {
-      "description": "Report the software version.",
+      "title": "app.version",
+      "description": "ソフトウェアの版を返す（旧名: version）",
       "type": "object",
       "properties": {
         "command": {
-          "type": "string",
-          "const": "version"
+          "enum": [
+            "app.version",
+            "version"
+          ]
         }
       },
+      "additionalProperties": false,
       "required": [
         "command"
       ]
     },
     {
-      "description": "Return one JSON Schema, or write schemas to files.",
+      "title": "command.list",
+      "description": "コマンドの一覧を返す",
       "type": "object",
       "properties": {
         "command": {
-          "type": "string",
-          "const": "schema"
+          "enum": [
+            "command.list"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "title": "command.describe",
+      "description": "コマンドの入力・出力スキーマを返す",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "command.describe"
+          ]
+        },
+        "id": {
+          "description": "Command id such as `analysis.trace` (a deprecated alias such as `trace` also works).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "id"
+      ]
+    },
+    {
+      "title": "schema.get",
+      "description": "JSONスキーマを返す。output を指定するとファイルに書き出す（旧名: schema）",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "schema.get",
+            "schema"
+          ]
         },
         "name": {
           "anyOf": [
@@ -49,11 +93,12 @@
       ]
     },
     {
-      "description": "Load a design, ZMX, calculation record or scan directory and return it.",
+      "title": "doc.new",
+      "description": "空の組立光学系をセッションの文書にする",
       "type": "object",
       "properties": {
         "catalogs": {
-          "description": "Extra AGF catalog folders for ZMX import.",
+          "description": "Extra AGF catalog folders for later ZMX imports in this session.",
           "type": "array",
           "default": [],
           "items": {
@@ -61,17 +106,70 @@
           }
         },
         "command": {
-          "type": "string",
-          "const": "open"
+          "enum": [
+            "doc.new"
+          ]
         },
-        "path": {
-          "description": "File, or a scan directory containing `scan.json`.",
-          "type": "string"
+        "expected_revision": {
+          "description": "Reject the command unless the session is at this revision.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
         },
-        "viewer_paths": {
-          "description": "For calculation records: retrace up to 64 sample rays to draw light paths.",
+        "name": {
+          "description": "Document name; omitted keeps the default.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "title": "doc.open",
+      "description": "ZMX・設計JSON・光学系JSONを開いてセッションの文書にする（旧名: open）",
+      "type": "object",
+      "properties": {
+        "catalogs": {
+          "description": "Extra AGF catalog folders for ZMX import; they stay with the session.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "command": {
+          "enum": [
+            "doc.open",
+            "open"
+          ]
+        },
+        "expected_revision": {
+          "description": "Reject the command unless the session is at this revision.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "include_design": {
+          "description": "Also return the opened design in the result.",
           "type": "boolean",
           "default": false
+        },
+        "path": {
+          "type": "string"
         }
       },
       "additionalProperties": false,
@@ -81,7 +179,78 @@
       ]
     },
     {
-      "description": "Load a model, report its compatibility and optionally save it as a design file.",
+      "title": "doc.save",
+      "description": "設計文書をJSONとして保存する（旧名: save_design）",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "doc.save",
+            "save_design"
+          ]
+        },
+        "design": {
+          "description": "Design to save; omitted saves the session document.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Design"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output": {
+          "description": "Destination; omitted overwrites the file the session document was opened from or\nsaved to.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "title": "doc.get",
+      "description": "文書、またはJSON Pointerで指定した一部を返す",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "doc.get"
+          ]
+        },
+        "model": {
+          "description": "Read this model instead of the session document.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "path": {
+          "description": "JSON Pointer such as `/occurrences/@rod-4/pose`; elements of arrays can be given by\nindex or as `@<id>`.",
+          "type": "string",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "title": "doc.inspect",
+      "description": "モデルを読み込み、互換性レポートを返す（旧名: inspect）",
       "type": "object",
       "properties": {
         "catalogs": {
@@ -93,8 +262,10 @@
           }
         },
         "command": {
-          "type": "string",
-          "const": "inspect"
+          "enum": [
+            "doc.inspect",
+            "inspect"
+          ]
         },
         "export_zmx": {
           "description": "Also export the model as ZMX (standalone models only).",
@@ -109,15 +280,24 @@
           "default": false
         },
         "include_design": {
-          "description": "Return the imported design in the result.",
+          "description": "Return the inspected design in the result.",
           "type": "boolean",
           "default": false
         },
         "model": {
-          "$ref": "#/$defs/ModelInput"
+          "description": "Omitted inspects the session document.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "output": {
-          "description": "Save the imported design JSON here.",
+          "description": "Save the inspected design JSON here.",
           "type": [
             "string",
             "null"
@@ -135,12 +315,12 @@
       },
       "additionalProperties": false,
       "required": [
-        "command",
-        "model"
+        "command"
       ]
     },
     {
-      "description": "Trace a model and return (and optionally save) the calculation record.",
+      "title": "doc.export_zmx",
+      "description": "単体のモデルをZMXとして書き出す（旧名: export_zmx）",
       "type": "object",
       "properties": {
         "catalogs": {
@@ -152,8 +332,260 @@
           }
         },
         "command": {
-          "type": "string",
-          "const": "trace"
+          "enum": [
+            "doc.export_zmx",
+            "export_zmx"
+          ]
+        },
+        "model": {
+          "description": "Omitted exports the session document.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "output"
+      ]
+    },
+    {
+      "title": "doc.set",
+      "description": "文書の1か所をJSON Pointerで指定して書き換える",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "doc.set"
+          ]
+        },
+        "expected_revision": {
+          "description": "Reject the command unless the session is at this revision.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "path": {
+          "description": "JSON Pointer such as `/occurrences/@rod-4/pose/translation_mm/2`. An array element is\naddressed by index or as `@<id>`, matching the `id` field of the element.",
+          "type": "string"
+        },
+        "value": {
+          "description": "The new JSON value."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "path",
+        "value"
+      ]
+    },
+    {
+      "title": "doc.replace",
+      "description": "文書全体を置き換える",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "doc.replace"
+          ]
+        },
+        "design": {
+          "$ref": "#/$defs/Design"
+        },
+        "expected_revision": {
+          "description": "Reject the command unless the session is at this revision.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "design"
+      ]
+    },
+    {
+      "title": "component.add",
+      "description": "ファイルを部品として取り込む、またはロッド・スクリーンを追加する",
+      "type": "object",
+      "properties": {
+        "catalogs": {
+          "description": "Extra AGF catalog folders for ZMX import (default: those of the session).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "command": {
+          "enum": [
+            "component.add"
+          ]
+        },
+        "expected_revision": {
+          "description": "Reject the command unless the session is at this revision.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "kind": {
+          "description": "`source`, `optic` or `system` for a file; `rod` or `detector` without one.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PartKind"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "material": {
+          "description": "Material of a rod; omitted uses fused silica.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Material"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "material_name": {
+          "description": "Display name of the material of a rod.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "name": {
+          "description": "Name of the new placement; omitted uses the name of the part.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "path": {
+          "description": "ZMX, design JSON or scene JSON to import.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "title": "component.remove",
+      "description": "配置を削除する（他に使われない部品も削除）",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "component.remove"
+          ]
+        },
+        "expected_revision": {
+          "description": "Reject the command unless the session is at this revision.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "occurrence": {
+          "description": "Occurrence id such as `rod-4`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "occurrence"
+      ]
+    },
+    {
+      "title": "component.duplicate",
+      "description": "配置とその部品を複製する",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "component.duplicate"
+          ]
+        },
+        "expected_revision": {
+          "description": "Reject the command unless the session is at this revision.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        },
+        "occurrence": {
+          "description": "Occurrence id such as `rod-4`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "occurrence"
+      ]
+    },
+    {
+      "title": "analysis.trace",
+      "description": "モデルを追跡し、計算記録を返す（output で保存）（旧名: trace）",
+      "type": "object",
+      "properties": {
+        "catalogs": {
+          "description": "Extra AGF catalog folders for ZMX import.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "command": {
+          "enum": [
+            "analysis.trace",
+            "trace"
+          ]
         },
         "export_zmx": {
           "description": "Also export the effective model as ZMX before tracing.",
@@ -179,10 +611,19 @@
           "minimum": 0
         },
         "model": {
-          "$ref": "#/$defs/ModelInput"
+          "description": "Omitted traces the session document.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "output": {
-          "description": "Save the calculation record (the `schema name=run` format) here.",
+          "description": "Save the calculation record (the `schema.get name=run` format) here.",
           "type": [
             "string",
             "null"
@@ -256,17 +697,19 @@
       },
       "additionalProperties": false,
       "required": [
-        "command",
-        "model"
+        "command"
       ]
     },
     {
-      "description": "Rerun a calculation record with its recorded optical conditions.",
+      "title": "run.replay",
+      "description": "計算記録を記録された光学条件で再計算する（旧名: replay）",
       "type": "object",
       "properties": {
         "command": {
-          "type": "string",
-          "const": "replay"
+          "enum": [
+            "run.replay",
+            "replay"
+          ]
         },
         "include_record": {
           "type": "boolean",
@@ -328,57 +771,20 @@
       ]
     },
     {
-      "description": "Run a parameter scan into a new directory.",
-      "type": "object",
-      "properties": {
-        "catalogs": {
-          "description": "Extra AGF catalog folders for ZMX import.",
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          }
-        },
-        "command": {
-          "type": "string",
-          "const": "scan"
-        },
-        "include_manifest": {
-          "description": "Return the scan manifest in the result.",
-          "type": "boolean",
-          "default": false
-        },
-        "model": {
-          "$ref": "#/$defs/ModelInput"
-        },
-        "output": {
-          "description": "New directory for `scan.json` and the case records.",
-          "type": "string"
-        },
-        "plan": {
-          "$ref": "#/$defs/ScanPlan"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "command",
-        "model",
-        "plan",
-        "output"
-      ]
-    },
-    {
-      "description": "Continue the unfinished cases of a scan directory.",
+      "title": "run.open",
+      "description": "計算記録を読み込んで返す",
       "type": "object",
       "properties": {
         "command": {
-          "type": "string",
-          "const": "resume_scan"
+          "enum": [
+            "run.open"
+          ]
         },
-        "directory": {
+        "path": {
           "type": "string"
         },
-        "include_manifest": {
+        "viewer_paths": {
+          "description": "Retrace up to 64 sample rays to draw light paths.",
           "type": "boolean",
           "default": false
         }
@@ -386,93 +792,19 @@
       "additionalProperties": false,
       "required": [
         "command",
-        "directory"
+        "path"
       ]
     },
     {
-      "description": "Trace the model with varied ray counts, seeds, pixels and CAD deflections.",
+      "title": "run.save",
+      "description": "計算記録をJSONとして保存する（旧名: save_run）",
       "type": "object",
       "properties": {
         "command": {
-          "type": "string",
-          "const": "convergence"
-        },
-        "include_report": {
-          "type": "boolean",
-          "default": false
-        },
-        "model": {
-          "description": "Model file (`model.path`); CAD deflection comparisons need the original\nSTEP-referencing ZMX, because each case re-reads it.",
-          "$ref": "#/$defs/ModelInput"
-        },
-        "output": {
-          "description": "Directory for `convergence.json` and the case records.",
-          "type": "string"
-        },
-        "plan": {
-          "$ref": "#/$defs/ConvergencePlan",
-          "default": {
-            "allow_uncoated": false,
-            "cad_deflections_mm": [
-              0.02
-            ],
-            "pixels": [
-              [
-                64,
-                64
-              ]
-            ],
-            "ray_counts": [
-              256,
-              1024,
-              4096
-            ],
-            "save_runs": true,
-            "seeds": [
-              42,
-              43
-            ],
-            "threads": 4,
-            "wavelength_um": null
-          }
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "command",
-        "model",
-        "output"
-      ]
-    },
-    {
-      "description": "Save a design as JSON.",
-      "type": "object",
-      "properties": {
-        "command": {
-          "type": "string",
-          "const": "save_design"
-        },
-        "design": {
-          "$ref": "#/$defs/Design"
-        },
-        "output": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "command",
-        "design",
-        "output"
-      ]
-    },
-    {
-      "description": "Save a calculation record as JSON.",
-      "type": "object",
-      "properties": {
-        "command": {
-          "type": "string",
-          "const": "save_run"
+          "enum": [
+            "run.save",
+            "save_run"
+          ]
         },
         "output": {
           "type": "string"
@@ -489,42 +821,15 @@
       ]
     },
     {
-      "description": "Export a standalone model as ZMX.",
-      "type": "object",
-      "properties": {
-        "catalogs": {
-          "description": "Extra AGF catalog folders for ZMX import.",
-          "type": "array",
-          "default": [],
-          "items": {
-            "type": "string"
-          }
-        },
-        "command": {
-          "type": "string",
-          "const": "export_zmx"
-        },
-        "model": {
-          "$ref": "#/$defs/ModelInput"
-        },
-        "output": {
-          "type": "string"
-        }
-      },
-      "additionalProperties": false,
-      "required": [
-        "command",
-        "model",
-        "output"
-      ]
-    },
-    {
-      "description": "Write CSV/PNG/metadata files for one screen of a calculation record.",
+      "title": "run.export_screen",
+      "description": "計算記録の1つのスクリーンをCSV・PNG・条件ファイルに書き出す（旧名: export_screen）",
       "type": "object",
       "properties": {
         "command": {
-          "type": "string",
-          "const": "export_screen"
+          "enum": [
+            "run.export_screen",
+            "export_screen"
+          ]
         },
         "cursor_mm": {
           "description": "Local-mm position of the extra X/Y profiles.",
@@ -579,6 +884,236 @@
         "command",
         "record",
         "output"
+      ]
+    },
+    {
+      "title": "study.scan",
+      "description": "パラメーター走査を新しいディレクトリに実行する（旧名: scan）",
+      "type": "object",
+      "properties": {
+        "catalogs": {
+          "description": "Extra AGF catalog folders for ZMX import.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "command": {
+          "enum": [
+            "study.scan",
+            "scan"
+          ]
+        },
+        "include_manifest": {
+          "description": "Return the scan manifest in the result.",
+          "type": "boolean",
+          "default": false
+        },
+        "model": {
+          "description": "Omitted scans the session document.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output": {
+          "description": "New directory for `scan.json` and the case records.",
+          "type": "string"
+        },
+        "plan": {
+          "$ref": "#/$defs/ScanPlan"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "plan",
+        "output"
+      ]
+    },
+    {
+      "title": "study.resume",
+      "description": "走査ディレクトリの未完了ケースを続行する（旧名: resume_scan）",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "study.resume",
+            "resume_scan"
+          ]
+        },
+        "directory": {
+          "type": "string"
+        },
+        "include_manifest": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "directory"
+      ]
+    },
+    {
+      "title": "study.convergence",
+      "description": "光線数・seed・画素数・CAD分割精度を変えて追跡し、収束を確認する（旧名: convergence）",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "study.convergence",
+            "convergence"
+          ]
+        },
+        "include_report": {
+          "type": "boolean",
+          "default": false
+        },
+        "model": {
+          "description": "Model file (`model.path`); CAD deflection comparisons need the original\nSTEP-referencing ZMX, because each case re-reads it. Omitted uses the file of the\nsession document, which must have no unsaved changes.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelInput"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output": {
+          "description": "Directory for `convergence.json` and the case records.",
+          "type": "string"
+        },
+        "plan": {
+          "$ref": "#/$defs/ConvergencePlan",
+          "default": {
+            "allow_uncoated": false,
+            "cad_deflections_mm": [
+              0.02
+            ],
+            "pixels": [
+              [
+                64,
+                64
+              ]
+            ],
+            "ray_counts": [
+              256,
+              1024,
+              4096
+            ],
+            "save_runs": true,
+            "seeds": [
+              42,
+              43
+            ],
+            "threads": 4,
+            "wavelength_um": null
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "output"
+      ]
+    },
+    {
+      "title": "study.open",
+      "description": "走査ディレクトリのscan.jsonを読み込んで返す",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "study.open"
+          ]
+        },
+        "path": {
+          "description": "Directory containing `scan.json`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "path"
+      ]
+    },
+    {
+      "title": "session.undo",
+      "description": "直前の文書の変更を取り消す",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "session.undo"
+          ]
+        },
+        "expected_revision": {
+          "description": "Reject the command unless the session is at this revision.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "title": "session.redo",
+      "description": "取り消した変更をやり直す",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "session.redo"
+          ]
+        },
+        "expected_revision": {
+          "description": "Reject the command unless the session is at this revision.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": null,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
+      ]
+    },
+    {
+      "title": "session.status",
+      "description": "セッションの版番号・保存先・履歴の状態を返す",
+      "type": "object",
+      "properties": {
+        "command": {
+          "enum": [
+            "session.status"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "command"
       ]
     }
   ],
@@ -1737,7 +2272,7 @@
       ]
     },
     "ModelInput": {
-      "description": "An optical model given by file path or inline JSON. Exactly one key.",
+      "description": "An optical model given by file path or inline JSON. Exactly one key.\n\nCommands that work on a document accept it as the optional `model`. Without it they use\nthe document of the session. With it they work on that model only and leave the session\nunchanged (one-shot use).",
       "oneOf": [
         {
           "description": "`.zmx`, design JSON, legacy project JSON or scene JSON file.",
@@ -1753,7 +2288,7 @@
           ]
         },
         {
-          "description": "Inline design JSON (the `schema name=design` format).",
+          "description": "Inline design JSON (the `schema.get name=design` format).",
           "type": "object",
           "properties": {
             "design": {
@@ -1766,7 +2301,7 @@
           ]
         },
         {
-          "description": "Inline scene JSON (the `schema name=scene` format, as in `examples/*.json`).",
+          "description": "Inline scene JSON (the `schema.get name=scene` format, as in `examples/*.json`).",
           "type": "object",
           "properties": {
             "scene": {
@@ -2910,7 +3445,7 @@
       ]
     },
     "SchemaName": {
-      "description": "Names accepted by the `schema` command.",
+      "description": "Names accepted by `schema.get`.",
       "oneOf": [
         {
           "type": "string",
@@ -2920,12 +3455,12 @@
           ]
         },
         {
-          "description": "Request accepted by `raytrace-rs run`.",
+          "description": "Request accepted by `raytrace-rs run`: one entry per command.",
           "type": "string",
           "const": "request"
         },
         {
-          "description": "Response printed by the CLI.",
+          "description": "Response printed by the CLI: the result of each command.",
           "type": "string",
           "const": "response"
         },
@@ -2935,12 +3470,12 @@
           "const": "scene"
         },
         {
-          "description": "Design JSON saved by the GUI and `inspect`.",
+          "description": "Design JSON saved by the GUI and `doc.save`.",
           "type": "string",
           "const": "design"
         },
         {
-          "description": "Calculation record saved by `trace` and `replay`.",
+          "description": "Calculation record saved by `analysis.trace` and `run.replay`.",
           "type": "string",
           "const": "run"
         },

@@ -1,9 +1,11 @@
 //! The design document compiles to the scenes that the previous project model produced,
 //! and files of earlier builds (project v1 to v3) still open.
 use raytrace_rs::{
+    command::call_once,
+    commands,
     compatibility::ComponentCompatibility,
     design::{self, Component, Design, PartKind},
-    engine::{self, ModelInput, Overrides, RecordInput, ReplayRequest, Request, TraceRequest},
+    engine::{ModelInput, Overrides, RecordInput, ReplayRequest, TraceRequest},
     math::V3,
     model::*,
     record::RunRecord,
@@ -265,8 +267,8 @@ fn legacy_record(
     dir: &std::path::Path,
 ) -> std::path::PathBuf {
     let current = dir.join("current.run.json");
-    let request = Request::Trace(TraceRequest {
-        model: ModelInput::Design(Box::new(design.clone())),
+    let request = TraceRequest {
+        model: Some(ModelInput::Design(Box::new(design.clone()))),
         catalogs: Vec::new(),
         rays: None,
         overrides: Overrides::default(),
@@ -280,8 +282,8 @@ fn legacy_record(
         export_zmx: None,
         output: Some(current.clone()),
         include_record: false,
-    });
-    engine::execute(request).unwrap();
+    };
+    call_once(commands::ANALYSIS_TRACE, request).unwrap();
     let mut value: serde_json::Value =
         serde_json::from_slice(&fs::read(&current).unwrap()).unwrap();
     let calculation = value["calculation"].as_object_mut().unwrap();
@@ -337,16 +339,19 @@ fn records_saved_by_the_previous_build_load_and_replay() {
         );
         // Replay reproduces the report of the original calculation.
         let replayed = dir.join("replayed.run.json");
-        engine::execute(Request::Replay(ReplayRequest {
-            record: RecordInput::Path(path),
-            threads: Some(1),
-            repeat: 1,
-            warmup: false,
-            terminals: None,
-            paths: None,
-            output: Some(replayed.clone()),
-            include_record: false,
-        }))
+        call_once(
+            commands::RUN_REPLAY,
+            ReplayRequest {
+                record: RecordInput::Path(path),
+                threads: Some(1),
+                repeat: 1,
+                warmup: false,
+                terminals: None,
+                paths: None,
+                output: Some(replayed.clone()),
+                include_record: false,
+            },
+        )
         .unwrap();
         let before = RunRecord::open(&dir.join("current.run.json")).unwrap();
         let after = RunRecord::open(&replayed).unwrap();

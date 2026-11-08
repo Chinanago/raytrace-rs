@@ -1,14 +1,21 @@
 use super::*;
-use raytrace_engine::engine::{
-    Document, ModelInput, OpenRequest, Outcome, Request, ResumeScanRequest, ScanRequest,
-};
 use raytrace_engine::scan::{
     Parameter, ParameterLink, ScanAxis, ScanCase, ScanManifest, ScanPlan, linear_values,
+};
+use raytrace_engine::{
+    commands,
+    engine::{ModelInput, ResumeScanRequest, ScanRequest, StudyOpenRequest},
 };
 use raytrace_io::record::RunRecord;
 
 mod comparison;
 mod view;
+
+/// A scan to start or to continue, both run by the same worker.
+enum StudyJob {
+    Scan(Box<ScanRequest>),
+    Resume(ResumeScanRequest),
+}
 
 pub(super) struct Study {
     pub auto_compare: bool,
@@ -220,14 +227,14 @@ impl App {
     }
     fn launch_study(&mut self, ctx: &egui::Context, resume: bool) {
         self.commit_edit();
-        let prepared = (|| -> Result<(Request, PathBuf), String> {
+        let prepared = (|| -> Result<(StudyJob, PathBuf), String> {
             if resume {
                 self.study
                     .manifest
                     .as_ref()
                     .ok_or("走査記録を開いてください")?;
                 let directory = self.study.directory.clone().ok_or("保存先がありません")?;
-                let request = Request::ResumeScan(ResumeScanRequest {
+                let request = StudyJob::Resume(ResumeScanRequest {
                     directory: directory.clone(),
                     include_manifest: true,
                 });
@@ -287,13 +294,13 @@ impl App {
             if dir.exists() {
                 return Err("同名の走査記録があります。新しい保存先を指定してください".into());
             }
-            let request = Request::Scan(ScanRequest {
-                model: ModelInput::Design(Box::new(self.design.clone())),
+            let request = StudyJob::Scan(Box::new(ScanRequest {
+                model: Some(ModelInput::Design(Box::new(self.design.clone()))),
                 catalogs: Vec::new(),
                 plan,
                 output: dir.clone(),
                 include_manifest: true,
-            });
+            }));
             Ok((request, dir))
         })();
         match prepared {
@@ -301,17 +308,20 @@ impl App {
             Err(error) => self.error = Some(error),
         }
     }
-    fn spawn_study(&mut self, request: Request, dir: PathBuf, ctx: &egui::Context) {
+    fn spawn_study(&mut self, request: StudyJob, dir: PathBuf, ctx: &egui::Context) {
         self.study.directory = Some(dir);
         let (progress, rx) = mpsc::channel();
         self.study.progress = Some(rx);
         self.status = "パラメーターを走査中…".into();
-        self.submit(ctx, request, true, Some(progress), |result| {
+        self.submit(ctx, true, Some(progress), move |session, context| {
+            let result = match request {
+                StudyJob::Scan(r) => session.call(commands::STUDY_SCAN, *r, context),
+                StudyJob::Resume(r) => session.call(commands::STUDY_RESUME, r, context),
+            };
             Job::Scanned(match result {
-                Ok(Outcome::Scanned(s)) => s
+                Ok(s) => s
                     .manifest
                     .ok_or_else(|| "走査記録が返されませんでした".into()),
-                Ok(_) => Err("走査以外の結果が返されました".into()),
                 Err(e) => Err(e.message),
             })
         });
@@ -327,17 +337,14 @@ impl App {
     pub(super) fn open_study_path(&mut self, dir: PathBuf, ctx: &egui::Context) {
         self.study.directory = Some(dir.clone());
         self.study.manifest = None;
-        let request = Request::Open(OpenRequest {
-            path: dir,
-            catalogs: Vec::new(),
-            viewer_paths: false,
-        });
-        self.submit(ctx, request, false, None, |result| {
-            Job::Scanned(match result {
-                Ok(Outcome::Opened(Document::Scan { manifest })) => Ok(manifest),
-                Ok(_) => Err("走査記録のフォルダーを指定してください".into()),
-                Err(e) => Err(e.message),
-            })
+        let request = StudyOpenRequest { path: dir };
+        self.submit(ctx, false, None, move |session, context| {
+            Job::Scanned(
+                session
+                    .call(commands::STUDY_OPEN, request, context)
+                    .map(|opened| opened.manifest)
+                    .map_err(|e| e.message),
+            )
         });
     }
     pub(super) fn adopt_record(&mut self, record: RunRecord) {

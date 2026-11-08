@@ -1,6 +1,7 @@
 use super::*;
 use raytrace_engine::{
-    engine::{self, EngineError, ModelInput, Outcome, Overrides, Progress, Request, TraceRequest},
+    Context as EngineContext, Progress, Session, commands,
+    engine::{self, ModelInput, Overrides, TraceRequest},
     scan::ScanManifest,
 };
 use raytrace_io::record::{RUN_FORMAT, RunRecord};
@@ -35,15 +36,14 @@ impl ResultView {
 }
 
 impl App {
-    /// Run one engine request off the UI thread; `finish` turns its outcome into a job
-    /// message. Cancellable requests expose their control to the cancel button.
+    /// Run `work` off the UI thread in a new session; it calls engine commands and turns their
+    /// results into a job message. Cancellable work exposes its control to the cancel button.
     pub(super) fn submit(
         &mut self,
         ctx: &egui::Context,
-        request: Request,
         cancellable: bool,
         progress: Option<mpsc::Sender<Box<ScanManifest>>>,
-        finish: impl FnOnce(Result<Outcome, EngineError>) -> Job + Send + 'static,
+        work: impl FnOnce(&mut Session, &mut EngineContext<'_>) -> Job + Send + 'static,
     ) {
         let (tx, rx) = mpsc::channel();
         self.job = Some(rx);
@@ -59,8 +59,12 @@ impl App {
                     context.request_repaint();
                 }
             };
-            let result = engine::execute_with(request, &control, &mut report);
-            let _ = tx.send(finish(result));
+            let mut session = Session::new();
+            let job = work(
+                &mut session,
+                &mut EngineContext::with_progress(&control, &mut report),
+            );
+            let _ = tx.send(job);
             context.request_repaint();
         });
     }
@@ -69,8 +73,8 @@ impl App {
         self.commit_edit();
         let revision = self.history.revision;
         self.status = "光線を追跡中…".into();
-        let request = Request::Trace(TraceRequest {
-            model: ModelInput::Design(Box::new(self.design.clone())),
+        let request = TraceRequest {
+            model: Some(ModelInput::Design(Box::new(self.design.clone()))),
             catalogs: Vec::new(),
             rays: None,
             overrides: Overrides {
@@ -87,15 +91,16 @@ impl App {
             export_zmx: None,
             output: None,
             include_record: true,
-        });
-        self.submit(ctx, request, true, None, move |result| match result {
-            Ok(Outcome::Traced(t)) => match t.record {
-                Some(record) => Job::Traced(Ok(Box::new(ResultView::new(revision, *record)))),
-                None => Job::Traced(Err("計算記録が返されませんでした".into())),
-            },
-            Ok(_) => Job::Traced(Err("追跡以外の結果が返されました".into())),
-            Err(e) if e.code == "cancelled" => Job::Cancelled,
-            Err(e) => Job::Traced(Err(e.message)),
+        };
+        self.submit(ctx, true, None, move |session, context| {
+            match session.call(commands::ANALYSIS_TRACE, request, context) {
+                Ok(t) => match t.record {
+                    Some(record) => Job::Traced(Ok(Box::new(ResultView::new(revision, *record)))),
+                    None => Job::Traced(Err("計算記録が返されませんでした".into())),
+                },
+                Err(e) if e.code == "cancelled" => Job::Cancelled,
+                Err(e) => Job::Traced(Err(e.message)),
+            }
         });
     }
     pub(super) fn poll(&mut self, ctx: &egui::Context) {
