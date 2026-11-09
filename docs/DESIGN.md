@@ -149,7 +149,7 @@ Design（文書）
 | 解析は登録制（P9） | 段階6で実現済み。`raytrace_engine::analysis` に `Analysis`（ID・要約・設定の型・結果の型・`run(&RunView, 設定)`）の登録表があり、登録すると `analysis.<id>` コマンド（問い合わせ）になる。`analysis.budget`（光量収支）と `analysis.screen`（スクリーンの受光・ピーク・断面・半値幅・ROI）があり、GUIのスクリーン画面は `analysis.screen` の結果を描く。セッションは直近の計算記録（`analysis.trace`・`run.replay`・`run.open`）を1件保持し、`run` を省略した解析はそれを使う。残る差：逐次系の標準解析（スポット図など）は未実装で、`doc.inspect` の互換性レポートは解析の登録表に入っていない |
 | 外部形式は境界で変換（P6） | 元のZMXは部品の出所として不透明なJSONで保管し、L2はその中身を解釈しない。取り込みの問題点は部品が持つ。残る差：計算記録が文書全体を含む（含めるかの選択式は未実装） |
 | 層の自動検査（P4） | 実現済み。`cargo xtask layers` が層の順序・GUI依存の隔離・計算核の純粋さを、`cargo xtask wasm` がL0〜L4のWASMビルドをCIで検査する |
-| 落ちない（P8） | エラー型は整っているが、製品コードに `unwrap`・`expect` が残る |
+| 落ちない（P8） | 段階6bで実現済み。workspaceのClippy lint（`unwrap_used`・`expect_used`・`panic` をdeny、`clippy.toml` でテスト内は許可）が製品コードでの使用を機械的に禁止する。既存の箇所はエラー（`Error::Internal` を含む）または非パニックの書き方に直し、型で保証される例外の `#[allow]` はない。結合テスト・examplesは先頭の `#![allow]` で許可 |
 | 契約はスキーマ（P5） | 実現済み。`schemas/` を生成し、古さをテストで検出している |
 | 決定性（P7） | 実現済み。集計順の固定、SIMD・BVHと基準経路の一致テストがある |
 
@@ -261,7 +261,7 @@ Analysis { id, 設定のスキーマ, 結果のスキーマ, run(CompiledScene, 
 
 ### 落ちない規則の機械的な検査（段階6で確定）
 
-製品コードでの `unwrap`・`expect`・`panic!` は、workspaceのClippy lint（`unwrap_used`・`expect_used`・`panic` を deny、テストでは許可）で禁止する。既存の箇所はエラーを返す形に直す。型の上で起こりえない場合に限り、理由を書いた `#[allow]` を個別に付けてよい。
+製品コードでの `unwrap`・`expect`・`panic!` は、workspaceのClippy lint（`unwrap_used`・`expect_used`・`panic` を deny、テストでは許可）で禁止する。既存の箇所はエラーを返す形に直す。型の上で起こりえない場合に限り、理由を書いた `#[allow]` を個別に付けてよい。テスト（`#[cfg(test)]`・`#[test]`）は `clippy.toml` の `allow-*-in-tests` で、結合テスト（`tests/`）とexamplesはファイル先頭の `#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]` で許可する。不変条件が破れたときの `raytrace_core::Error::Internal`（コード `internal`）を用意し、`trace`・`trace_controlled` は `Result` を返す。
 
 ## 10. 入出力と形式
 
@@ -318,7 +318,7 @@ Analysis { id, 設定のスキーマ, 結果のスキーマ, run(CompiledScene, 
 | 3 | セッションとコマンド登録をエンジンに入れる（`raytrace-engine`）。取り消し・版番号・ジョブ・`command.describe` を持たせ、CLIをその上に載せる | `engine::Request` がコマンド体系に置き換わる |
 | 4 | GUIの編集をすべてコマンド経由にする。GUIが文書を直接書き換える箇所をなくす | GUIで行った編集を、同じコマンド列で再現できる |
 | 5 | MCPサーバー（`raytrace-mcp`）を足す。窓なしの方式と、GUIへ接続する方式を持つ。**窓なしの方式は実施済み**（GUIへ接続する方式は後の段階） | エージェントがGUIと同じ操作で設計・計算・解析を行える |
-| 6 | 解析の登録制を広げ、検証を体系化する。製品コードから `unwrap`・`expect` をなくす。**解析の登録制は実施済み**（6a：`analysis.budget`・`analysis.screen`、GUIの移行）。`unwrap`・`expect` の検査は6b | 解析を足すときに中核以外を変えずに済む |
+| 6 | 解析の登録制を広げ、検証を体系化する。製品コードから `unwrap`・`expect` をなくす。**解析の登録制は実施済み**（6a：`analysis.budget`・`analysis.screen`、GUIの移行）。**6bも実施済み**（`unwrap`・`expect`・`panic!` をClippyでdeny）。段階6は完了 | 解析を足すときに中核以外を変えずに済む |
 | 7 | Web版。L4のセッションをブラウザで動かし、WASM向けのフロントエンドから同じコマンドを使う。スレッドなしでも同じ結果になることをテストする | ブラウザでサンプルを開いて追跡・表示できる |
 | 8以降 | 逐次系の標準解析、パラメーターと最適化、公差解析、回折・偏光 | [1章](#機能の到達範囲) の段階に従う |
 
@@ -336,6 +336,7 @@ Analysis { id, 設定のスキーマ, 結果のスキーマ, run(CompiledScene, 
 | 2026-11-08 | 段階3でセッションとコマンド登録を `raytrace-engine` に実装した。取り消し・やり直しも版番号を進める（減らさない）。ダーティ判定は保存時の文書との同一性で行う。旧 `open` は設計だけを開き、計算記録は `run_record`、走査ディレクトリは `study_directory` のエラーで各コマンドを案内する。GUIは段階3では文書を自分で持ち、操作ごとに新しい `Session` を作って `model` を渡す（セッションを共有すると、計算中に保存などの操作が待たされるため）。結果の型は `Response` に型付きで残し、JSONは `serde_json` の `raw_value` 機能で構造体の順序のまま出力する | 登録表・型付きの入口・JSONの入口を1つの関数に集め（P2）、応答の形と項目の順序を保つ。GUIの編集のコマンド化は段階4 |
 | 2026-11-08 | 段階4でGUIの編集をすべてセッションのコマンド経由にした。取り消しのまとまり（`group`）、履歴の上限、変更の記録（`session.log`）をセッションに入れ、GUI独自の履歴（`gui/history.rs`）をなくした。`doc.new` に `design` を足し、開いた文書は未保存の変更なしで始まる。読込は作業スレッドのセッション（または複製）を `Session::adopt` で取り込む。光線数の上限の切り替えは取り消しの対象から外れ、ファイルを開くときに引き継ぐ計算条件（未コート・単色波長）は開いた文書への編集として記録される | 文書の持ち主と履歴を1つにし、GUIで行った編集をエージェントが同じコマンド列で再現・監査できるようにする（P1・P2）。`doc.set` は編集する部品・配置だけをJSONにするので、大きなメッシュを含む文書でもドラッグが重くならない |
 | 2026-11-08 | 段階5でMCPサーバー（`raytrace-mcp`、`raytrace-rs mcp`）を実装した。外部のMCPライブラリには依存せず、ツールは4つに限る。IDで扱うジョブは入れず、1つの作業スレッドが呼び出しを順に実行する。GUIへ接続する方式は後の段階 | 設計文書のスキーマが大きく、コマンドごとのツールは文脈を圧迫するため。セッションの持ち主を作業スレッド1つにすると、取り消し・版番号の規則が変わらない |
+| 2026-11-09 | 段階6bで `unwrap`・`expect`・`panic!` をworkspaceのClippy lintでdenyした。`raytrace_core::trace::trace` と `trace_controlled` は `Result` を返し、未検証の波長などで以前はパニックした箇所はエラーになる。`validation::cases()` も `Result` を返す | 落ちない（P8）を人の注意ではなく機械で守る。入力が敵対的でも計算核が落ちないようにする |
 
 新しい決定はこの表に追記します。原則（3章）や層（4章）を変える決定は、本文も同時に更新します。
 

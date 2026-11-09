@@ -94,6 +94,9 @@ unused_qualifications = "warn"
 [workspace.lints.clippy]
 dbg_macro = "warn"
 todo = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
 
 [lints]
 workspace = true
