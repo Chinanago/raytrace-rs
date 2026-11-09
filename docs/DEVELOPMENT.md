@@ -70,7 +70,7 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 python3 scripts/package_macos.py
 ```
 
-作成後に空のフォルダーへ展開し、4サンプルの追跡・再計算・JSONリクエスト・PNG出力に加えて、`raytrace-rs mcp` のセッション（`initialize`、`doc.open`、`analysis.trace`、`analysis.budget`）を確認します。アプリケーションバンドル（`.app`）は作らず、署名と公証もしていないため、ブラウザーで取得したファイルには `xattr -dr com.apple.quarantine` が必要になることがあります。一部の依存クレート（`objc2` 系）は公開パッケージにライセンスファイルを含まないため、`THIRD_PARTY_LICENSES.txt` にはパッケージ情報から作ったMITの表示を入れ、その旨を節に書きます。上流の本文に差し替えるときは `scripts/third_party_notices.toml` に追加します。
+作成後に空のフォルダーへ展開し、4サンプルの追跡・再計算・JSONリクエスト・PNG出力に加えて、`raytrace-rs mcp` のセッション（`initialize`、`doc.open`、`analysis.trace`、`analysis.budget`）を確認します。アプリケーションバンドル（`.app`）は作らず、署名と公証もしていないため、ブラウザーで取得したファイルには `xattr -dr com.apple.quarantine` が必要になることがあります。`objc2` 系のクレートは公開パッケージにライセンスファイルを含まないため、上流リポジトリの固定したコミットのMIT本文を `scripts/third_party_notices.toml` から入れます。上流にもライセンスファイルがない `dispatch 0.2.0` だけは、パッケージ情報（MIT、作者名）から作った表示を入れ、その旨を節に書きます。
 
 ### Claude Desktop拡張（MCPB）
 

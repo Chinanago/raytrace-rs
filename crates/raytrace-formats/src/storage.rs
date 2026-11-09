@@ -8,6 +8,11 @@ pub fn data_dir() -> PathBuf {
     if let Some(p) = std::env::var_os("LOCALAPPDATA") {
         return PathBuf::from(p).join("Raytrace");
     }
+    if cfg!(target_os = "macos")
+        && let Some(p) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(p).join("Library/Application Support/Raytrace");
+    }
     if let Some(p) = std::env::var_os("XDG_DATA_HOME") {
         return PathBuf::from(p).join("raytrace");
     }

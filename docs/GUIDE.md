@@ -107,7 +107,7 @@ GUIの「光量の内訳 → 追跡の診断」から、未解決・媒質不整
 
 明示入力の光線を含む記録では、GUIは保存済みの結果を表示し、「モデル光源で計算」で光源定義からの計算へ切り替えます。保存した入力光線を固定して再計算する場合はCLIの `replay` を使います。
 
-Windowsでは設定・CADキャッシュ・GUI走査記録を `%LOCALAPPDATA%/Raytrace` に保存します。`RAYTRACE_DATA_DIR` で保存先を変更できます。設計・計算結果・スクリーンの出力先は保存時に指定します。
+設定・CADキャッシュ・GUI走査記録は、Windowsでは `%LOCALAPPDATA%/Raytrace`、macOSでは `~/Library/Application Support/Raytrace`、Linuxでは `$XDG_DATA_HOME/raytrace`（未設定なら `~/.local/share/raytrace`）に保存します。`RAYTRACE_DATA_DIR` で保存先を変更できます。設計・計算結果・スクリーンの出力先は保存時に指定します。
 
 ## 計算記録と再計算
 
