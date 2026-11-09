@@ -2,13 +2,28 @@
 
 光源・レンズ・インテグレータロッドを並べて、光の通り道とスクリーン上の明るさの分布を計算するソフトです。Zemaxの `.zmx` をそのまま読み込めます。日本語のGUIとコマンドライン（CLI）があります。
 
-[Windows版をダウンロード（v0.11.0）](https://github.com/Chinanago/raytrace-rs/releases/download/v0.11.0/raytrace-rs-0.11.0-windows-x64.zip) · [操作ガイド](docs/GUIDE.md) · [機能と対応範囲](docs/FEATURES.md) · [変更履歴](https://github.com/Chinanago/raytrace-rs/releases)
+> **ベータ版（0.12.0）です。** 動作確認を目的に公開しています。ベータの間は後方互換性がなく、コマンド・JSONの形式・保存ファイルを予告なく変えることがあります。変更点は[CHANGELOG](CHANGELOG.md)にあります。
+
+[最新版をダウンロード](https://github.com/Chinanago/raytrace-rs/releases/latest) · [操作ガイド](docs/GUIDE.md) · [機能と対応範囲](docs/FEATURES.md) · [変更履歴](CHANGELOG.md)
 
 ## インストール
 
+[リリースページ](https://github.com/Chinanago/raytrace-rs/releases/latest)から使うOSのファイルを取得します。版を含まない固定名のファイルもあります。
+
+| OS | ファイル | 内容 |
+|---|---|---|
+| Windows | `raytrace-rs-windows-x64.zip` | GUI、CLI、MCPサーバー |
+| macOS（Apple Silicon・Intel） | `raytrace-rs-macos.tar.gz` | GUI、CLI、MCPサーバー（ユニバーサルバイナリ） |
+| Claude Desktop | `raytrace-rs-windows.mcpb` / `raytrace-rs-macos.mcpb` | MCPサーバーの拡張。開くとClaude Desktopに導入できる |
+| Linux（CLIのみ） | `raytrace-rs-linux-x64.tar.gz` | 依存ライブラリなしで動く静的リンク版 |
+
 **Windows**：ZIPを展開して「Raytraceを起動.cmd」を開くだけです。RustやOpticStudioは要りません。起動時にDLL不足と表示されたら、[Visual C++ x64ランタイム](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)を入れてください。
 
-**Linux（CLIのみ）**：v0.11.0より後のリリースには、依存ライブラリなしで動く `raytrace-rs-<版>-linux-x64.tar.gz` を添付します。最新版は次の1行で取得できます。
+**macOS**：`tar xzf raytrace-rs-macos.tar.gz` で展開し、展開先で `./raytrace-gui`（GUI）または `./raytrace-rs`（CLI）を実行します。署名・公証をしていないため、ブラウザーで取得したファイルは初回に開けないことがあります。その場合は `xattr -dr com.apple.quarantine raytrace-rs-*-macos` で隔離属性を外してください。macOS 11以降が必要です。
+
+**Claude Desktop**：`.mcpb` ファイルをClaude Desktopで開くと導入のダイアログが出ます。Claude Code・Codexでの設定は[AIエージェントで使う](#aiエージェントで使う)にあります。
+
+**Linux**：最新版は次の1行で取得できます。
 
 ```bash
 curl -L https://github.com/Chinanago/raytrace-rs/releases/latest/download/raytrace-rs-linux-x64.tar.gz | tar xz
@@ -26,7 +41,7 @@ Rustがあれば、どのOSでも `cargo install --git https://github.com/Chinan
 
 ## コマンドラインで使う
 
-ZIPの展開先で実行します（Linuxでは `./raytrace-rs`）。引数はリクエストJSONのフィールドをそのまま書きます（`a.b=文字列`、`a.b:=数値などのJSON`、`a.b:=@ファイル`）。
+配布物の展開先で実行します（macOS・Linuxでは `./raytrace-rs`）。引数はリクエストJSONのフィールドをそのまま書きます（`a.b=文字列`、`a.b:=数値などのJSON`、`a.b:=@ファイル`）。
 
 ```powershell
 # サンプルを計算して計算記録を保存
@@ -88,4 +103,4 @@ cargo build --release --locked -p raytrace-cli      # CLIだけ
 
 ## ライセンス
 
-[MIT License](LICENSE)。依存ライブラリとフォントにはそれぞれのライセンスが適用され、Windows版ZIPの `THIRD_PARTY_LICENSES.txt` に同梱しています。
+[MIT License](LICENSE)。依存ライブラリとフォントにはそれぞれのライセンスが適用され、各配布物の `THIRD_PARTY_LICENSES.txt` に同梱しています。
