@@ -108,8 +108,9 @@ pub(super) fn spectrum_text(
     spectrum.validate()?;
     let mut samples = spectrum.samples.clone();
     if samples.len() < 3 {
-        let first = samples[0][0];
-        let last = samples.last().unwrap()[0];
+        let (Some(&[first, _]), Some(&[last, _])) = (samples.first(), samples.last()) else {
+            return Err(crate::Error::Spcd("スペクトルに波長がありません".into()));
+        };
         samples.insert(0, [first * 0.9, 0.]);
         if samples.len() < 3 {
             samples.push([last * 1.1, 0.]);
@@ -381,10 +382,15 @@ pub(super) fn nsc_spectra(
                 output.with_file_name(&name),
                 spectrum_text(spectrum, output)?,
             )?;
+            let last_wavelength = spectrum
+                .samples
+                .last()
+                .map(|v| v[0])
+                .ok_or_else(|| crate::Error::Spcd("スペクトルに波長がありません".into()))?;
             plan.settings[i] = Some(format!(
                 "  NSCS 7 3 8 0 0 0 {} {} {} \"{name}\"",
                 spectrum.samples[0][0],
-                spectrum.samples.last().unwrap()[0],
+                last_wavelength,
                 spectrum.samples.len().max(3)
             ));
         }

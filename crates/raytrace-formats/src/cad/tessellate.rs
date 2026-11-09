@@ -322,8 +322,9 @@ impl<'a> Mesher<'a> {
                     "STEP #{id}: 境界の辺がつながっていません"
                 )));
             }
-            let occurrence = *seen.entry(edge_id).or_insert(0);
-            *seen.get_mut(&edge_id).unwrap() += 1;
+            let count = seen.entry(edge_id).or_insert(0);
+            let occurrence = *count;
+            *count += 1;
             points.extend(samples.into_iter().map(|point| BoundaryPoint {
                 point,
                 edge: edge_id,
@@ -423,8 +424,9 @@ impl<'a> Mesher<'a> {
                 } else {
                     None
                 };
-                if let Some(axis) = forced_axis {
-                    let period = periods[axis].unwrap();
+                if let Some(axis) = forced_axis
+                    && let Some(period) = periods[axis]
+                {
                     let base = seam_bases.entry(bp.edge).or_insert_with(|| {
                         if let Some(prev) = previous {
                             uv[axis] + ((prev[axis] - uv[axis]) / period).round() * period
@@ -435,7 +437,7 @@ impl<'a> Mesher<'a> {
                     uv[axis] = if bp.occurrence == 0 {
                         *base
                     } else {
-                        surface.seam_opposite(axis, *base, previous, winding[axis])
+                        Surface::seam_opposite(period, axis, *base, previous, winding[axis])
                     };
                 }
                 if let Some(previous) = previous {

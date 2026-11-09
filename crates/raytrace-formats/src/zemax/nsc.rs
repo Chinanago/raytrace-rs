@@ -58,7 +58,8 @@ pub(super) fn read_source_spectrum(
             merged
         }
         8. => {
-            let line = settings.unwrap();
+            let line = settings
+                .ok_or_else(|| crate::Error::zmx("SPCDのNSCS設定が不足しています".into()))?;
             let name = line
                 .split('"')
                 .nth(1)
@@ -77,7 +78,9 @@ pub(super) fn read_source_spectrum(
             return read_spcd(file).map(Some);
         }
         4. | 7. => {
-            let w = parts.as_ref().unwrap();
+            let w = parts.as_ref().ok_or_else(|| {
+                crate::Error::zmx("NSCS 7 3のスペクトル条件が不足しています".into())
+            })?;
             let lo = number(w[7])?;
             let hi = number(w[8])?;
             let steps = number(w[9])?;
@@ -284,6 +287,18 @@ pub(super) fn read_nsc(
                         None
                     }
                 };
+                let diode = Diode {
+                    astigmatism_mm: param(6, 0.),
+                    angular_supergaussian: [param(8, 1.), param(10, 1.)],
+                    spatial_supergaussian: [param(17, 1.), param(20, 1.)],
+                    rotation_deg: pose.rotation_deg,
+                    divergence_deg: [param(7, 1.0), param(9, 1.0)],
+                    array: [param(11, 1.0) as usize, param(12, 1.0) as usize],
+                    spacing_mm: [param(13, 0.0), param(14, 0.0)],
+                    half_width_mm: [param(15, 0.0), param(18, 0.0)],
+                    gaussian_width_mm: [param(16, 0.0), param(19, 0.0)],
+                };
+                let diode_check = diode.validate();
                 project.scene.sources.push(Source {
                     pupil: None,
                     spectrum,
@@ -297,28 +312,9 @@ pub(super) fn read_nsc(
                     medium: surrounding_medium,
                     total_weight: param(3, 1.0),
                     seed: 42 + i as u64,
-                    diode: Some(Diode {
-                        astigmatism_mm: param(6, 0.),
-                        angular_supergaussian: [param(8, 1.), param(10, 1.)],
-                        spatial_supergaussian: [param(17, 1.), param(20, 1.)],
-                        rotation_deg: pose.rotation_deg,
-                        divergence_deg: [param(7, 1.0), param(9, 1.0)],
-                        array: [param(11, 1.0) as usize, param(12, 1.0) as usize],
-                        spacing_mm: [param(13, 0.0), param(14, 0.0)],
-                        half_width_mm: [param(15, 0.0), param(18, 0.0)],
-                        gaussian_width_mm: [param(16, 0.0), param(19, 0.0)],
-                    }),
+                    diode: Some(diode),
                 });
-                if let Err(e) = project
-                    .scene
-                    .sources
-                    .last()
-                    .unwrap()
-                    .diode
-                    .as_ref()
-                    .unwrap()
-                    .validate()
-                {
+                if let Err(e) = diode_check {
                     project.issue("source", format!("{label}: {e}"), true);
                 }
             }

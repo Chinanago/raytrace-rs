@@ -192,7 +192,10 @@ pub(super) fn sources(
             };
             p.vignetting.validate()?;
             if finite && kind == 0. {
-                p.optical.as_mut().unwrap().finite_field_angle_deg = Some([xs[i], ys[i]]);
+                p.optical
+                    .as_mut()
+                    .ok_or_else(|| crate::Error::zmx("光学瞳の設定がありません".into()))?
+                    .finite_field_angle_deg = Some([xs[i], ys[i]]);
             }
             s.pupil = Some(p);
         }

@@ -386,14 +386,14 @@ impl Surface {
             _ => [None, None],
         }
     }
+    /// `period` is the period of the surface along `axis`.
     pub fn seam_opposite(
-        &self,
+        period: f64,
         axis: usize,
         base: f64,
         previous: Option<[f64; 2]>,
         winding: f64,
     ) -> f64 {
-        let period = self.periods()[axis].unwrap();
         let target = previous.map_or(base + period, |p| p[axis]);
         let left = (base - period - target).abs();
         let right = (base + period - target).abs();
@@ -794,7 +794,7 @@ pub(super) fn read_surface(table: &Table, id: usize) -> Result<Surface> {
         }
         let flat = Value::List(
             w.iter()
-                .flat_map(|row| row.list().unwrap().iter().cloned())
+                .flat_map(|row| row.list().unwrap_or_default().iter().cloned())
                 .collect(),
         );
         weights(Some(&flat), n)?

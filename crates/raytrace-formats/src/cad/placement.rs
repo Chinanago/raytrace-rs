@@ -120,7 +120,9 @@ pub(super) fn solid_placement(table: &Table) -> Result<(usize, Transform)> {
         let a = e
             .part("REPRESENTATION_RELATIONSHIP")
             .or_else(|| e.part("SHAPE_REPRESENTATION_RELATIONSHIP"))
-            .unwrap();
+            .ok_or_else(|| {
+                crate::Error::step(format!("STEP #{id}: 表現間の関係の定義が読めません"))
+            })?;
         let (r1, r2) = (field(a, 2)?.reference()?, field(a, 3)?.reference()?);
         if !reps.contains_key(&r1) || !reps.contains_key(&r2) {
             continue;
@@ -167,7 +169,7 @@ pub(super) fn solid_placement(table: &Table) -> Result<(usize, Transform)> {
         }
         children.insert(child);
         reps.get_mut(&parent)
-            .unwrap()
+            .ok_or_else(|| crate::Error::step("STEP: 配置の親が形状表現ではありません".into()))?
             .children
             .push((child, transform));
     }
