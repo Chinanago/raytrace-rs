@@ -9,7 +9,7 @@ from check_publish import embedded_document
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCUMENTS = ["README.md", "LICENSE", "CHANGELOG.md", "docs/FEATURES.md", "docs/GUIDE.md",
-             "docs/DEVELOPMENT.md"]
+             "docs/AI.md", "docs/DEVELOPMENT.md"]
 EXAMPLES = ["examples/sequential_lens.json", "examples/nonsequential_slab.json",
             "examples/integrator_rod.json", "examples/folded_mirror.json"]
 

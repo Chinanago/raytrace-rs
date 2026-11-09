@@ -4,11 +4,23 @@
 
 > **ベータ版（0.12.0）です。** 動作確認を目的に公開しています。ベータの間は後方互換性がなく、コマンド・JSONの形式・保存ファイルを予告なく変えることがあります。変更点は[CHANGELOG](CHANGELOG.md)にあります。
 
-[最新版をダウンロード](https://github.com/Chinanago/raytrace-rs/releases/latest) · [操作ガイド](docs/GUIDE.md) · [機能と対応範囲](docs/FEATURES.md) · [変更履歴](CHANGELOG.md)
+[最新版をダウンロード](https://github.com/Chinanago/raytrace-rs/releases/latest) · [AIから使う](docs/AI.md) · [操作ガイド](docs/GUIDE.md) · [機能と対応範囲](docs/FEATURES.md) · [変更履歴](CHANGELOG.md)
 
 ## インストール
 
-[リリースページ](https://github.com/Chinanago/raytrace-rs/releases/latest)から使うOSのファイルを取得します。版を含まない固定名のファイルもあります。
+次の1行でインストールできます（管理者権限は不要です。実行ファイルとサンプルを自分のフォルダーに入れ、AIアプリの設定を表示します）。
+
+```bash
+# macOS・Linux
+curl -fsSL https://raw.githubusercontent.com/Chinanago/raytrace-rs/main/install.sh | sh
+```
+
+```powershell
+# Windows（PowerShell）
+irm https://raw.githubusercontent.com/Chinanago/raytrace-rs/main/install.ps1 | iex
+```
+
+手作業で入れるときは、[リリースページ](https://github.com/Chinanago/raytrace-rs/releases/latest)から使うOSのファイルを取得します。版を含まない固定名のファイルもあり、それぞれに `.sha256`（チェックサム）が付きます。
 
 | OS | ファイル | 内容 |
 |---|---|---|
@@ -21,7 +33,7 @@
 
 **macOS**：`tar xzf raytrace-rs-macos.tar.gz` で展開し、展開先で `./raytrace-gui`（GUI）または `./raytrace-rs`（CLI）を実行します。署名・公証をしていないため、ブラウザーで取得したファイルは初回に開けないことがあります。その場合は `xattr -dr com.apple.quarantine raytrace-rs-*-macos` で隔離属性を外してください。macOS 11以降が必要です。
 
-**Claude Desktop**：`.mcpb` ファイルをClaude Desktopで開くと導入のダイアログが出ます。Claude Code・Codexでの設定は[AIエージェントで使う](#aiエージェントで使う)にあります。
+**Claude Desktop**：`.mcpb` ファイルをClaude Desktopで開くと導入のダイアログが出ます。Claude Code・Codexでの設定は[AIから使う](docs/AI.md)にあります。
 
 **Linux**：最新版は次の1行で取得できます。
 
@@ -64,27 +76,15 @@ echo '{"command":"analysis.trace","model":{"path":"examples/sequential_lens.json
 
 `run -` に続けて渡したリクエストは1つのセッションで実行されるため、`doc.open` で開いた光学系を `doc.set` で書き換え、`model` なしで `analysis.trace` し、`session.undo` で戻すこともできます。GUIも同じコマンドで計算しています。入出力の形式は [schemas/](schemas/) にあります。パラメーター走査（`study.scan`）や収束確認（`study.convergence`）は[操作ガイド](docs/GUIDE.md#コマンドライン)にあります。長さはmm、波長はμmです。
 
-## AIエージェントで使う
+## AIから使う
 
-CodexやClaude Codeに光学計算を任せるための[Agent Skill](https://github.com/Chinanago/raytrace-rs/tree/main/skills/raytrace-rs)を同梱しています。
-
-**Codex**：次のように頼むとインストールされます。使うときは `$raytrace-rs` で呼び出します。
+Claude Code・Claude Desktop・Codexから、日本語で頼むだけで光学系を開き、編集し、追跡し、結果を読ませられます（`raytrace-rs mcp` のMCPサーバーと、同梱のAgent Skillを使います）。インストールは上の1行で、各アプリの設定とコピーできる例は[AIから使う](docs/AI.md)にあります。
 
 ```text
-$skill-installer で Chinanago/raytrace-rs の skills/raytrace-rs をインストールして。
+examples/integrator_rod.json を開いて追跡し、スクリーンの半値幅と光量収支を教えて
 ```
 
-**Claude Code**：プラグインとしてインストールします。
-
-```text
-/plugin install raytrace-rs --marketplace Chinanago/raytrace-rs
-```
-
-古い版のClaude Codeでは `/plugin marketplace add Chinanago/raytrace-rs` の後に `/plugin install raytrace-rs@raytrace-rs` を実行します。
-
-**MCPサーバー**：`raytrace-rs mcp` が、セッションを保ったままコマンドを呼べるMCPサーバーを標準入出力で起動します（ツールは `list_commands`・`describe_command`・`execute`・`batch`）。`claude mcp add raytrace-rs -- raytrace-rs mcp` で登録でき、Claude Codeのプラグインはリポジトリ直下の `.mcp.json` で同じサーバーを起動します。どちらも `raytrace-rs` がPATHにあることが前提です。Codexの設定例は [操作ガイド](docs/GUIDE.md#aiエージェントmcp) にあります。
-
-エージェントはCLIのJSON出力と [schemas/](https://github.com/Chinanago/raytrace-rs/tree/main/schemas) を読んで、モデルの作成から結果の解釈まで行えます。このリポジトリを開発するエージェント向けの手順は [AGENTS.md](https://github.com/Chinanago/raytrace-rs/blob/main/AGENTS.md) にあります。
+MCPサーバーの仕様は[操作ガイド](docs/GUIDE.md#aiエージェントmcp)に、このリポジトリを開発するエージェント向けの手順は [AGENTS.md](https://github.com/Chinanago/raytrace-rs/blob/main/AGENTS.md) にあります。
 
 ## できないこと
 

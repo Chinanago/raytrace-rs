@@ -7,7 +7,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 FILES = {
     ".gitattributes", ".gitignore", "Cargo.toml", "Cargo.lock", "deny.toml", "README.md", "LICENSE", "CHANGELOG.md",
-    "docs/FEATURES.md", "docs/GUIDE.md", "docs/DEVELOPMENT.md", "docs/DESIGN.md", "docs/CAPABILITIES.md",
+    "docs/FEATURES.md", "docs/GUIDE.md", "docs/AI.md", "docs/DEVELOPMENT.md", "docs/DESIGN.md", "docs/CAPABILITIES.md",
     "Raytraceを起動.cmd", "examples/exchange_check.rs", "examples/assembly_demo.rs",
     "examples/validation_suite.rs",
     "examples/performance_check.rs",

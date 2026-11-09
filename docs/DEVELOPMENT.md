@@ -76,6 +76,26 @@ python3 scripts/package_macos.py
 
 `python3 scripts/package_mcpb.py PLATFORM BINARY OUTPUT_DIR` は、`PLATFORM`（`macos` または `windows`）用の `raytrace-rs` を [MCPB](https://github.com/modelcontextprotocol/mcpb)（`manifest_version` 0.3）にまとめます。ZIPの直下に `manifest.json`、`server/raytrace-rs`（Windowsは `server/raytrace-rs.exe`）、`LICENSE` を置き、サーバーは `raytrace-rs mcp` で起動します。`compatibility.platforms` は `darwin` または `win32` です。`--check-server` を付けると、実行ファイルを起動して `tools/list` がマニフェストの `tools` と一致するか確認します（そのOSで実行できる場合のみ）。Claude Desktopで `.mcpb` を開くと導入できます。マニフェストの検証は `npx -y @anthropic-ai/mcpb validate manifest.json` でできます。
 
+### インストールスクリプトとチェックサム
+
+利用者は配布物を手で展開する代わりに、リポジトリ直下のスクリプトで入れられます。管理者権限は要りません。
+
+| スクリプト | 対象 | 動作 |
+|---|---|---|
+| `install.sh` | macOS・Linux x86_64（POSIX sh） | `uname` で資産を選び（`raytrace-rs-macos.tar.gz`・`raytrace-rs-linux-x64.tar.gz`）、`releases/latest/download/` から取得する。`RAYTRACE_VERSION=v0.12.0` なら `releases/download/<タグ>/` の版付きファイルを取得する。`.sha256` が取得できれば照合し、不一致なら何も入れずに失敗する。実行ファイルを `RAYTRACE_INSTALL_DIR`（既定 `~/.local/bin`）へ（macOSはGUIも）、サンプル・スキーマ・文書を `RAYTRACE_SHARE_DIR`（既定 `~/.local/share/raytrace-rs`）へ置き換えて入れる。macOSでは隔離属性を外す。`RAYTRACE_INSTALL_FROM=アーカイブ` はダウンロードを省く。シェルの設定ファイルは書き換えず、PATHに足す1行を表示する。`--uninstall`・`--help` に対応 |
+| `install.ps1` | Windows PowerShell 5.1・PowerShell 7 | `raytrace-rs-windows-x64.zip`（`-Version v0.12.0` なら版付き）を取得して `.sha256` を照合し、`%LOCALAPPDATA%\Programs\raytrace-rs` へ置き換えて入れ、ユーザーのPATH（HKCU）に足す。`-From zip` はダウンロードを省き、`-Uninstall` でフォルダーとPATHの項目を消す。`Invoke-WebRequest`・`Expand-Archive`・`Get-FileHash` だけを使う |
+
+どちらも最後に `raytrace-rs --version` を実行し、Claude Code・Claude Desktop・Codexの設定を絶対パスで表示します。メッセージは、PowerShell 5.1がBOMなしのファイルをANSIとして読むため、ASCIIの英語にしています。`install.sh` は `RAYTRACE_RELEASES_URL`、`install.ps1` は `-BaseUrl` で取得元を差し替えられます（テストとミラー用）。
+
+`scripts/check_install.py PACKAGE` は、パッケージを一時フォルダーにインストールして使い、削除まで確認します。LinuxとmacOSは `install.sh`（`sh`）で次を行います。ヘルプと不正な引数、自分で作っていないフォルダーを置き換えない動作、ローカルのアーカイブからの導入、設定の出力（絶対パス）、導入したバイナリの `--version` と `smoke.py` のMCPセッション、再導入での置き換え、空白を含む導入先、ローカルのHTTPサーバーを使った固定名・タグ指定の取得とチェックサム（不一致の拒否、欠落時の警告）、削除後にファイルが残らないこと。Windowsは `pwsh` と `powershell`（5.1）の両方で `install.ps1 -From` を実行し、チェックサムの不一致、導入、PATH、MCPセッション、再導入、`-Uninstall` を確認します。ユーザーのPATH（レジストリ）は一時的に変わるため、終了時に元へ戻します。CIでは、Linuxは `package_linux.py` の後（`shellcheck` も実行）、macOSは `package_macos.py` の後、Windowsは `check_portable.py` の後に実行します。手元では次のように実行します。
+
+```bash
+python3 scripts/package_linux.py
+python3 scripts/check_install.py results/packages/raytrace-rs-0.12.0-linux-x64.tar.gz
+```
+
+リリースの資産には、版付き・固定名の両方に、同名の `.sha256`（`<16進数>  <ファイル名>`）を添付します（`.github/workflows/release.yml`）。
+
 ### Linux版CLI
 
 Linux版は静的リンクしたCLIだけを配布します。muslターゲットで依存ライブラリなしにビルドし、サンプル・スキーマ・文書・CLIの依存ライブラリのライセンスと一緒に `raytrace-rs-<版>-linux-x64.tar.gz` へまとめます。作成後の確認はmacOS版と同じです。
@@ -89,9 +109,9 @@ muslの静的リンク版は、2026-11-08の計測でglibc版と同じ結果を�
 
 ### CIとリリース
 
-`.github/workflows/windows.yml`（表示名 Checks）は、pushごとにWindowsの `test-and-package`（整形・Clippy・全テスト・Windows ZIPとMCPBの作成と確認）、macOSの `macos`（全テスト、macOS版とMCPBの作成と確認）、Linuxの `linux-core`（層の検査、WASM、Linux版の作成と確認）を実行し、成果物を14日間保存します。GUIのテストは `egui::Context` をウィンドウなしで作るため、ディスプレイのないmacOSランナーでも動きます。
+`.github/workflows/windows.yml`（表示名 Checks）は、pushごとにWindowsの `test-and-package`（整形・Clippy・全テスト・Windows ZIPとMCPBの作成と確認）、macOSの `macos`（全テスト、macOS版とMCPBの作成と確認）、Linuxの `linux-core`（層の検査、WASM、Linux版の作成と確認）を実行します。Windows・macOS・Linuxのジョブはそれぞれ、パッケージの作成と確認の後にインストールスクリプトの確認（`check_install.py`）も行い、成果物を14日間保存します。GUIのテストは `egui::Context` をウィンドウなしで作るため、ディスプレイのないmacOSランナーでも動きます。
 
-リリースを公開すると `.github/workflows/release.yml` が動きます（既存のタグを指定した手動実行もできます）。WindowsとmacOSとLinuxのジョブが、タグと `Cargo.toml` の版の一致を確かめてからビルドと確認を行い、次のファイルを `gh release upload --clobber` で添付します。版なしの固定名は `releases/latest/download/<固定名>` で最新版を取得するためのものです。リリースノートは手作業で用意します。ファイルの追加は、書き込み権限（`contents: write`）を持つこれらのジョブだけが行います。
+リリースを公開すると `.github/workflows/release.yml` が動きます（既存のタグを指定した手動実行もできます）。WindowsとmacOSとLinuxのジョブが、タグと `Cargo.toml` の版の一致を確かめてからビルドと確認を行い、次のファイルと、それぞれの `.sha256` を `gh release upload --clobber` で添付します。版なしの固定名は `releases/latest/download/<固定名>` で最新版を取得するためのものです。リリースノートは手作業で用意します。ファイルの追加は、書き込み権限（`contents: write`）を持つこれらのジョブだけが行います。
 
 | 版付き | 固定名 |
 |---|---|

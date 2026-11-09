@@ -15,6 +15,8 @@ v0.11.0からの主な変更です。ベータの間は後方互換性を保ち�
 - **解析コマンド**：計算記録の後処理を `analysis.budget`（光量収支）と `analysis.screen`（スクリーンの分布、半値幅、断面、ROI）として呼べます。GUIのスクリーンタブも同じ解析の結果を表示します。
 - **Linux・macOSの配布物**：依存ライブラリなしで動く静的リンクのLinux版CLI、CLIとGUIを含むmacOS版（Apple SiliconとIntelの両対応）を用意しました。リリースの資産には、版なしの固定名（`raytrace-rs-windows-x64.zip`・`raytrace-rs-macos.tar.gz`・`raytrace-rs-linux-x64.tar.gz`）も添付します。
 - **Claude Desktop拡張（`.mcpb`）**：WindowsとmacOSのMCPB拡張を用意しました。ファイルを開くだけで、Claude Desktopから `raytrace-rs` のMCPサーバーを使えます。
+- **インストールスクリプト**：`install.sh`（macOS・Linux）と `install.ps1`（Windows）が、最新版（または `RAYTRACE_VERSION`・`-Version` で指定した版）を取得して `.sha256` を照合し、管理者権限なしでユーザーのフォルダーに入れます。最後に、Claude Code・Claude Desktop・Codexの設定を絶対パスで表示します。`--uninstall`・`-Uninstall` で削除できます。リリースの全資産に `.sha256` を添付します。
+- **AIから使う手引き**：Claude Code・Claude Desktop・Codexの設定、最初の頼み方、困ったときの対処を[docs/AI.md](docs/AI.md)にまとめました。
 - **Claude Codeプラグインとスキル**：`/plugin install raytrace-rs --marketplace Chinanago/raytrace-rs` でスキルとMCPサーバーを導入できます。CodexにもAgent Skillを使えます。
 
 ### 改善
