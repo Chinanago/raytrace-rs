@@ -39,7 +39,7 @@ ZIPの展開先で実行します（Linuxでは `./raytrace-rs`）。引数は�
 ./raytrace-rs.exe run.replay record.path=results/lens.json output=results/lens_replay.json
 ```
 
-`./raytrace-rs.exe --help` でコマンドの一覧、`./raytrace-rs.exe analysis.trace --help` で使えるフィールドと説明が出ます。どちらもコマンドのJSONスキーマから生成しているので、CLIに独自のオプションはありません。以前の短い名前（`trace`・`inspect`・`replay` など）は非推奨の別名として使えます。
+`./raytrace-rs.exe --help` でコマンドの一覧、`./raytrace-rs.exe analysis.trace --help` で使えるフィールドと説明が出ます。どちらもコマンドのJSONスキーマから生成しているので、CLIに独自のオプションはありません。コマンドはドット区切りのIDだけで呼べます（以前の短い名前は使えません）。
 
 結果は標準出力に1行のJSONで返ります（`"ok"`・`"result"`、失敗時は `"error"`）。読みやすい表示は標準エラーに出ます。同じリクエストをJSONで渡すこともできます。
 

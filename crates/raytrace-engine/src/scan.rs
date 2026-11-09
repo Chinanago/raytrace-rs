@@ -427,11 +427,6 @@ impl ScanManifest {
             .map_err(|e| raytrace_io::Error::io(dir.join("scan.json"), e))?;
         let json_error = |e| raytrace_io::Error::json(Some(dir.join("scan.json")), e);
         let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(json_error)?;
-        if value["format"] == "raytrace-scan-v1" {
-            return Err(crate::Error::Plan(
-                "この走査記録は設計文書への移行前の形式です。走査をやり直してください".into(),
-            ));
-        }
         let manifest: Self = serde_json::from_value(value).map_err(json_error)?;
         if manifest.format != FORMAT || manifest.software_version != env!("CARGO_PKG_VERSION") {
             return Err(crate::Error::Plan(

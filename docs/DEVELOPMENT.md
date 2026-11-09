@@ -2,7 +2,7 @@
 
 ソースリポジトリでのビルド・検証・配布物の作成方法です。目指す構成と設計指針は[グランドデザイン](DESIGN.md)にあります。通常の操作は[操作ガイド](GUIDE.md)、機能ごとの対応条件は[機能と対応範囲](FEATURES.md)を参照してください。
 
-ライブラリの失敗は `raytrace-core`・`raytrace-formats`・`raytrace-io`・`raytrace-engine` の各 `Error` 列挙型と `Result<T>` で返します。`Error` は `#[non_exhaustive]` のため、呼出側のパターンマッチには残りのケースを扱う分岐が必要です。材料番号・波長・光線ID・ファイルパスなどはフィールドで取得でき、表示文は日本語です。ルートクレートからは `raytrace_rs::error::{CoreError, FormatError, IoError, AppError}` として参照できます。GUIやレポート内のエラー文字列には `error.to_string()` を使います。光源番号の `source_index` は既存の表示に合わせて1から数えます。
+ライブラリの失敗は `raytrace-core`・`raytrace-formats`・`raytrace-io`・`raytrace-engine` の各 `Error` 列挙型と `Result<T>` で返します。`Error` は `#[non_exhaustive]` のため、呼出側のパターンマッチには残りのケースを扱う分岐が必要です。材料番号・波長・光線ID・ファイルパスなどはフィールドで取得でき、表示文は日本語です。ルートクレートからは `raytrace_rs::error::{CoreError, FormatError, IoError, EngineError}` として参照できます。GUIやレポート内のエラー文字列には `error.to_string()` を使います。光源番号の `source_index` は既存の表示に合わせて1から数えます。
 
 ## ソースからビルドして起動
 
@@ -13,7 +13,7 @@ cargo build --release --locked --workspace --bins
 ./target/release/raytrace-gui.exe
 ```
 
-ビルド後は `Raytraceを起動.cmd` からも起動できます。GUIは光源・レンズ・ロッド・スクリーンの組立サンプルで開きます。「ファイル → 開く…」またはドラッグ＆ドロップで `.zmx` や設計JSON（旧プロジェクトJSONも可）を読み込み、「計算する」で追跡します。
+ビルド後は `Raytraceを起動.cmd` からも起動できます。GUIは光源・レンズ・ロッド・スクリーンの組立サンプルで開きます。「ファイル → 開く…」またはドラッグ＆ドロップで `.zmx` や設計JSONを読み込み、「計算する」で追跡します。
 
 GUIなしで使う場合は `cargo build --release --locked -p raytrace-cli` でビルドします。
 
@@ -220,7 +220,7 @@ Cargo workspaceとして、`crates/` 以下の8クレートに分けています
 - `raytrace-core`: 数学・形状・光源生成・光線追跡・コーティング・分散・スクリーン解析の計算核です。ファイル形式やGUIには依存しません。
 - `raytrace-formats`: ZMX／AGF／SPCD・STEPの入出力とCADキャッシュの保存先を扱います。
 - `raytrace-doc`: 設計文書（L2）です。部品（`Part`）と配置（`Occurrence`）の木、安定したID、展開（`Design::compile`）、組立の編集補助、互換性レポートを持ちます。ファイル・時刻・環境に触れず、外部形式を知りません（元のZMXなどは `Provenance` に不透明なJSONとして保管します）。
-- `raytrace-io`: 設計文書のファイル形式（`design`：開く・保存・旧プロジェクト形式からの移行）、`record`、ZMX書出し、設定の保存・スクリーン出力を扱います。従来のZMX・CAD入出力のパスもここから使えます。
+- `raytrace-io`: 設計文書のファイル形式（`design`：開く・保存）、`record`、ZMX書出し、設定の保存・スクリーン出力を扱います。従来のZMX・CAD入出力のパスもここから使えます。
 - `raytrace-engine`: セッション（`session`）、コマンド登録（`command`・`commands`）、計算パイプライン（`pipeline`）、パラメーター走査・収束確認・検証ケースのワークフローを扱います。旧 `raytrace-app` です。
 - `raytrace-mcp`: MCPサーバー（L5）です。標準入出力のJSON-RPC 2.0（1行1メッセージ）を外部ライブラリなしで処理し、`list_commands`・`describe_command`・`execute`・`batch` の4つのツールでセッションのコマンドを呼びます。呼び出しは作業スレッドが順に実行し、`notifications/cancelled` で `TraceControl` を止め、`progressToken` があれば進捗を通知します。`raytrace-rs mcp` から起動します。
 - `raytrace-cli`: コマンドライン用の `raytrace-rs` 実行ファイルです。引数をコマンドのパラメーターへ変換し、応答をJSONで出力します。PNG出力も有効にします。
@@ -239,7 +239,7 @@ Cargo workspaceとして、`crates/` 以下の8クレートに分けています
 - `Session::execute(id, params, &mut Context)`: パラメーターをJSONで渡し、応答の封筒 `Response`（`ok`・`command`・`revision`・`result`・`error`）を返します。CLIと `run` が使います。`execute_request` は `{"command": ID, ...}` を、`execute_text` はそのテキストを受けます。
 - `Session::call(ハンドル, 入力, &mut Context)` / `Session::run(ハンドル, 入力)`: 型付きの入力を渡し、型付きの結果を返します。JSONを経由しないため、GUIが使います。ハンドルは `commands::ANALYSIS_TRACE` のような `Cmd<In, Out>` で、入出力の型の取り違えをコンパイル時に防ぎます。
 
-文書を使うコマンドは `model`（`path`・`design`・`scene`）を省略でき、省略するとセッションの文書、指定するとそのモデルだけを扱います（セッションは変わりません）。`Context` は中止と光線進捗の `TraceControl`、走査の進捗の `Progress` のコールバックを運びます。前の短い名前は `command::ALIASES` の1つの表で現在のIDに対応づけます。
+文書を使うコマンドは `model`（`path`・`design`・`scene`）を省略でき、省略するとセッションの文書、指定するとそのモデルだけを扱います（セッションは変わりません）。`Context` は中止と光線進捗の `TraceControl`、走査の進捗の `Progress` のコールバックを運びます。コマンドはドット区切りのIDだけで呼べ、前の短い名前（別名）は持ちません。
 
 CLIに独自のオプションはありません。`raytrace-rs COMMAND a.b=文字列 a.b:=JSON` の引数をコマンドのパラメーターとして組み立て、`raytrace-rs run` はリクエストJSONを1つのセッションで続けて実行します。どちらも同じ検証を通り、`--help` と `COMMAND --help` は `command.list`・`command.describe` のスキーマから生成します。そのため、CLIで使える操作とフィールドはコマンドの入力型だけで決まり、引数の処理を個別に保守する必要がありません。GUIは段階3では自分の `Design` を持ち続け、作業スレッドで新しい `Session` を作って、`model` に渡して型付きのコマンドを呼びます（編集のコマンド化は段階4）。
 

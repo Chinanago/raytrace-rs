@@ -51,17 +51,6 @@ pub struct PupilIllumination {
     pub vignetting: crate::illumination::Vignetting,
 }
 impl Source {
-    #[doc(hidden)]
-    pub fn extended_illumination(&self) -> bool {
-        self.diode.as_ref().is_some_and(|d| {
-            d.astigmatism_mm != 0.
-                || d.angular_supergaussian != [1.; 2]
-                || d.spatial_supergaussian != [1.; 2]
-        }) || self
-            .pupil
-            .as_ref()
-            .is_some_and(|p| p.optical.is_some() || !p.vignetting.is_zero())
-    }
     pub fn wavelengths(&self) -> Vec<f64> {
         self.spectrum.as_ref().map_or_else(
             || vec![self.wavelength_um],

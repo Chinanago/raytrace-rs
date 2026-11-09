@@ -202,7 +202,7 @@ fn invalid_new_source_parameters_are_reported_at_import() {
 }
 
 #[test]
-fn new_distribution_records_reject_legacy_sampling_but_normal_gaussians_replay() {
+fn records_with_another_sampling_revision_are_rejected() {
     let dir = folder();
     let path = dir.join("owned.zmx");
     fs::write(&path, native(0.)).unwrap();
@@ -222,8 +222,9 @@ fn new_distribution_records_reject_legacy_sampling_but_normal_gaussians_replay()
         count: 32,
     };
     assert!(record.rays().is_err());
-    let d = record.scene.sources[0].diode.as_mut().unwrap();
-    d.angular_supergaussian = [1.; 2];
-    d.spatial_supergaussian = [1.; 2];
+    record.input = raytrace_rs::record::LaunchInput::Generated {
+        sampling_revision: 3,
+        count: 32,
+    };
     assert!(record.rays().is_ok());
 }

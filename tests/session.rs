@@ -567,22 +567,11 @@ fn every_command_has_schemas_and_is_listed() {
         }
     }
 
-    // The previous short names stay as deprecated aliases of the new ids.
-    let aliases = list["aliases"].as_object().unwrap();
-    assert_eq!(aliases.len(), 13);
-    for (alias, id) in aliases {
-        assert_eq!(registry().resolve(alias).unwrap().id, id.as_str().unwrap());
-        assert!(registry().get(alias).is_none(), "{alias} is not an id");
-    }
-    let by_alias = exec(&mut session, "version", json!({}));
-    assert!(by_alias.ok);
-    assert_eq!(
-        by_alias.command, "version",
-        "the command is echoed as written"
-    );
-    assert_eq!(
-        ok(&mut session, "command.describe", json!({"id": "trace"}))["id"],
-        "analysis.trace"
+    // The short names of the pre-beta interface are gone.
+    assert!(list.get("aliases").is_none());
+    assert!(
+        registry().get("trace").is_none() && registry().get("version").is_none(),
+        "old short names are not ids"
     );
 }
 
@@ -597,6 +586,22 @@ fn unknown_commands_and_malformed_requests_are_invalid_requests() {
         "{}",
         error.message
     );
+    // The old short names fail like any unknown name and point at the dotted id.
+    for (old, id) in [
+        ("trace", "analysis.trace"),
+        ("version", "app.version"),
+        ("save_design", "doc.save"),
+        ("scan", "study.scan"),
+    ] {
+        let response = exec(&mut session, old, json!({}));
+        assert!(!response.ok, "{old}");
+        assert_eq!(response.command, old);
+        let error = response.error.unwrap();
+        assert_eq!(error.code, "invalid_request", "{old}");
+        assert!(error.message.contains(id), "{old}: {}", error.message);
+    }
+    let described = exec(&mut session, "command.describe", json!({"id": "trace"}));
+    assert_eq!(described.error.unwrap().code, "invalid_request");
     let control = TraceControl::default();
     let mut context = Context::new(&control);
     for request in [json!([]), json!({"model": 1}), json!({"command": 3})] {
@@ -707,11 +712,14 @@ fn a_run_stream_shares_one_session() {
     let (ok, alone) = cli(&dir, &["analysis.trace", "threads:=1"], "");
     assert!(!ok);
     assert_eq!(alone[0]["error"]["code"], "no_document");
-    // The previous short names keep working.
-    let (ok, old) = cli(&dir, &["version"], "");
+    let (ok, version) = cli(&dir, &["app.version"], "");
     assert!(ok);
-    assert_eq!(old[0]["command"], "version");
-    assert_eq!(old[0]["result"]["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(version[0]["command"], "app.version");
+    assert_eq!(version[0]["result"]["version"], env!("CARGO_PKG_VERSION"));
+    // The previous short names are not commands.
+    let (ok, old) = cli(&dir, &["version"], "");
+    assert!(!ok);
+    assert_eq!(old[0]["error"]["code"], "usage");
     let (ok, described) = cli(&dir, &["command.describe", "id=doc.set"], "");
     assert!(ok);
     assert_eq!(described[0]["result"]["kind"], "mutation");

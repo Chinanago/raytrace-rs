@@ -5,13 +5,12 @@
   "oneOf": [
     {
       "title": "app.version",
-      "description": "ソフトウェアの版を返す（旧名: version）",
+      "description": "ソフトウェアの版を返す",
       "type": "object",
       "properties": {
         "command": {
           "enum": [
-            "app.version",
-            "version"
+            "app.version"
           ]
         }
       },
@@ -47,7 +46,7 @@
           ]
         },
         "id": {
-          "description": "Command id such as `analysis.trace` (a deprecated alias such as `trace` also works).",
+          "description": "Command id such as `analysis.trace`.",
           "type": "string"
         }
       },
@@ -59,13 +58,12 @@
     },
     {
       "title": "schema.get",
-      "description": "JSONスキーマを返す。output を指定するとファイルに書き出す（旧名: schema）",
+      "description": "JSONスキーマを返す。output を指定するとファイルに書き出す",
       "type": "object",
       "properties": {
         "command": {
           "enum": [
-            "schema.get",
-            "schema"
+            "schema.get"
           ]
         },
         "name": {
@@ -144,7 +142,7 @@
     },
     {
       "title": "doc.open",
-      "description": "ZMX・設計JSON・光学系JSONを開いてセッションの文書にする（旧名: open）",
+      "description": "ZMX・設計JSON・光学系JSONを開いてセッションの文書にする",
       "type": "object",
       "properties": {
         "catalogs": {
@@ -156,8 +154,7 @@
         },
         "command": {
           "enum": [
-            "doc.open",
-            "open"
+            "doc.open"
           ]
         },
         "expected_revision": {
@@ -185,13 +182,12 @@
     },
     {
       "title": "doc.save",
-      "description": "設計文書をJSONとして保存する（旧名: save_design）",
+      "description": "設計文書をJSONとして保存する",
       "type": "object",
       "properties": {
         "command": {
           "enum": [
-            "doc.save",
-            "save_design"
+            "doc.save"
           ]
         },
         "design": {
@@ -255,7 +251,7 @@
     },
     {
       "title": "doc.inspect",
-      "description": "モデルを読み込み、互換性レポートを返す（旧名: inspect）",
+      "description": "モデルを読み込み、互換性レポートを返す",
       "type": "object",
       "properties": {
         "catalogs": {
@@ -268,8 +264,7 @@
         },
         "command": {
           "enum": [
-            "doc.inspect",
-            "inspect"
+            "doc.inspect"
           ]
         },
         "export_zmx": {
@@ -325,7 +320,7 @@
     },
     {
       "title": "doc.export_zmx",
-      "description": "単体のモデルをZMXとして書き出す（旧名: export_zmx）",
+      "description": "単体のモデルをZMXとして書き出す",
       "type": "object",
       "properties": {
         "catalogs": {
@@ -338,8 +333,7 @@
         },
         "command": {
           "enum": [
-            "doc.export_zmx",
-            "export_zmx"
+            "doc.export_zmx"
           ]
         },
         "model": {
@@ -599,7 +593,7 @@
     },
     {
       "title": "analysis.trace",
-      "description": "モデルを追跡し、計算記録を返す（output で保存）（旧名: trace）",
+      "description": "モデルを追跡し、計算記録を返す（output で保存）",
       "type": "object",
       "properties": {
         "catalogs": {
@@ -612,8 +606,7 @@
         },
         "command": {
           "enum": [
-            "analysis.trace",
-            "trace"
+            "analysis.trace"
           ]
         },
         "export_zmx": {
@@ -731,13 +724,12 @@
     },
     {
       "title": "run.replay",
-      "description": "計算記録を記録された光学条件で再計算する（旧名: replay）",
+      "description": "計算記録を記録された光学条件で再計算する",
       "type": "object",
       "properties": {
         "command": {
           "enum": [
-            "run.replay",
-            "replay"
+            "run.replay"
           ]
         },
         "include_record": {
@@ -826,13 +818,12 @@
     },
     {
       "title": "run.save",
-      "description": "計算記録をJSONとして保存する（旧名: save_run）",
+      "description": "計算記録をJSONとして保存する",
       "type": "object",
       "properties": {
         "command": {
           "enum": [
-            "run.save",
-            "save_run"
+            "run.save"
           ]
         },
         "output": {
@@ -851,13 +842,12 @@
     },
     {
       "title": "run.export_screen",
-      "description": "計算記録の1つのスクリーンをCSV・PNG・条件ファイルに書き出す（旧名: export_screen）",
+      "description": "計算記録の1つのスクリーンをCSV・PNG・条件ファイルに書き出す",
       "type": "object",
       "properties": {
         "command": {
           "enum": [
-            "run.export_screen",
-            "export_screen"
+            "run.export_screen"
           ]
         },
         "cursor_mm": {
@@ -1011,7 +1001,7 @@
     },
     {
       "title": "study.scan",
-      "description": "パラメーター走査を新しいディレクトリに実行する（旧名: scan）",
+      "description": "パラメーター走査を新しいディレクトリに実行する",
       "type": "object",
       "properties": {
         "catalogs": {
@@ -1024,8 +1014,7 @@
         },
         "command": {
           "enum": [
-            "study.scan",
-            "scan"
+            "study.scan"
           ]
         },
         "include_manifest": {
@@ -1062,13 +1051,12 @@
     },
     {
       "title": "study.resume",
-      "description": "走査ディレクトリの未完了ケースを続行する（旧名: resume_scan）",
+      "description": "走査ディレクトリの未完了ケースを続行する",
       "type": "object",
       "properties": {
         "command": {
           "enum": [
-            "study.resume",
-            "resume_scan"
+            "study.resume"
           ]
         },
         "directory": {
@@ -1087,13 +1075,12 @@
     },
     {
       "title": "study.convergence",
-      "description": "光線数・seed・画素数・CAD分割精度を変えて追跡し、収束を確認する（旧名: convergence）",
+      "description": "光線数・seed・画素数・CAD分割精度を変えて追跡し、収束を確認する",
       "type": "object",
       "properties": {
         "command": {
           "enum": [
-            "study.convergence",
-            "convergence"
+            "study.convergence"
           ]
         },
         "include_report": {
@@ -2426,7 +2413,7 @@
       "description": "An optical model given by file path or inline JSON. Exactly one key.\n\nCommands that work on a document accept it as the optional `model`. Without it they use\nthe document of the session. With it they work on that model only and leave the session\nunchanged (one-shot use).",
       "oneOf": [
         {
-          "description": "`.zmx`, design JSON, legacy project JSON or scene JSON file.",
+          "description": "`.zmx`, design JSON or scene JSON file.",
           "type": "object",
           "properties": {
             "path": {
@@ -3354,7 +3341,7 @@
           "minimum": 0
         },
         "design": {
-          "description": "The editor state, including original documents, parts, placements and overrides.\nRecords saved by earlier builds hold this as `project` and are migrated on load.",
+          "description": "The editor state, including original documents, parts, placements and overrides.",
           "$ref": "#/$defs/Design"
         },
         "input": {

@@ -374,7 +374,7 @@ fn cli_scan_can_be_reopened_and_protects_existing_output() {
             .unwrap()
     };
     let args = [
-        "scan",
+        "study.scan",
         "model.path=model.json",
         "plan:=@plan.json",
         "output=study",
@@ -389,5 +389,5 @@ fn cli_scan_can_be_reopened_and_protects_existing_output() {
     assert!(!run(&args).status.success());
     assert_eq!(bytes, fs::read(dir.join("study/scan.json")).unwrap());
     fs::remove_file(dir.join("model.json")).unwrap();
-    assert!(run(&["resume_scan", "directory=study"]).status.success());
+    assert!(run(&["study.resume", "directory=study"]).status.success());
 }

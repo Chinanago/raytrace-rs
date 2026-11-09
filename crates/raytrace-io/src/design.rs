@@ -1,5 +1,5 @@
 //! Design files (`raytrace-design-v1`) and the import of other documents into designs.
-use crate::{Result, legacy, zemax};
+use crate::{Result, zemax};
 pub use raytrace_core::issue::Issue;
 use raytrace_core::model::{Mode, Scene};
 pub use raytrace_doc::{
@@ -11,8 +11,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// Read a design from `.zmx`, a design file, a legacy project file (`raytrace-project-v1`
-/// to `v3`) or a scene JSON such as `examples/*.json`.
+/// Read a design from `.zmx`, a design file (`raytrace-design-v1`) or a scene JSON such as
+/// `examples/*.json`.
 pub fn open(path: &Path, catalogs: &[PathBuf]) -> Result<Design> {
     open_with_cad_tolerance(path, catalogs, 0.02)
 }
@@ -50,10 +50,10 @@ pub fn open_with_cad_tolerance(
     }
     let design = if format == FORMAT {
         serde_json::from_value(value).map_err(json_error)?
-    } else if legacy::is_project_format(format) {
-        legacy::migrate(value, path)?
     } else {
-        return Err(crate::Error::Project("未対応のプロジェクト形式です".into()));
+        return Err(crate::Error::Project(format!(
+            "未対応のファイル形式です（format: {format}）。開けるのは .zmx、設計JSON（raytrace-design-v1）、examples/*.json のようなシーンJSONです"
+        )));
     };
     // Opening checks that the design compiles, like composing did for assemblies.
     check(&design)?;

@@ -3,7 +3,6 @@ pub mod cad;
 pub use raytrace_doc::compatibility;
 pub mod design;
 pub mod export;
-mod legacy;
 pub mod record;
 pub mod storage;
 pub mod zemax;

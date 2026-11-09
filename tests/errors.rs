@@ -105,7 +105,7 @@ fn library_errors_are_thread_safe_standard_errors() {
     check::<raytrace_engine::Error>();
     check::<raytrace_rs::error::CoreError>();
     check::<raytrace_rs::error::IoError>();
-    check::<raytrace_rs::error::AppError>();
+    check::<raytrace_rs::error::EngineError>();
 }
 
 #[test]

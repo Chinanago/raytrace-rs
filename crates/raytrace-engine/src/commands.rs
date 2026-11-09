@@ -12,8 +12,7 @@ mod study;
 
 use crate::{
     command::{
-        ALIASES, Cmd, CommandSpec, Context, Kind, command, registry, request_schema,
-        response_schema,
+        Cmd, CommandSpec, Context, Kind, command, registry, request_schema, response_schema,
     },
     convergence,
     engine::{
@@ -138,10 +137,6 @@ fn command_list(
                 kind: c.kind,
             })
             .collect(),
-        aliases: ALIASES
-            .iter()
-            .map(|(alias, id)| ((*alias).into(), (*id).into()))
-            .collect(),
     })
 }
 
@@ -150,7 +145,7 @@ fn command_describe(
     r: DescribeRequest,
     _: &mut Context<'_>,
 ) -> Result<CommandDescription, EngineError> {
-    let Some(spec) = registry().resolve(&r.id) else {
+    let Some(spec) = registry().get(&r.id) else {
         let similar = registry().similar(&r.id);
         return Err(EngineError::invalid(if similar.is_empty() {
             format!(
@@ -169,7 +164,6 @@ fn command_describe(
         id: spec.id.into(),
         summary: spec.summary.into(),
         kind: spec.kind,
-        aliases: spec.aliases().map(String::from).collect(),
         input_schema: spec.input_schema(),
         output_schema: spec.output_schema(),
     })

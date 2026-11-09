@@ -335,16 +335,7 @@ fn command_help(command: &CommandDescription) -> String {
     let schema = command.input_schema.as_value();
     let variant = schema;
     let name = &command.id;
-    let aliases = if command.aliases.is_empty() {
-        String::new()
-    } else {
-        format!("\n旧名（非推奨）: {}", command.aliases.join(", "))
-    };
-    let text = format!(
-        "{}\n種類: {}{aliases}",
-        command.summary,
-        kind_label(command.kind)
-    );
+    let text = format!("{}\n種類: {}", command.summary, kind_label(command.kind));
     let required: Vec<&str> = variant["required"]
         .as_array()
         .into_iter()
@@ -430,10 +421,6 @@ fn overview(list: &CommandList) -> String {
     for command in &list.commands {
         out += &format!("  {:<20} {}\n", command.id, first_line(&command.summary));
     }
-    out += "\n旧名（非推奨。引き続き使えます）:\n";
-    for (alias, id) in &list.aliases {
-        out += &format!("  {alias:<14} → {id}\n");
-    }
     out += "\n例:\n  raytrace-rs analysis.trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 output=results/lens.json\n  raytrace-rs doc.inspect model.path=lens.zmx\n  raytrace-rs study.scan model.path=examples/sequential_lens.json plan:=@scan_plan.json output=results/scan\n  raytrace-rs schema.get name=scene\n  echo '{\"command\":\"app.version\"}' | raytrace-rs run -";
     out
 }
@@ -480,7 +467,7 @@ fn main() {
             true
         }
         Some("run") => run_requests(args.get(1), &mut stdout),
-        Some(command) => match registry().resolve(command) {
+        Some(command) => match registry().get(command) {
             None => {
                 let known = registry()
                     .iter()
@@ -560,11 +547,8 @@ mod tests {
         ] {
             assert!(ids.contains(&expected), "{expected} missing from {ids:?}");
         }
-        assert_eq!(list.aliases["trace"], "analysis.trace");
-        let overview = overview(&list);
-        assert!(overview.contains("analysis.trace") && overview.contains("trace"));
-        // An alias describes the command it stands for.
-        let description = command_describe("trace").unwrap();
+        assert!(overview(&list).contains("analysis.trace"));
+        let description = command_describe("analysis.trace").unwrap();
         assert_eq!(description.id, "analysis.trace");
         let help = command_help(&description);
         for expected in [
@@ -574,7 +558,6 @@ mod tests {
             "overrides.rays_per_source",
             "rays.csv",
             "sequential|non_sequential",
-            "旧名（非推奨）: trace",
         ] {
             assert!(help.contains(expected), "{expected} missing from:\n{help}");
         }

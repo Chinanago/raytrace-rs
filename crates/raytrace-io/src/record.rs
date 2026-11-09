@@ -1,7 +1,7 @@
 //! Self-contained calculation conditions and their validation, separate from the editable design.
 //! Tracing a record is a pipeline stage in `raytrace_engine::pipeline`.
 use crate::Result;
-use crate::{compatibility::CompatibilityReport, design::Design, legacy};
+use crate::{compatibility::CompatibilityReport, design::Design};
 use raytrace_core::{
     model::{PreparedScene, Ray, Scene},
     trace::{Report, TraceOptions},
@@ -38,14 +38,13 @@ pub enum LaunchInput {
         rays: Vec<Ray>,
     },
 }
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RunContext {
     pub software_version: String,
     pub created_unix_ms: u64,
     pub worker_threads: usize,
     /// The editor state, including original documents, parts, placements and overrides.
-    /// Records saved by earlier builds hold this as `project` and are migrated on load.
     pub design: Design,
     /// Exact effective scene after CLI overrides or GUI preview limits.
     pub scene: Scene,
@@ -55,58 +54,6 @@ pub struct RunContext {
     pub compatibility: CompatibilityReport,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pupils: Vec<SavedPupil>,
-}
-/// Record layout as stored; `project` is the field of builds before the design document.
-#[derive(Deserialize)]
-struct RunContextWire {
-    software_version: String,
-    created_unix_ms: u64,
-    worker_threads: usize,
-    #[serde(default)]
-    design: Option<Design>,
-    #[serde(default)]
-    project: Option<serde_json::Value>,
-    scene: Scene,
-    input: LaunchInput,
-    trace_options: TraceOptions,
-    launch_wavelengths_um: Vec<f64>,
-    compatibility: serde_json::Value,
-    #[serde(default)]
-    pupils: Vec<SavedPupil>,
-}
-impl<'de> Deserialize<'de> for RunContext {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::de::Error;
-        let wire = RunContextWire::deserialize(deserializer)?;
-        let (design, mut compatibility) = match (wire.design, wire.project) {
-            (Some(design), None) => (design, wire.compatibility),
-            (None, Some(project)) => {
-                let design = legacy::migrate_embedded(project).map_err(D::Error::custom)?;
-                let mut compatibility = wire.compatibility;
-                legacy::migrate_compatibility(&mut compatibility, &design);
-                (design, compatibility)
-            }
-            _ => {
-                return Err(D::Error::custom(
-                    "計算記録にはdesign（旧版ではproject）を1つだけ指定してください",
-                ));
-            }
-        };
-        let compatibility =
-            serde_json::from_value(std::mem::take(&mut compatibility)).map_err(D::Error::custom)?;
-        Ok(Self {
-            software_version: wire.software_version,
-            created_unix_ms: wire.created_unix_ms,
-            worker_threads: wire.worker_threads,
-            design,
-            scene: wire.scene,
-            input: wire.input,
-            trace_options: wire.trace_options,
-            launch_wavelengths_um: wire.launch_wavelengths_um,
-            compatibility,
-            pupils: wire.pupils,
-        })
-    }
 }
 impl RunContext {
     pub fn input_count(&self) -> usize {
@@ -209,21 +156,7 @@ impl RunContext {
             count,
         } = self.input
         {
-            let legacy = self
-                .scene
-                .sources
-                .iter()
-                .all(|s| !s.extended_illumination());
-            if sampling_revision != SAMPLING_REVISION
-                && !(sampling_revision == 2 && legacy)
-                && !(sampling_revision == 1
-                    && legacy
-                    && self
-                        .scene
-                        .sources
-                        .iter()
-                        .all(|s| s.spectrum.is_none() && s.pupil.is_none()))
-            {
+            if sampling_revision != SAMPLING_REVISION {
                 return Err(crate::Error::Record(
                     "この計算記録のサンプリング版は再生に対応していません".into(),
                 ));

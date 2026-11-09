@@ -208,23 +208,13 @@ CLIの本体は、コマンドの登録表とセッションを持つエンジ�
 | `study.scan` / `study.resume` / `study.convergence` / `study.open` | 長い計算・問い合わせ | 走査／再開／収束確認／走査ディレクトリの読込 |
 | `session.undo` / `session.redo` / `session.status` / `session.log` | 変更・問い合わせ | 取り消し／やり直し／版番号と履歴の状態／文書を開いてからの変更コマンドの記録 |
 
-以前の短い名前は、非推奨の別名として引き続き使えます。応答の `command` には、指定した名前がそのまま入ります。
-
-| 別名（非推奨） | 現在のID | 別名（非推奨） | 現在のID |
-|---|---|---|---|
-| `version` | `app.version` | `scan` | `study.scan` |
-| `schema` | `schema.get` | `resume_scan` | `study.resume` |
-| `inspect` | `doc.inspect` | `convergence` | `study.convergence` |
-| `trace` | `analysis.trace` | `save_design` | `doc.save` |
-| `replay` | `run.replay` | `save_run` | `run.save` |
-| `export_zmx` | `doc.export_zmx` | `export_screen` | `run.export_screen` |
-| `open` | `doc.open`（計算記録は `run.open`、走査ディレクトリは `study.open`） | | |
+コマンドはこの表のドット区切りのIDだけで呼べます。以前の短い名前（`trace`・`inspect` など）は使えず、`invalid_request` で似たIDが示されます。
 
 よく使う `analysis.trace` のフィールドは次の通りです。
 
 | フィールド | 用途 |
 |---|---|
-| `model.path` | `.zmx`・設計JSON（旧プロジェクトJSONも可）・光学系JSONのパス（`model.design:=@...`・`model.scene:=@...` でインライン指定も可）。省略するとセッションの文書 |
+| `model.path` | `.zmx`・設計JSON（`raytrace-design-v1`）・光学系JSON（`examples/*.json` のようなシーンJSON）のパス（`model.design:=@...`・`model.scene:=@...` でインライン指定も可）。省略するとセッションの文書 |
 | `output` | 計算記録の保存先。省略すると保存せず、応答の概要だけを返します |
 | `overrides.mode` / `sampling` / `rays_per_source` / `wavelength_um` / `ignore_coatings` | 追跡方式・サンプリング・各光源の本数・単色波長・未コート計算の上書き |
 | `rays.csv` | 発射位置・方向・重み・波長を指定した光線CSV |
@@ -340,7 +330,7 @@ args = ["mcp"]
 
 | ツール | 引数 | 内容 |
 |---|---|---|
-| `list_commands` | なし | コマンドのID・種類（`query`・`mutation`・`job`）・要約・旧名の一覧 |
+| `list_commands` | なし | コマンドのID・種類（`query`・`mutation`・`job`）・要約の一覧 |
 | `describe_command` | `command` | そのコマンドの入力（`input_schema`）と結果（`output_schema`）のJSONスキーマ |
 | `execute` | `command`、`params`（省略可） | 1つのコマンドを実行する。応答はCLIと同じ `{ok, command, revision, result | error}` |
 | `batch` | `requests`（`[{command, params}]`）、`stop_on_error`（既定 `true`） | 複数のコマンドを順に実行し、応答の一覧 `{ok, executed, requested, responses}` を返す |

@@ -303,7 +303,10 @@ fn saved_conditions_capture_pupil_geometry_and_enforce_sampling_revision() {
     for source in &mut old.scene.sources {
         source.pupil.as_mut().unwrap().optical = None;
     }
-    assert!(old.rays().is_ok());
+    assert!(
+        old.rays().is_err(),
+        "only the current sampling revision replays"
+    );
     let mut mono = p;
     mono.conditions.monochromatic_override_um = Some(0.65);
     let prepared = mono.trace_scene().unwrap().prepare().unwrap();

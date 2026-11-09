@@ -32,24 +32,6 @@ pub enum Kind {
     Job,
 }
 
-/// The previous short command names and the commands that replaced them. This is the only
-/// place the old names are mapped; they are deprecated and kept so existing scripts work.
-pub const ALIASES: &[(&str, &str)] = &[
-    ("version", "app.version"),
-    ("schema", "schema.get"),
-    ("open", "doc.open"),
-    ("inspect", "doc.inspect"),
-    ("trace", "analysis.trace"),
-    ("replay", "run.replay"),
-    ("scan", "study.scan"),
-    ("resume_scan", "study.resume"),
-    ("convergence", "study.convergence"),
-    ("save_design", "doc.save"),
-    ("save_run", "run.save"),
-    ("export_zmx", "doc.export_zmx"),
-    ("export_screen", "run.export_screen"),
-];
-
 /// Cancellation and progress of a running command.
 pub struct Context<'a> {
     /// Cancels traces and scans; also carries the ray progress of a single trace.
@@ -140,14 +122,6 @@ impl CommandSpec {
     /// JSON Schema of `result`.
     pub fn output_schema(&self) -> schemars::Schema {
         (self.output_schema)()
-    }
-    /// Deprecated short names that run this command.
-    pub fn aliases(&self) -> impl Iterator<Item = &'static str> {
-        let id = self.id;
-        ALIASES
-            .iter()
-            .filter(move |(_, target)| *target == id)
-            .map(|(alias, _)| *alias)
     }
     /// A result that is returned but also reported as an error, such as a scan with failed cases.
     pub(crate) fn with_failure<Out: 'static>(
@@ -258,15 +232,6 @@ impl Registry {
     pub fn get(&self, id: &str) -> Option<&CommandSpec> {
         self.commands.iter().find(|c| c.id == id)
     }
-    /// The command with this id, or the one a deprecated short name stands for.
-    pub fn resolve(&self, name: &str) -> Option<&CommandSpec> {
-        self.get(name).or_else(|| {
-            ALIASES
-                .iter()
-                .find(|(alias, _)| *alias == name)
-                .and_then(|(_, id)| self.get(id))
-        })
-    }
     /// Ids that resemble an unknown command name: same area, same action or a substring.
     pub fn similar(&self, name: &str) -> Vec<&'static str> {
         let name = name.to_lowercase();
@@ -296,10 +261,10 @@ fn error_response(command: &str, revision: u64, error: EngineError) -> Response 
 }
 
 impl Session {
-    /// Run the command `command` (an id or a deprecated short name) with its parameters as
+    /// Run the command `command` (an id) with its parameters as
     /// a JSON object, and wrap the outcome in the response envelope.
     pub fn execute(&mut self, command: &str, params: Value, context: &mut Context<'_>) -> Response {
-        let Some(spec) = registry().resolve(command) else {
+        let Some(spec) = registry().get(command) else {
             let similar = registry().similar(command);
             let hint = if similar.is_empty() {
                 "command.list で一覧を確認してください".to_string()
@@ -430,20 +395,7 @@ fn take_defs(schema: &mut Value, defs: &mut Map<String, Value>) -> Vec<String> {
 }
 
 fn command_names(spec: &CommandSpec) -> Value {
-    let names: Vec<Value> = std::iter::once(spec.id)
-        .chain(spec.aliases())
-        .map(Value::from)
-        .collect();
-    serde_json::json!({ "enum": names })
-}
-
-fn alias_note(spec: &CommandSpec) -> String {
-    let aliases: Vec<_> = spec.aliases().collect();
-    if aliases.is_empty() {
-        spec.summary.to_string()
-    } else {
-        format!("{}（旧名: {}）", spec.summary, aliases.join(", "))
-    }
+    serde_json::json!({ "enum": [spec.id] })
 }
 
 /// The request schema and the names whose `$defs` differ between two commands (none expected).
@@ -466,7 +418,7 @@ fn build_request_schema() -> (Value, Vec<String>) {
         variants.push(serde_json::json!({
             "type": "object",
             "title": spec.id,
-            "description": alias_note(spec),
+            "description": spec.summary,
             "properties": properties,
             "required": required,
             "additionalProperties": false,

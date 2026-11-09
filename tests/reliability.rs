@@ -46,7 +46,7 @@ fn cli_replays_generated_and_csv_runs_without_the_original_inputs() {
         }
         fs::write(dir.join("input.json"), serde_json::to_vec(&scene).unwrap()).unwrap();
         let mut args = vec![
-            "trace",
+            "analysis.trace",
             "model.path=input.json",
             "threads:=2",
             "terminals:=true",
@@ -79,7 +79,7 @@ fn cli_replays_generated_and_csv_runs_without_the_original_inputs() {
             fs::remove_file(dir.join("rays.csv")).unwrap();
         }
         let replay = cli(&[
-            "replay",
+            "run.replay",
             "record.path=run.json",
             "threads:=1",
             "output=replay.json",
@@ -97,12 +97,12 @@ fn cli_replays_generated_and_csv_runs_without_the_original_inputs() {
             replayed["calculation"]["scene"]
         );
         assert!(
-            !cli(&["replay", "record.path=run.json", "wavelength_um:=0.55"])
+            !cli(&["run.replay", "record.path=run.json", "wavelength_um:=0.55"])
                 .status
                 .success()
         );
         assert!(
-            !cli(&["replay", "record.path=run.json", "output=run.json"])
+            !cli(&["run.replay", "record.path=run.json", "output=run.json"])
                 .status
                 .success()
         );

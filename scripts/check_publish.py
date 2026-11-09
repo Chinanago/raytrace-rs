@@ -48,7 +48,7 @@ def git(*args):
 
 def embedded_document(value):
     if isinstance(value, dict):
-        if str(value.get("format", "")).startswith(("raytrace-project-", "raytrace-design-")) or value.get("zemax") is not None or value.get("zemax_definition") is not None or value.get("provenance") is not None:
+        if str(value.get("format", "")).startswith("raytrace-design-") or value.get("zemax") is not None or value.get("zemax_definition") is not None or value.get("provenance") is not None:
             return True
         return any(embedded_document(v) for v in value.values())
     if isinstance(value, list):

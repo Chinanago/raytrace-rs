@@ -11,7 +11,7 @@ use raytrace_engine::{Context, Response, Session, registry};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 
-/// One command to run: its id (or deprecated short name) and its parameters.
+/// One command to run: its id and its parameters.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Request {
     pub command: String,
@@ -147,14 +147,14 @@ pub fn definitions(with_output_schema: bool) -> Vec<Value> {
         json!({
             "name": "list_commands",
             "title": "List commands",
-            "description": "List every command of raytrace-rs with its id, kind (query, mutation or job), summary and deprecated aliases. Start here.",
+            "description": "List every command of raytrace-rs with its id, kind (query, mutation or job) and summary. Start here.",
             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
             "annotations": {"readOnlyHint": true, "openWorldHint": false}
         }),
         json!({
             "name": "describe_command",
             "title": "Describe a command",
-            "description": "Return the JSON Schemas of one command's parameters (`input_schema`) and result (`output_schema`), with its summary, kind and aliases. Call this before using a command you do not know.",
+            "description": "Return the JSON Schemas of one command's parameters (`input_schema`) and result (`output_schema`), with its summary and kind. Call this before using a command you do not know.",
             "inputSchema": {
                 "type": "object",
                 "properties": {"command": {"type": "string", "description": "Command id such as `analysis.trace`."}},
@@ -263,7 +263,7 @@ pub fn batch_result(output: &BatchOutput) -> Value {
     }
 }
 
-/// `list_commands`: id, kind, summary and aliases of every command.
+/// `list_commands`: id, kind and summary of every command.
 pub fn list_commands() -> Value {
     let commands: Vec<Value> = registry()
         .iter()
@@ -272,7 +272,6 @@ pub fn list_commands() -> Value {
                 "id": spec.id,
                 "kind": spec.kind,
                 "summary": spec.summary,
-                "aliases": spec.aliases().collect::<Vec<_>>(),
             })
         })
         .collect();
@@ -390,14 +389,9 @@ mod tests {
             .find(|c| c["id"] == "analysis.trace")
             .unwrap();
         assert_eq!(trace["kind"], "job");
-        assert!(
-            trace["aliases"]
-                .as_array()
-                .unwrap()
-                .contains(&json!("trace"))
-        );
+        assert!(trace.get("aliases").is_none());
 
-        let described = describe_command("trace");
+        let described = describe_command("analysis.trace");
         assert_eq!(described["isError"], false);
         assert_eq!(described["structuredContent"]["id"], "analysis.trace");
         assert!(described["structuredContent"]["input_schema"].is_object());
@@ -408,5 +402,9 @@ mod tests {
             unknown["structuredContent"]["error"]["code"],
             "invalid_request"
         );
+        // The short names of the pre-beta interface are not commands.
+        let old = describe_command("trace");
+        assert_eq!(old["isError"], true);
+        assert_eq!(old["structuredContent"]["error"]["code"], "invalid_request");
     }
 }

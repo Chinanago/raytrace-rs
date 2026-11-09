@@ -17,7 +17,7 @@ Rust製の幾何光学レイトレーサーです。ZMX・JSONの光学系を読
 | `crates/raytrace-core` | 形状・光源・追跡・コーティング・分散・スクリーン解析の計算核 |
 | `crates/raytrace-formats` | ZMX／AGF／SPCD・STEPの入出力（設計文書に依存しない） |
 | `crates/raytrace-doc` | 設計文書（L2）。部品（`Part`）と配置（`Occurrence`）、安定したID、展開（`Design::compile`）、組立の編集補助、互換性レポート。外部形式を知らない |
-| `crates/raytrace-io` | 設計文書のファイル形式（`design::open`・`save`、旧プロジェクト形式の移行）・計算記録・ZMX書出し・出力 |
+| `crates/raytrace-io` | 設計文書のファイル形式（`design::open`・`save`）・計算記録・ZMX書出し・出力 |
 | `crates/raytrace-engine` | JSONエンジン（`src/engine.rs`・`src/engine/run.rs`）、計算パイプラインの各段（`src/pipeline.rs`。追跡ループはここだけ）、パラメーター走査・収束確認・検証ケース |
 | `crates/raytrace-mcp` | MCPサーバー（L5）。標準入出力のJSON-RPC。ツールは `list_commands`・`describe_command`・`execute`・`batch` の4つで、登録表のコマンドが自動で現れる。`raytrace-rs mcp` で起動 |
 | `crates/raytrace-cli` | CLI `raytrace-rs`。独自のオプションはなく、引数をコマンドのパラメーターに組み立てて応答を出力するだけ（`src/main.rs`） |
@@ -75,7 +75,7 @@ echo '{"command":"app.version"}' | cargo run -q --locked -p raytrace-cli -- run 
 
 CLIやGUIで計算を実行・解釈する手順は [skills/raytrace-rs/SKILL.md](skills/raytrace-rs/SKILL.md) と [references/workflows.md](skills/raytrace-rs/references/workflows.md) にあります。
 
-- CLIの標準出力はリクエストごとに1行のJSON（`ok`・`command`・`revision`・`result`、失敗時は `error.code`・`error.message`、終了コード1）です。コマンドは `analysis.trace` のようなドット区切りのIDで、前の短い名前（`trace`・`inspect`・`replay`・`scan`・`resume_scan`・`convergence`・`open`・`save_design`・`save_run`・`export_zmx`・`export_screen`・`schema`・`version`）は非推奨の別名です。人向けの表示は標準エラーです。詳細は `result.output` のファイルを開きます。
+- CLIの標準出力はリクエストごとに1行のJSON（`ok`・`command`・`revision`・`result`、失敗時は `error.code`・`error.message`、終了コード1）です。コマンドは `analysis.trace` のようなドット区切りのIDで、前の短い名前（`trace` など）は使えません。ベータ期間は旧形式・旧APIとの互換を持たないため、互換用の別名や移行コードを足さないでください。人向けの表示は標準エラーです。詳細は `result.output` のファイルを開きます。
 - 複数の操作は `raytrace-rs run -` にリクエストを続けて渡せます。1つのストリームは1つのセッションなので、`doc.open` で開いた文書は `model` を省略したコマンドの対象になり、`doc.set`・`component.*` で編集して `session.undo` で戻せます。変更コマンドは任意の `group` で連続した編集を取り消しの1単位にまとめられ、`session.log` が確定した変更の列（GUIの編集も同じ）を返します。モデルはファイルでもインラインJSON（`{"scene": {...}}`・`{"design": {...}}`）でも渡せます。
 - ZMXは追跡の前に `doc.inspect` で読み込み、`result.traceable` と `compatibility.components[].entries[].status` を確認します。`requires_override`・`unsupported` は追跡を止めます。
 - 入力・出力の形式は `schemas/*.schema.json` が正です。例は `examples/*.json`（`scene` 形式）と `docs/GUIDE.md` にあります。

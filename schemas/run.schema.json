@@ -1746,7 +1746,7 @@
           "minimum": 0
         },
         "design": {
-          "description": "The editor state, including original documents, parts, placements and overrides.\nRecords saved by earlier builds hold this as `project` and are migrated on load.",
+          "description": "The editor state, including original documents, parts, placements and overrides.",
           "$ref": "#/$defs/Design"
         },
         "input": {

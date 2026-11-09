@@ -1,16 +1,11 @@
-//! The design document compiles to the scenes that the previous project model produced,
-//! and files of earlier builds (project v1 to v3) still open.
+//! The design document compiles to the scenes that the previous project model produced.
+//! Files of the pre-beta project formats are not read.
 // Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
-    command::call_once,
-    commands,
-    compatibility::ComponentCompatibility,
     design::{self, Component, Design, PartKind},
-    engine::{ModelInput, Overrides, RecordInput, ReplayRequest, TraceRequest},
     math::V3,
     model::*,
-    record::RunRecord,
 };
 use std::fs;
 
@@ -143,16 +138,6 @@ fn examples_and_assemblies_compile_to_the_scenes_of_the_previous_project_model()
     assert!(mismatches.is_empty(), "{mismatches:#?}");
 }
 
-// ---------------------------------------------------------------------------------------
-// Files of earlier builds
-// ---------------------------------------------------------------------------------------
-
-/// `raytrace-project-v1` written by the previous build: one scene, no assembly.
-const LEGACY_V1: &str = r#"{"format":"raytrace-project-v1","scene":{"name":"tiny","reference_plane":"launch","mode":"non_sequential","materials":[{"type":"constant","n":1.0,"absorption_per_mm":0.0}],"surfaces":[{"name":"wall","pose":{"translation_mm":[0.0,0.0,5.0],"rotation_deg":[0.0,0.0,0.0]},"shape":{"type":"plane"},"aperture":{"type":"circle","radius_mm":3.0},"interaction":{"type":"detector","pixels":[4,4]}}],"settings":{"max_depth":64,"max_events_per_launch":4096,"min_relative_branch_weight":1e-7},"sources":[{"sampling":"sobol","count":16,"origin_mm":[0.0,0.0,0.0],"direction":[0.0,0.0,1.0],"disk_radius_mm":1.0,"cone_half_angle_deg":0.0,"wavelength_um":0.55,"medium":0,"total_weight":1.0,"seed":7}]},"material_names":["AIR"],"issues":[],"zemax":null,"allow_uncoated":false,"monochromatic_override_um":null}"#;
-/// `raytrace-project-v2` written by the previous build: a source (monochromatic override
-/// 0.6 um on its own project), a rod and a screen, with the stale composed scene on top.
-const LEGACY_V2: &str = r#"{"assembly":{"components":[{"name":"tiny","enabled":true,"kind":"source","pose":{"translation_mm":[0.5,0.0,-2.0],"rotation_deg":[0.0,5.0,0.0]},"anchor_mm":[0.0,0.0,0.0],"project":{"format":"raytrace-project-v1","scene":{"name":"tiny","reference_plane":"launch","mode":"non_sequential","materials":[{"type":"constant","n":1.0,"absorption_per_mm":0.0}],"surfaces":[],"settings":{"max_depth":64,"max_events_per_launch":4096,"min_relative_branch_weight":1e-7},"sources":[{"sampling":"sobol","count":16,"origin_mm":[0.0,0.0,0.0],"direction":[0.0,0.0,1.0],"disk_radius_mm":1.0,"cone_half_angle_deg":0.0,"wavelength_um":0.55,"medium":0,"total_weight":1.0,"seed":7}]},"material_names":["AIR"],"issues":[],"zemax":null,"allow_uncoated":false,"monochromatic_override_um":0.6},"rod":null},{"name":"ロッド","enabled":true,"kind":"rod","pose":{"translation_mm":[0.0,0.0,1.0],"rotation_deg":[0.0,0.0,0.0]},"anchor_mm":[0.0,0.0,0.0],"project":{"format":"raytrace-project-v1","scene":{"name":"ロッド","reference_plane":"合成光源の発射面","mode":"non_sequential","materials":[{"type":"constant","n":1.0,"absorption_per_mm":0.0},{"type":"constant","n":1.5,"absorption_per_mm":0.0}],"surfaces":[],"settings":{"max_depth":128,"max_events_per_launch":4096,"min_relative_branch_weight":1e-7},"sources":[]},"material_names":["AIR","TESTGLASS"],"issues":[],"zemax":null,"allow_uncoated":false,"monochromatic_override_um":null},"rod":{"width_mm":1.0,"height_mm":1.0,"length_mm":4.0}},{"name":"スクリーン","enabled":true,"kind":"detector","pose":{"translation_mm":[0.0,0.0,8.0],"rotation_deg":[0.0,0.0,0.0]},"anchor_mm":[0.0,0.0,0.0],"project":{"format":"raytrace-project-v1","scene":{"name":"スクリーン","reference_plane":"合成光源の発射面","mode":"non_sequential","materials":[{"type":"constant","n":1.0,"absorption_per_mm":0.0}],"surfaces":[{"name":"検出面","pose":{"translation_mm":[0.0,0.0,0.0],"rotation_deg":[0.0,0.0,0.0]},"shape":{"type":"plane"},"aperture":{"type":"rectangle","half_width_mm":10.0,"half_height_mm":10.0},"interaction":{"type":"detector","pixels":[64,64]}}],"settings":{"max_depth":128,"max_events_per_launch":4096,"min_relative_branch_weight":1e-7},"sources":[]},"material_names":["AIR"],"issues":[],"zemax":null,"allow_uncoated":false,"monochromatic_override_um":null},"rod":null}]},"format":"raytrace-project-v2","scene":{"name":"組立光学系","reference_plane":"合成光源の発射面","mode":"non_sequential","materials":[{"type":"constant","n":1.0,"absorption_per_mm":0.0},{"type":"constant","n":1.5,"absorption_per_mm":0.0}],"surfaces":[{"name":"2:ロッド / 入口","pose":{"translation_mm":[0.0,0.0,1.0],"rotation_deg":[0.0,-0.0,0.0]},"shape":{"type":"plane"},"aperture":{"type":"rectangle","half_width_mm":0.5,"half_height_mm":0.5},"interaction":{"type":"dielectric","minus_medium":0,"plus_medium":1,"reflectance":null}},{"name":"2:ロッド / 出口","pose":{"translation_mm":[0.0,0.0,5.0],"rotation_deg":[0.0,-0.0,0.0]},"shape":{"type":"plane"},"aperture":{"type":"rectangle","half_width_mm":0.5,"half_height_mm":0.5},"interaction":{"type":"dielectric","minus_medium":1,"plus_medium":0,"reflectance":null}},{"name":"2:ロッド / 側面 +X","pose":{"translation_mm":[0.5,0.0,3.0],"rotation_deg":[0.0,90.0,-0.0]},"shape":{"type":"plane"},"aperture":{"type":"rectangle","half_width_mm":2.0,"half_height_mm":0.5},"interaction":{"type":"dielectric","minus_medium":1,"plus_medium":0,"reflectance":null}},{"name":"2:ロッド / 側面 -X","pose":{"translation_mm":[-0.5,0.0,3.0],"rotation_deg":[0.0,-90.0,-0.0]},"shape":{"type":"plane"},"aperture":{"type":"rectangle","half_width_mm":2.0,"half_height_mm":0.5},"interaction":{"type":"dielectric","minus_medium":1,"plus_medium":0,"reflectance":null}},{"name":"2:ロッド / 側面 +Y","pose":{"translation_mm":[0.0,0.5,3.0],"rotation_deg":[-90.0,-0.0,0.0]},"shape":{"type":"plane"},"aperture":{"type":"rectangle","half_width_mm":0.5,"half_height_mm":2.0},"interaction":{"type":"dielectric","minus_medium":1,"plus_medium":0,"reflectance":null}},{"name":"2:ロッド / 側面 -Y","pose":{"translation_mm":[0.0,-0.5,3.0],"rotation_deg":[90.0,-0.0,0.0]},"shape":{"type":"plane"},"aperture":{"type":"rectangle","half_width_mm":0.5,"half_height_mm":2.0},"interaction":{"type":"dielectric","minus_medium":1,"plus_medium":0,"reflectance":null}},{"name":"3:スクリーン / 検出面","pose":{"translation_mm":[0.0,0.0,8.0],"rotation_deg":[0.0,-0.0,0.0]},"shape":{"type":"plane"},"aperture":{"type":"rectangle","half_width_mm":10.0,"half_height_mm":10.0},"interaction":{"type":"detector","pixels":[64,64]}}],"settings":{"max_depth":128,"max_events_per_launch":4096,"min_relative_branch_weight":1e-7},"sources":[{"sampling":"sobol","count":16,"origin_mm":[0.5,0.0,-2.0],"direction":[0.08715574274765817,0.0,0.9961946980917455],"disk_radius_mm":1.0,"cone_half_angle_deg":0.0,"wavelength_um":0.6,"medium":0,"total_weight":1.0,"seed":7}]},"material_names":["AIR","ロッド / TESTGLASS"],"issues":[],"zemax":null,"allow_uncoated":false,"monochromatic_override_um":null}"#;
-
 fn folder() -> std::path::PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -167,212 +152,25 @@ fn folder() -> std::path::PathBuf {
 }
 
 #[test]
-fn legacy_standalone_project_opens_as_one_unplaced_system_with_the_same_scene() {
+fn project_files_of_earlier_builds_and_run_records_are_refused_with_a_reason() {
     let dir = folder();
-    let path = dir.join("v1.json");
-    fs::write(&path, LEGACY_V1).unwrap();
-    let design = design::open(&path, &[]).unwrap();
-    assert_eq!(design.format, design::FORMAT);
-    assert_eq!(design.parts.len(), 1);
-    assert_eq!(design.occurrences.len(), 1);
-    assert_eq!(design.parts[0].kind, PartKind::System);
-    assert!(design.lone_system().is_some());
-    assert_eq!(design.parts[0].id.as_str(), "system-1");
-    assert_eq!(design.occurrences[0].id.as_str(), "system-2");
-    assert_eq!(design.next_id, 3);
-    // Captured from `Project::trace_scene` of the previous build.
-    assert_eq!(fingerprint(&design), "aa2af697462d5e23");
-    // Saving writes the new format, which opens to the same document.
-    let saved = dir.join("v1.design.json");
-    design::save(&design, &saved).unwrap();
-    let again = design::open(&saved, &[]).unwrap();
-    assert_eq!(
-        serde_json::to_value(&again).unwrap(),
-        serde_json::to_value(&design).unwrap()
-    );
-}
-
-#[test]
-fn legacy_assembly_project_opens_as_one_part_and_occurrence_per_component() {
-    let dir = folder();
-    let path = dir.join("v2.json");
-    fs::write(&path, LEGACY_V2).unwrap();
-    let design = design::open(&path, &[]).unwrap();
-    assert!(design.is_assembly());
-    assert_eq!(design.mode, Mode::NonSequential);
-    let kinds: Vec<_> = design.parts.iter().map(|p| p.kind).collect();
-    assert_eq!(kinds, [PartKind::Source, PartKind::Rod, PartKind::Detector]);
-    let ids: Vec<_> = design
-        .occurrences
-        .iter()
-        .map(|o| (o.id.as_str(), o.part.as_str()))
-        .collect();
-    assert_eq!(
-        ids,
-        [
-            ("source-2", "source-1"),
-            ("rod-4", "rod-3"),
-            ("detector-6", "detector-5")
-        ]
-    );
-    let names: Vec<_> = design.occurrences.iter().map(|o| o.name.as_str()).collect();
-    assert_eq!(names, ["tiny", "ロッド", "スクリーン"]);
-    assert_eq!(
-        design.occurrences[0].pose.translation_mm,
-        V3([0.5, 0.0, -2.0])
-    );
-    assert_eq!(design.occurrences[0].pose.rotation_deg, V3([0.0, 5.0, 0.0]));
-    assert_eq!(
-        design.occurrences[2].pose.translation_mm,
-        V3([0.0, 0.0, 8.0])
-    );
-    assert_eq!(design.parts[1].rod.as_ref().unwrap().length_mm, 4.0);
-    // The component's own override moved to its part; the top level has none.
-    assert_eq!(
-        design.parts[0].conditions.monochromatic_override_um,
-        Some(0.6)
-    );
-    assert_eq!(design.conditions.monochromatic_override_um, None);
-    // Captured from `Project::trace_scene` of the previous build.
-    assert_eq!(fingerprint(&design), "040297ff1f2bfd8b");
-    let report = design.compatibility_report();
-    assert!(report.traceable);
-    assert_eq!(
-        report.components[0].occurrence.as_ref().unwrap().as_str(),
-        "source-2"
-    );
-    assert_eq!(report.components[0].effective_wavelengths_um, vec![0.6]);
-    assert_eq!(report.components[1].source_format, "generated");
-}
-
-#[test]
-fn project_files_with_an_unknown_format_or_a_run_record_are_refused_with_a_reason() {
-    let dir = folder();
-    let path = dir.join("unknown.json");
-    fs::write(
-        &path,
-        LEGACY_V1.replace("raytrace-project-v1", "raytrace-project-v9"),
-    )
-    .unwrap();
-    assert!(design::open(&path, &[]).is_err());
+    for format in [
+        "raytrace-project-v1",
+        "raytrace-project-v2",
+        "raytrace-project-v3",
+    ] {
+        let path = dir.join("project.json");
+        fs::write(&path, format!(r#"{{"format":"{format}","scene":{{}}}}"#)).unwrap();
+        let message = design::open(&path, &[]).unwrap_err().to_string();
+        assert!(
+            message.contains("未対応のファイル形式")
+                && message.contains(format)
+                && message.contains("raytrace-design-v1"),
+            "{message}"
+        );
+    }
     let record = dir.join("record.json");
     fs::write(&record, r#"{"format":"raytrace-run-v1"}"#).unwrap();
     let message = design::open(&record, &[]).unwrap_err().to_string();
     assert!(message.starts_with("計算記録は"), "{message}");
-}
-
-/// A record saved by the previous build: `calculation.project` holds the legacy project
-/// and the compatibility report refers to components by index.
-fn legacy_record(
-    design: &Design,
-    legacy_project: &str,
-    dir: &std::path::Path,
-) -> std::path::PathBuf {
-    let current = dir.join("current.run.json");
-    let request = TraceRequest {
-        model: Some(ModelInput::Design(Box::new(design.clone()))),
-        catalogs: Vec::new(),
-        rays: None,
-        overrides: Overrides::default(),
-        threads: Some(1),
-        repeat: 1,
-        warmup: false,
-        terminals: false,
-        paths: 0,
-        preview_paths: 0,
-        max_total_rays: None,
-        export_zmx: None,
-        output: Some(current.clone()),
-        include_record: false,
-    };
-    call_once(commands::ANALYSIS_TRACE, request).unwrap();
-    let mut value: serde_json::Value =
-        serde_json::from_slice(&fs::read(&current).unwrap()).unwrap();
-    let calculation = value["calculation"].as_object_mut().unwrap();
-    calculation.remove("design").unwrap();
-    calculation.insert(
-        "project".into(),
-        serde_json::from_str(legacy_project).unwrap(),
-    );
-    for (index, component) in calculation["compatibility"]["components"]
-        .as_array_mut()
-        .unwrap()
-        .iter_mut()
-        .enumerate()
-    {
-        let component = component.as_object_mut().unwrap();
-        component.remove("occurrence").unwrap();
-        let legacy = if design.is_assembly() {
-            index.into()
-        } else {
-            serde_json::Value::Null
-        };
-        component.insert("component".into(), legacy);
-    }
-    let legacy = dir.join("legacy.run.json");
-    fs::write(&legacy, serde_json::to_vec(&value).unwrap()).unwrap();
-    legacy
-}
-
-#[test]
-fn records_saved_by_the_previous_build_load_and_replay() {
-    for (name, legacy) in [("v1", LEGACY_V1), ("v2", LEGACY_V2)] {
-        let dir = folder();
-        let source = dir.join(format!("{name}.json"));
-        fs::write(&source, legacy).unwrap();
-        let design = design::open(&source, &[]).unwrap();
-        let path = legacy_record(&design, legacy, &dir);
-        let record = RunRecord::open(&path).unwrap();
-        assert_eq!(
-            serde_json::to_value(&record.calculation.design).unwrap(),
-            serde_json::to_value(&design).unwrap(),
-            "{name}"
-        );
-        let ids = |components: &[ComponentCompatibility]| -> Vec<Option<String>> {
-            components
-                .iter()
-                .map(|c| c.occurrence.as_ref().map(|o| o.to_string()))
-                .collect()
-        };
-        assert_eq!(
-            ids(&record.calculation.compatibility.components),
-            ids(&design.compatibility_report().components),
-            "{name}"
-        );
-        // Replay reproduces the report of the original calculation.
-        let replayed = dir.join("replayed.run.json");
-        call_once(
-            commands::RUN_REPLAY,
-            ReplayRequest {
-                record: RecordInput::Path(path),
-                threads: Some(1),
-                repeat: 1,
-                warmup: false,
-                terminals: None,
-                paths: None,
-                output: Some(replayed.clone()),
-                include_record: false,
-            },
-        )
-        .unwrap();
-        let before = RunRecord::open(&dir.join("current.run.json")).unwrap();
-        let after = RunRecord::open(&replayed).unwrap();
-        assert_eq!(
-            serde_json::to_value(&before.report).unwrap(),
-            serde_json::to_value(&after.report).unwrap(),
-            "{name}"
-        );
-    }
-}
-
-#[test]
-fn scan_records_of_the_previous_format_are_refused_with_a_reason() {
-    let dir = folder();
-    fs::write(
-        dir.join("scan.json"),
-        r#"{"format":"raytrace-scan-v1","software_version":"0.11.0","base":{},"plan":{},"cases":[]}"#,
-    )
-    .unwrap();
-    let error = raytrace_rs::scan::ScanManifest::open(&dir).unwrap_err();
-    assert!(error.to_string().contains("移行前の形式"), "{error}");
 }

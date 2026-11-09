@@ -31,7 +31,7 @@ use std::{any::Any, collections::BTreeMap, fs, path::Path, path::PathBuf, sync::
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelInput {
-    /// `.zmx`, design JSON, legacy project JSON or scene JSON file.
+    /// `.zmx`, design JSON or scene JSON file.
     Path(PathBuf),
     /// Inline design JSON (the `schema.get name=design` format).
     Design(Box<Design>),
@@ -164,7 +164,7 @@ impl SchemaName {
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DescribeRequest {
-    /// Command id such as `analysis.trace` (a deprecated alias such as `trace` also works).
+    /// Command id such as `analysis.trace`.
     pub id: String,
 }
 
@@ -176,12 +176,10 @@ pub struct CommandSummary {
     pub kind: crate::command::Kind,
 }
 
-/// `command.list`: every registered command and the deprecated short names.
+/// `command.list`: every registered command.
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct CommandList {
     pub commands: Vec<CommandSummary>,
-    /// Deprecated short names of the previous interface and the command each one runs.
-    pub aliases: BTreeMap<String, String>,
 }
 
 /// `command.describe`: a command with its input and output JSON Schemas.
@@ -190,8 +188,6 @@ pub struct CommandDescription {
     pub id: String,
     pub summary: String,
     pub kind: crate::command::Kind,
-    /// Deprecated short names that run this command.
-    pub aliases: Vec<String>,
     /// Schema of the parameters (the request fields except `command`).
     pub input_schema: schemars::Schema,
     /// Schema of `result`.
@@ -239,7 +235,7 @@ pub struct DocNewRequest {
     pub expected_revision: Option<u64>,
 }
 
-/// `doc.open`: open a ZMX, design JSON, legacy project JSON or scene JSON as the session document.
+/// `doc.open`: open a ZMX, design JSON or scene JSON as the session document.
 #[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DocOpenRequest {
@@ -771,7 +767,7 @@ fn default_display() -> DisplaySettings {
 #[derive(Serialize)]
 pub struct Response {
     pub ok: bool,
-    /// The command as written in the request (a deprecated alias is kept as given).
+    /// The command id as written in the request.
     pub command: String,
     /// Revision of the session after the command.
     pub revision: u64,

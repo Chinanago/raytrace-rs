@@ -158,7 +158,7 @@ fn run_request(
     // A scan reports through the callback; a single trace is sampled from its control.
     let sample = sink.is_some()
         && registry()
-            .resolve(&request.command)
+            .get(&request.command)
             .is_some_and(|spec| spec.id == "analysis.trace");
     thread::scope(|scope| {
         let (stop, stopped) = mpsc::channel::<()>();
