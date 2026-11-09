@@ -1,7 +1,15 @@
 name: Release assets
 
-# Attaches the static Linux CLI to a published release. Release notes and the
-# Windows ZIP stay as they are; reruns replace the Linux files.
+# Builds the distributable files for a published release and attaches them. Each file is
+# uploaded twice: with the version in its name and under a fixed name, so that
+# https://github.com/Chinanago/raytrace-rs/releases/latest/download/<fixed name> always
+# resolves to the newest release. Release notes stay manual; reruns replace the files.
+#
+#   raytrace-rs-<version>-windows-x64.zip   raytrace-rs-windows-x64.zip
+#   raytrace-rs-<version>-windows.mcpb      raytrace-rs-windows.mcpb
+#   raytrace-rs-<version>-macos.tar.gz      raytrace-rs-macos.tar.gz
+#   raytrace-rs-<version>-macos.mcpb        raytrace-rs-macos.mcpb
+#   raytrace-rs-<version>-linux-x64.tar.gz  raytrace-rs-linux-x64.tar.gz
 on:
   release:
     types: [published]
@@ -14,19 +22,116 @@ on:
 permissions:
   contents: read
 
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
 jobs:
-  linux-cli:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 60
     permissions:
       contents: write
-    env:
-      TAG: ${{ github.event.release.tag_name || inputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.TAG }}
           persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - name: Check that the tag matches the workspace version
+        shell: bash
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")
+          if [ "$TAG" != "v$version" ]; then
+            echo "Tag $TAG does not match the workspace version $version" >&2
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Install Rust tools
+        shell: pwsh
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup default 1.95.0
+      - name: Build Windows binaries
+        shell: pwsh
+        run: cargo build --release --locked --workspace --bins
+      - name: Build and check the portable ZIP
+        shell: pwsh
+        run: |
+          python scripts/package_windows.py --no-build
+          python scripts/check_portable.py "results/packages/raytrace-rs-$env:VERSION-windows-x64.zip"
+      - name: Build the Claude Desktop extension
+        shell: pwsh
+        run: python scripts/package_mcpb.py windows target/release/raytrace-rs.exe results/packages --check-server
+      - name: Upload to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd results/packages
+          cp "raytrace-rs-$VERSION-windows-x64.zip" raytrace-rs-windows-x64.zip
+          cp "raytrace-rs-$VERSION-windows.mcpb" raytrace-rs-windows.mcpb
+          gh release upload "$TAG" "raytrace-rs-$VERSION-windows-x64.zip" raytrace-rs-windows-x64.zip \
+            "raytrace-rs-$VERSION-windows.mcpb" raytrace-rs-windows.mcpb --clobber --repo "$GITHUB_REPOSITORY"
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - name: Check that the tag matches the workspace version
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")
+          if [ "$TAG" != "v$version" ]; then
+            echo "Tag $TAG does not match the workspace version $version" >&2
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Install Rust tools
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --target aarch64-apple-darwin --target x86_64-apple-darwin
+          rustup default 1.95.0
+      - name: Build, package and smoke-test the universal archive
+        run: python3 scripts/package_macos.py
+      - name: Build the Claude Desktop extension
+        run: python3 scripts/package_mcpb.py macos target/universal-apple-darwin/release/raytrace-rs results/packages --check-server
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd results/packages
+          cp "raytrace-rs-$VERSION-macos.tar.gz" raytrace-rs-macos.tar.gz
+          cp "raytrace-rs-$VERSION-macos.mcpb" raytrace-rs-macos.mcpb
+          gh release upload "$TAG" "raytrace-rs-$VERSION-macos.tar.gz" raytrace-rs-macos.tar.gz \
+            "raytrace-rs-$VERSION-macos.mcpb" raytrace-rs-macos.mcpb --clobber --repo "$GITHUB_REPOSITORY"
+
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - name: Check that the tag matches the workspace version
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")
+          if [ "$TAG" != "v$version" ]; then
+            echo "Tag $TAG does not match the workspace version $version" >&2
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: Install Rust tools
         run: |
           rustup toolchain install 1.95.0 --profile minimal --target x86_64-unknown-linux-musl
@@ -37,12 +142,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          version=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")
-          if [ "$TAG" != "v$version" ]; then
-            echo "Tag $TAG does not match the workspace version $version" >&2
-            exit 1
-          fi
-          versioned="results/packages/raytrace-rs-$version-linux-x64.tar.gz"
-          # A fixed name lets agents download releases/latest/download/raytrace-rs-linux-x64.tar.gz.
-          cp "$versioned" results/packages/raytrace-rs-linux-x64.tar.gz
-          gh release upload "$TAG" "$versioned" results/packages/raytrace-rs-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
+          cd results/packages
+          cp "raytrace-rs-$VERSION-linux-x64.tar.gz" raytrace-rs-linux-x64.tar.gz
+          gh release upload "$TAG" "raytrace-rs-$VERSION-linux-x64.tar.gz" raytrace-rs-linux-x64.tar.gz --clobber --repo "$GITHUB_REPOSITORY"
