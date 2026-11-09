@@ -203,6 +203,7 @@ CLIの本体は、コマンドの登録表とセッションを持つエンジ�
 | `doc.set` / `doc.replace` | 変更 | 文書の1か所の書換え／全体の置換 |
 | `component.add` / `component.remove` / `component.duplicate` | 変更 | 部品の追加（ファイル・ロッド・スクリーン）／削除／複製 |
 | `analysis.trace` | 長い計算 | 追跡して計算記録を返す |
+| `analysis.budget` / `analysis.screen` | 問い合わせ | 計算記録の解析：光量収支／スクリーンの受光・ピーク・断面・半値幅・ROI |
 | `run.replay` / `run.open` / `run.save` / `run.export_screen` | 長い計算・問い合わせ | 計算記録の再計算／読込／保存／スクリーンの書出し |
 | `study.scan` / `study.resume` / `study.convergence` / `study.open` | 長い計算・問い合わせ | 走査／再開／収束確認／走査ディレクトリの読込 |
 | `session.undo` / `session.redo` / `session.status` / `session.log` | 変更・問い合わせ | 取り消し／やり直し／版番号と履歴の状態／文書を開いてからの変更コマンドの記録 |
@@ -229,6 +230,27 @@ CLIの本体は、コマンドの登録表とセッションを持つエンジ�
 | `rays.csv` | 発射位置・方向・重み・波長を指定した光線CSV |
 | `terminals` / `paths` | 終端光線／入力順で先頭N本の発射光線の光路を保存 |
 | `threads` / `repeat` / `warmup` | スレッド数、同じ光線の繰返し回数（中央値を出力）、計測前のウォームアップ |
+
+### 計算記録の解析（`analysis.*`）
+
+`analysis.trace` が返す概要は小さく、詳しい数値は計算記録（`output` のファイルや `include_record:=true`）に入っています。記録を自分で読む代わりに、`analysis.<ID>` で解析を呼びます。解析は登録制で、今あるのは次の2つです。どちらも `command.describe`・`--help` にフィールドが出ます。
+
+| ID | 設定 | 結果 |
+|---|---|---|
+| `analysis.budget` | なし | 発射光量（`reference_weight`）、収支の各項目の光量と基準光量比（`entries`）、収支誤差（`relative_budget_closure_error`）、未解決分（`unresolved_percent_of_reference` = 数値失敗＋媒質不整合＋分岐打切り＋相互作用上限。収束確認の `unresolved_percent` と同じ定義）、スクリーンごとの受光（`detectors`）、面ごとの到達（`surfaces`） |
+| `analysis.screen` | `detector`（添字か名前。省略は先頭）、`cursor_mm:=[x,y]`（断面の位置）、`roi:={"minimum_mm":[x,y],"maximum_mm":[x,y]}`、`include_profiles:=true` | 画素数・画素寸法・半サイズ、受光光量比、ピーク（光量・画素・位置）、X/Y断面の位置と半値幅（`x_slice`・`y_slice` の `fwhm_mm`。交点が見つからなければ `null`。下側・上側の交点、複数の山の印を含む）、ROIの積分（基準光量比・光量・面積・平均）、`include_profiles` で断面の画素値 |
+
+どの解析も `run`（計算記録のパス `run.path=...` かインライン `run.record:=@...`）を受け取ります。省略すると、セッションが直近に保持している計算結果、つまり `analysis.trace`・`run.replay`・`run.open` の結果を使います。まだ計算していなければ `no_run` エラーです。セッションが保持するのは直近の1件だけです。結果には `run_revision`（その計算に使った文書の版番号。`run` で渡した記録、`run.open`・`run.replay`、`model` を渡した追跡では `null`）と `stale`（計算のあとに文書が変わっていれば `true`）が付きます。`stale: true` の数値は、変更前の設計のものです。`session.status` の `run` にも直近の計算結果の有無と `stale` が出ます。解析の数値は、GUIのスクリーン画面と同じ関数（画面は `analysis.screen` の結果を描きます）で求めます。
+
+```bash
+cat <<'EOF' | ./raytrace-rs run -
+{"command":"doc.open","path":"examples/sequential_lens.json"}
+{"command":"analysis.trace","overrides":{"rays_per_source":1024}}
+{"command":"analysis.budget"}
+{"command":"analysis.screen","cursor_mm":[0.0,0.0],"roi":{"minimum_mm":[-0.1,-0.1],"maximum_mm":[0.1,0.1]}}
+EOF
+./raytrace-rs analysis.screen run.path=results/lens.json detector=0 include_profiles:=true
+```
 
 ### セッションで文書を編集する
 

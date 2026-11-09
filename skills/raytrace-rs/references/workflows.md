@@ -57,6 +57,8 @@ Check `--help` first. v0.11.0 uses the options shown in the PowerShell examples 
 | `--scan MODEL --plan PLAN --output DIR`, `--resume-scan DIR` | `study.scan model.path=MODEL plan:=@PLAN output=DIR`, `study.resume directory=DIR` |
 | `--convergence MODEL --plan PLAN --output DIR` | `study.convergence model.path=MODEL plan:=@PLAN output=DIR` |
 
+- Analyses: `analysis.budget` and `analysis.screen` post-process a calculation record, so trace first and then call them instead of reading the large record. Without `run` they use the latest record of the session (from `analysis.trace`, `run.replay` or `run.open`; only one is kept) and fail with `no_run` if there is none; `run` takes `{"path": ...}` or `{"record": {...}}` for any other record. Every result has `run_revision` (the document revision it was traced from; null for a given `run`, `run.open`, `run.replay` or a `model`) and `stale` (true once the document changed after the trace, so re-trace before trusting the numbers). `analysis.screen` takes `detector` (index or name), `cursor_mm`, `roi` and `include_profiles`, and returns the peak, the slice FWHM (null when a crossing is missing), the ROI integral and, on request, the profile samples; `analysis.budget` returns the budget entries, closure error, unresolved percentage and received power per screen. `session.status` shows `run` (revision, stale) when a latest run exists.
+
 ```bash
 raytrace-rs doc.inspect model.path=lens.zmx
 raytrace-rs analysis.trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 overrides.sampling=sobol threads:=4 output=results/lens.json
@@ -66,9 +68,12 @@ cat <<'EOF' | raytrace-rs run -
 {"command":"doc.open","path":"examples/sequential_lens.json"}
 {"command":"doc.set","path":"/parts/@system-1/scene/surfaces/2/pose/translation_mm/2","value":70.0,"group":"move"}
 {"command":"analysis.trace","overrides":{"rays_per_source":1024},"output":"results/moved.json"}
+{"command":"analysis.budget"}
+{"command":"analysis.screen","cursor_mm":[0.0,0.0],"roi":{"minimum_mm":[-0.1,-0.1],"maximum_mm":[0.1,0.1]}}
 {"command":"session.log"}
 {"command":"session.undo"}
 EOF
+raytrace-rs analysis.screen run.path=results/moved.json include_profiles:=true
 ```
 
 ## First run from an extracted Windows ZIP (v0.11.0 options)
@@ -139,4 +144,4 @@ v0.11.0 CLI output uses `format: raytrace-run-v1`, `schema_version: 2`:
 | `calculation` | Frozen effective model, source settings, software version and limits. CSV input rays are embedded for replay. |
 | `benchmark.timed_scope` | Actual measurement scope. Generated-source runs include ray generation, tracing and accumulation; explicit-ray runs include tracing and accumulation. `--repeat N` reports their median after a warmup, excluding scene preparation, file I/O and drawing. Older builds can exclude generation; use the saved field when comparing runs. |
 
-Use the GUI or existing screen/export functions for peak normalization, profiles, FWHM and ROI. Wave optics, full diffraction PSF/MTF and general automatic optimization are outside the v0.11.0 feature set; check newer documentation before repeating versioned limitations.
+Prefer `analysis.budget` and `analysis.screen` (see the command forms above) to parsing the large record: they give the budget, closure error, unresolved percentages, peak, slice FWHM, ROI integral and profile samples. Use the GUI or `run.export_screen` for images and CSV files. Wave optics, full diffraction PSF/MTF and general automatic optimization are outside the v0.11.0 feature set; check newer documentation before repeating versioned limitations.
