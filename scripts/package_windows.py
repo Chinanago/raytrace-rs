@@ -18,6 +18,7 @@ FILES = {
     "docs/GUIDE.md": "docs/GUIDE.md",
     "docs/DEVELOPMENT.md": "docs/DEVELOPMENT.md",
     "LICENSE": "LICENSE",
+    "CHANGELOG.md": "CHANGELOG.md",
     "examples/sequential_lens.json": "examples/sequential_lens.json",
     "examples/nonsequential_slab.json": "examples/nonsequential_slab.json",
     "examples/integrator_rod.json": "examples/integrator_rod.json",
@@ -29,26 +30,67 @@ FILES = {
 }
 
 
+MIT_TEXT = """Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+"""
+
+
+def manifest_mit_notice(package):
+    """A MIT notice for a crate that offers MIT but ships no license file.
+
+    Several macOS-only crates (objc2 and friends) publish without their license files. The
+    standard MIT text is combined with the authors and repository of the package manifest, and
+    the section says so. Anything that does not offer MIT still fails.
+    """
+    expression = package.get("license") or ""
+    if "MIT" not in expression.replace("(", " ").replace(")", " ").split():
+        return None
+    holders = ", ".join(a.split("<")[0].strip() for a in package.get("authors", []) if a.strip())
+    holders = holders or f"the authors of {package.get('repository')}"
+    return (f"Generated from the package manifest: the published crate contains no license file.\n"
+            f"MIT is selected from `{expression}`.\n\nCopyright (c) {holders}\n\n{MIT_TEXT}")
+
+
 def dependency_notices(platform="x86_64-pc-windows-msvc", root=None, assets=True):
     """License texts of the resolved graph for `platform`.
 
-    With `root`, only packages reachable from that workspace package are included;
-    `assets` adds the bundled GUI fonts.
+    `platform` is a target triple or a list of them (the union is included). With `root`
+    (a workspace package name or a list of names), only packages reachable from those
+    packages are included; `assets` adds the bundled GUI fonts.
     """
+    platforms = [platform] if isinstance(platform, str) else list(platform)
+    roots = [root] if isinstance(root, str) else root
     metadata = json.loads(subprocess.check_output([
         "cargo", "metadata", "--locked", "--offline", "--all-features",
-        "--filter-platform", platform, "--format-version", "1",
+        *[arg for triple in platforms for arg in ("--filter-platform", triple)],
+        "--format-version", "1",
     ], cwd=ROOT, text=True, encoding="utf-8"))
     # Include the whole resolved graph, including build dependencies.
     # Keep this conservative so a renderer feature cannot silently lose its notices.
     nodes = {node["id"]: node for node in metadata["resolve"]["nodes"]}
-    if root is None:
+    if roots is None:
         active = set(nodes)
     else:
         names = {package["id"]: package["name"] for package in metadata["packages"]}
-        pending = [i for i in nodes if names[i] == root]
-        if not pending:
-            raise ValueError(f"Unknown workspace package: {root}")
+        pending = [i for i in nodes if names[i] in roots]
+        missing = set(roots) - {names[i] for i in pending}
+        if missing:
+            raise ValueError(f"Unknown workspace package: {sorted(missing)}")
         active = set()
         while pending:
             current = pending.pop()
@@ -84,7 +126,10 @@ def dependency_notices(platform="x86_64-pc-windows-msvc", root=None, assets=True
                 sections.append(f"\n--- Supplemental {notice['license']} license ---\nSource: {notice['source']}\n{notice['text']}\n")
                 included.add("supplement")
         if not included:
-            raise ValueError(f"Missing license text: {package['name']} {package['version']}")
+            generated = manifest_mit_notice(package)
+            if generated is None:
+                raise ValueError(f"Missing license text: {package['name']} {package['version']}")
+            sections.append(f"\n--- Notice from the package manifest ---\n{generated}\n")
         if package["name"] == "epaint_default_fonts":
             required = {"fonts/Hack-Regular.txt", "fonts/OFL.txt", "fonts/UFL.txt", "fonts/emoji-icon-font-mit-license.txt"}
             if required - included:

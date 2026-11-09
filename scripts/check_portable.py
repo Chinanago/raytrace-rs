@@ -12,6 +12,7 @@ import zipfile
 
 from check_publish import embedded_document
 from package_windows import FILES, ROOT, dependency_notices
+from smoke import mcp_session
 
 
 def owned_step_box():
@@ -133,6 +134,10 @@ def check(archive, output):
             if abs(data["relative_budget_closure_error"]) > 1e-10:
                 raise ValueError("Sample power budget failed")
             checks.append("Trace owned sample: " + sample.stem)
+
+        # The MCP server is the main entry point for AI clients: open, trace and read the budget.
+        mcp_session(root / "raytrace-rs.exe", root, environment)
+        checks.append("MCP session: initialize, doc.open, analysis.trace, analysis.budget")
 
         # A fresh native file verifies parsing and source-file-independent replay.
         native = root / "owned.zmx"
