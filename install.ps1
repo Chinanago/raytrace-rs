@@ -91,7 +91,16 @@ function Install-RaytraceRs {
         $text = Get-Content -LiteralPath $SumFile -Raw
         if (-not $text -or -not $text.Trim()) { throw "The checksum file is empty: $SumFile" }
         $expected = ($text.Trim() -split '\s+')[0].ToLowerInvariant()
-        $actual = (Get-FileHash -LiteralPath $File -Algorithm SHA256).Hash.ToLowerInvariant()
+        # .NET instead of Get-FileHash: Windows PowerShell 5.1 started from PowerShell 7 inherits a
+        # PSModulePath that hides its own Microsoft.PowerShell.Utility script module.
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        $stream = [System.IO.File]::OpenRead($File)
+        try {
+            $actual = ([System.BitConverter]::ToString($sha.ComputeHash($stream)) -replace '-', '').ToLowerInvariant()
+        } finally {
+            $stream.Dispose()
+            $sha.Dispose()
+        }
         if ($actual -ne $expected) {
             throw ('Checksum mismatch for ' + (Split-Path -Leaf $File) + ': expected ' + $expected + ', got ' + $actual + '. Nothing was installed.')
         }
@@ -194,7 +203,9 @@ function Install-RaytraceRs {
         New-Item -ItemType Directory -Force -Path $parent | Out-Null
         # Extract next to the target so that the final move stays on one volume.
         $stage = Join-Path $parent ('.raytrace-rs-install-' + [Guid]::NewGuid().ToString('N'))
-        Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
+        # .NET instead of Expand-Archive, for the same module-path reason as above.
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $stage)
         $top = Get-ChildItem -LiteralPath $stage -Directory |
             Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'raytrace-rs.exe') } |
             Select-Object -First 1
