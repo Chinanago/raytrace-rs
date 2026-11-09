@@ -38,6 +38,8 @@ def main():
     if not args.no_build:
         subprocess.run(["cargo", "build", "--release", "--locked", "-p", "raytrace-cli",
                         "--target", TARGET], cwd=ROOT, check=True)
+    # The notices read `cargo metadata --offline` for the whole workspace.
+    subprocess.run(["cargo", "fetch", "--locked"], cwd=ROOT, check=True)
     args.output.mkdir(parents=True, exist_ok=True)
     name = f"raytrace-rs-{version}-linux-x64"
     path = build_archive(args.output, name, version, "linux-x64", {"raytrace-rs": BINARY},
