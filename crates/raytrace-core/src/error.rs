@@ -29,6 +29,9 @@ pub enum Error {
     Coating(String),
     #[error("{0}")]
     Limit(String),
+    /// An internal invariant did not hold; reported instead of panicking.
+    #[error("内部エラー: {0}")]
+    Internal(String),
 }
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
@@ -43,6 +46,7 @@ impl Error {
             Self::RayAiming { .. } => "ray_aiming",
             Self::Coating(_) => "coating",
             Self::Limit(_) => "limit",
+            Self::Internal(_) => "internal",
         }
     }
 }

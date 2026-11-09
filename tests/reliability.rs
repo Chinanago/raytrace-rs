@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[path = "support/cli.rs"]
 mod cli_support;
 use raytrace_rs::{
@@ -256,7 +258,7 @@ fn diagnostics_identify_medium_and_surface_and_remain_bounded() {
     }
     let prepared = scene.prepare().unwrap();
     let rays: Vec<_> = (0..100).map(|i| ray(i, i as f64 * 2.0)).collect();
-    let report = trace(&prepared, &rays, TraceOptions::default());
+    let report = trace(&prepared, &rays, TraceOptions::default()).unwrap();
     assert_eq!(report.budget.medium_mismatch, 100.0);
     assert!(report.terminals.is_empty());
     assert_eq!(report.diagnostics.len(), 64);
@@ -289,7 +291,8 @@ fn depth_limit_points_to_the_last_interacting_surface() {
             ..ray(0, 0.0)
         }],
         TraceOptions::default(),
-    );
+    )
+    .unwrap();
     let d = report
         .diagnostics
         .iter()
@@ -313,7 +316,7 @@ fn generated_record_is_immutable_and_replays_every_float_after_reload() {
         keep_terminals: true,
         path_launch_count: 2,
     };
-    let report = trace(&prepared, &rays, options);
+    let report = trace(&prepared, &rays, options).unwrap();
     let context = RunContext::capture(&p, &scene, None, 2, options);
     p.occurrences[2].pose.translation_mm.0[2] += 7.0;
     let path = folder().join("run.json");
@@ -335,7 +338,8 @@ fn generated_record_is_immutable_and_replays_every_float_after_reload() {
         &saved.calculation.scene.prepare().unwrap(),
         &again,
         saved.calculation.trace_options,
-    );
+    )
+    .unwrap();
     assert_eq!(
         serde_json::to_value(&replay).unwrap(),
         serde_json::to_value(&report).unwrap()
@@ -358,7 +362,7 @@ fn explicit_record_keeps_launches_and_uses_their_actual_wavelengths() {
     }];
     rays[0].direction = V3([0.00123, -0.00321, 1.0]);
     rays[0].validate(&prepared).unwrap();
-    let report = trace(&prepared, &rays, TraceOptions::default());
+    let report = trace(&prepared, &rays, TraceOptions::default()).unwrap();
     let mut context = RunContext::capture(&p, &scene, Some(&rays), 1, TraceOptions::default());
     assert_eq!(context.launch_wavelengths_um, vec![0.55]);
     assert!(
@@ -450,7 +454,8 @@ fn coincident_sequential_stop_and_interface_do_not_discard_the_ray() {
             keep_terminals: true,
             path_launch_count: 1,
         },
-    );
+    )
+    .unwrap();
     assert!((report.budget.detected - 0.96f64.powi(2)).abs() < 1e-14);
     assert_eq!(report.budget.geometric_miss, 0.0);
     assert!(
@@ -482,7 +487,8 @@ fn coincident_sequential_stop_and_interface_do_not_discard_the_ray() {
             ..ray(0, 0.1)
         }],
         TraceOptions::default(),
-    );
+    )
+    .unwrap();
     assert_eq!(again.budget.geometric_miss, 0.0);
     assert!((again.budget.detected - report.budget.detected).abs() < 1e-14);
 }

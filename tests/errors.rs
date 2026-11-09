@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_core::{
     Error,
     math::V3,

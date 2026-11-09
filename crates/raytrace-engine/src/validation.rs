@@ -79,10 +79,20 @@ fn grid_rays(z: f64) -> Vec<Ray> {
         .map(|(i, (w, x, y))| launch(i as u64, V3([x, y, z]), V3([0.0, 0.0, 1.0]), w))
         .collect()
 }
-pub fn cases() -> Vec<ValidationCase> {
-    let mut lens: Scene =
-        serde_json::from_str(include_str!("../../../examples/sequential_lens.json")).unwrap();
-    lens.surfaces.last_mut().unwrap().aperture = Aperture::Rectangle {
+/// Parse one of the bundled example scenes.
+fn example(name: &str, text: &str) -> Result<Scene> {
+    serde_json::from_str(text)
+        .map_err(|e| crate::Error::Plan(format!("同梱サンプル {name} を読めません: {e}")))
+}
+pub fn cases() -> Result<Vec<ValidationCase>> {
+    let mut lens = example(
+        "sequential_lens",
+        include_str!("../../../examples/sequential_lens.json"),
+    )?;
+    lens.surfaces
+        .last_mut()
+        .ok_or_else(|| crate::Error::Plan("sequential_lens に面がありません".into()))?
+        .aperture = Aperture::Rectangle {
         half_width_mm: 5.0,
         half_height_mm: 5.0,
     };
@@ -103,8 +113,10 @@ pub fn cases() -> Vec<ValidationCase> {
         conic: -0.4,
         coefficients: vec![2e-6, -1e-9],
     };
-    let mut slab: Scene =
-        serde_json::from_str(include_str!("../../../examples/nonsequential_slab.json")).unwrap();
+    let mut slab = example(
+        "nonsequential_slab",
+        include_str!("../../../examples/nonsequential_slab.json"),
+    )?;
     slab.settings.min_relative_branch_weight = 1e-14;
     let mut plate = slab.clone();
     plate.mode = Mode::Sequential;
@@ -113,8 +125,10 @@ pub fn cases() -> Vec<ValidationCase> {
         s.pose.translation_mm.0[2] += 5.0;
     }
     plate.sources = lens.sources.clone();
-    let rod: Scene =
-        serde_json::from_str(include_str!("../../../examples/integrator_rod.json")).unwrap();
+    let rod = example(
+        "integrator_rod",
+        include_str!("../../../examples/integrator_rod.json"),
+    )?;
     let rod_rays: Vec<_> = [0.45, 0.55, 0.635]
         .into_iter()
         .flat_map(|w| [5.0f64, 10.0].into_iter().map(move |a| (w, a.to_radians())))
@@ -148,8 +162,10 @@ pub fn cases() -> Vec<ValidationCase> {
             ..*r
         })
         .collect();
-    let mut mirror: Scene =
-        serde_json::from_str(include_str!("../../../examples/folded_mirror.json")).unwrap();
+    let mut mirror = example(
+        "folded_mirror",
+        include_str!("../../../examples/folded_mirror.json"),
+    )?;
     let mut mirror_seq = mirror.clone();
     mirror_seq.mode = Mode::Sequential;
     let mirror_rays = grid_rays(-20.0);
@@ -160,7 +176,7 @@ pub fn cases() -> Vec<ValidationCase> {
         .map(|(i, w)| launch(i as u64, V3([0.0, 0.0, -5.0]), V3([0.0, 0.0, 1.0]), w))
         .collect();
     mirror.settings.min_relative_branch_weight = 1e-14;
-    vec![
+    Ok(vec![
         ValidationCase {
             name: "sequential_lens",
             scene: lens,
@@ -217,7 +233,7 @@ pub fn cases() -> Vec<ValidationCase> {
             oracle: Oracle::Mirror,
             exportable: false,
         },
-    ]
+    ])
 }
 
 fn primary(report: &Report, id: u64, surface: usize) -> Option<&Ray> {
@@ -244,7 +260,7 @@ impl ValidationCase {
             path_launch_count: rays.len() as u64,
         };
         let started = std::time::Instant::now();
-        let report = trace(&prepared, &rays, options);
+        let report = trace(&prepared, &rays, options)?;
         let seconds = started.elapsed().as_secs_f64();
         RunContext::capture(&design, &self.scene, Some(&rays), 1, options).save(
             &report,
@@ -274,7 +290,7 @@ impl ValidationCase {
             let imported = design::open(&path, &[])?;
             let mut scene = imported.trace_scene()?;
             scene.surfaces.remove(0); // ZMX export's dummy starting surface.
-            let other = trace(&scene.prepare()?, &rays, options);
+            let other = trace(&scene.prepare()?, &rays, options)?;
             let mut position: f64 = 0.0;
             let mut direction: f64 = 0.0;
             let mut opl: f64 = 0.0;
@@ -356,7 +372,11 @@ impl ValidationCase {
                     let origin = frame
                         .as_ref()
                         .map_or(ray.position_mm, |f| f.local_point(ray.position_mm));
-                    let n = self.scene.materials[1].index(ray.wavelength_um).unwrap();
+                    let n = self.scene.materials[1]
+                        .index(ray.wavelength_um)
+                        .ok_or_else(|| {
+                            crate::Error::Plan("折り返しミラーの屈折率を評価できません".into())
+                        })?;
                     let st = incoming.0[0] / n;
                     let ct = (1.0 - st * st).sqrt();
                     let tangent = incoming.0[0] / incoming.0[2];

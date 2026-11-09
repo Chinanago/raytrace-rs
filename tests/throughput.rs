@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     math::{Frame, Pose, V3},
     model::{Material, Mode, Ray, Scene},
@@ -58,8 +60,8 @@ fn indexed_systems_keep_every_terminal_path_pixel_and_branch_order() {
                     keep_terminals: true,
                     path_launch_count: 32,
                 };
-                let expected = pool.install(|| trace(&base, &rays, options));
-                let mut actual = pool.install(|| trace(&indexed, &rays, options));
+                let expected = pool.install(|| trace(&base, &rays, options).unwrap());
+                let mut actual = pool.install(|| trace(&indexed, &rays, options).unwrap());
                 actual.surfaces.truncate(base.surfaces.len());
                 let expected = serde_json::to_vec(&expected).unwrap();
                 assert_eq!(
@@ -123,6 +125,7 @@ fn wavelengths_beyond_cache_capacity_keep_dispersion_and_absorption() {
                     path_launch_count: 0,
                 },
             )
+            .unwrap()
         });
         assert_eq!(report.terminals.len(), rays.len());
         for terminal in &report.terminals {
@@ -173,8 +176,8 @@ fn indexed_search_keeps_numerical_failure_visibility_and_nearer_hits() {
             keep_terminals: true,
             path_launch_count: 1,
         };
-        let expected = trace(&plain, &[ray], options);
-        let mut actual = trace(&indexed, &[ray], options);
+        let expected = trace(&plain, &[ray], options).unwrap();
+        let mut actual = trace(&indexed, &[ray], options).unwrap();
         actual.surfaces.truncate(plain.surfaces.len());
         assert_eq!(
             serde_json::to_vec(&actual).unwrap(),
@@ -237,8 +240,8 @@ fn indexed_mesh_and_conical_sides_keep_edge_and_grazing_hits() {
                 keep_terminals: true,
                 path_launch_count: 32,
             };
-            let expected = trace(&plain, &rays, options);
-            let mut actual = trace(&indexed, &rays, options);
+            let expected = trace(&plain, &rays, options).unwrap();
+            let mut actual = trace(&indexed, &rays, options).unwrap();
             actual.surfaces.truncate(plain.surfaces.len());
             assert_eq!(
                 serde_json::to_vec(&actual).unwrap(),

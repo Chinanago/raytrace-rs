@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     design::{self, Design, PartKind},
     math::{Frame, Pose, V3},
@@ -124,7 +126,8 @@ fn tilted_lens_thickness_optical_path_and_assembly_are_preserved() {
             keep_terminals: true,
             path_launch_count: 1,
         },
-    );
+    )
+    .unwrap();
     assert!((r.budget.detected - 0.9216).abs() < 1e-12);
     let terminal = r.terminals.iter().find(|t| t.reason == "detected").unwrap();
     assert!((terminal.ray.optical_path_mm - 12.5).abs() < 1e-10);
@@ -155,7 +158,7 @@ fn nsc_reference_hierarchy_and_compound_tilts_hit_the_referenced_detector() {
     );
     let prepared = p.trace_scene().unwrap().prepare().unwrap();
     let rays = prepared.generate_rays().unwrap();
-    let r = trace(&prepared, &rays, TraceOptions::default());
+    let r = trace(&prepared, &rays, TraceOptions::default()).unwrap();
     assert!((r.budget.detected - 1.).abs() < 1e-12);
     let mut moved = p.clone();
     moved.lone_system_mut().unwrap().scene.sources[0]

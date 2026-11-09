@@ -218,12 +218,12 @@ impl NscFixture {
         source.seed = seed;
         source.count = rays;
         source.wavelength_um = run.wavelength_um;
-        let frame = Frame::from_intrinsic_xyz(&pose(
-            source.origin_mm.0,
-            source.diode.as_ref().unwrap().rotation_deg.0,
-        ));
+        let Some(diode) = source.diode.as_mut() else {
+            return Err("NSC reference requires a diode source".into());
+        };
+        let frame = Frame::from_intrinsic_xyz(&pose(source.origin_mm.0, diode.rotation_deg.0));
         source.direction = frame.world_vector(V3([0., 0., 1.]));
-        source.diode.as_mut().unwrap().rotation_deg = frame.pose().rotation_deg;
+        diode.rotation_deg = frame.pose().rotation_deg;
         scene.sources = vec![source];
         Ok(scene)
     }
@@ -253,6 +253,12 @@ impl NscFixture {
 }
 fn crate_pose(z: f64) -> Pose {
     pose([0., 0., z], [0.; 3])
+}
+fn edit_diode(fixture: &mut NscFixture, edit: impl FnOnce(&mut Diode)) {
+    // Every fixture is built with a diode source; a missing one is left unchanged.
+    if let Some(diode) = fixture.source.diode.as_mut() {
+        edit(diode);
+    }
 }
 /// Four owned fixture specifications. No vendor geometry or catalog data is embedded.
 pub fn fixtures(rays: usize, budget_rays: usize) -> Vec<NscFixture> {
@@ -308,9 +314,11 @@ pub fn fixtures(rays: usize, budget_rays: usize) -> Vec<NscFixture> {
     };
     let mut lens = base.clone();
     lens.name = "lens_focus".into();
-    lens.source.diode.as_mut().unwrap().divergence_deg = [0.5, 0.5];
-    lens.source.diode.as_mut().unwrap().half_width_mm = [3., 2.];
-    lens.source.diode.as_mut().unwrap().gaussian_width_mm = [3., 2.];
+    edit_diode(&mut lens, |diode| {
+        diode.divergence_deg = [0.5, 0.5];
+        diode.half_width_mm = [3., 2.];
+        diode.gaussian_width_mm = [3., 2.];
+    });
     lens.optic = Some(Optic::Lens {
         pose: crate_pose(10.),
         radii_mm: [50., -50.],
@@ -326,7 +334,7 @@ pub fn fixtures(rays: usize, budget_rays: usize) -> Vec<NscFixture> {
     ];
     let mut rod = base.clone();
     rod.name = "rod_homogenizer".into();
-    rod.source.diode.as_mut().unwrap().divergence_deg = [10., 25.];
+    edit_diode(&mut rod, |diode| diode.divergence_deg = [10., 25.]);
     rod.optic = Some(Optic::Volume {
         pose: crate_pose(1.),
         half_width_mm: [2., 2.],
@@ -344,7 +352,7 @@ pub fn fixtures(rays: usize, budget_rays: usize) -> Vec<NscFixture> {
     ];
     let mut window = base.clone();
     window.name = "tilted_window".into();
-    window.source.diode.as_mut().unwrap().divergence_deg = [0., 0.];
+    edit_diode(&mut window, |diode| diode.divergence_deg = [0., 0.]);
     window.optic = Some(Optic::Volume {
         pose: pose([0., 0., 10.], [30., 0., 0.]),
         half_width_mm: [15., 15.],

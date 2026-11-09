@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     design::{self, Component, Design, Part, PartKind},
     geometry::{dielectric, intersect_ordered},
@@ -148,7 +150,7 @@ fn paraxial_and_real_ray_aiming_fill_stop_at_each_field_and_wavelength() {
                 aimed.iter().any(|r| r.wavelength_um == 0.45)
                     && aimed.iter().any(|r| r.wavelength_um == 0.65)
             );
-            let report = trace(&prepared, &aimed, TraceOptions::default());
+            let report = trace(&prepared, &aimed, TraceOptions::default()).unwrap();
             assert_eq!(report.budget.medium_mismatch, 0.);
             assert_eq!(report.budget.numerical_failure, 0.);
         }
@@ -209,7 +211,7 @@ fn vignetting_factors_shift_compress_then_rotate_without_hiding_aperture_losses(
         raytrace_rs::model::Aperture::Circle { radius_mm: 0.5 };
     let clipped = part(&q).scene.clone().prepare().unwrap();
     let rays = clipped.generate_rays().unwrap();
-    let report = trace(&clipped, &rays, TraceOptions::default());
+    let report = trace(&clipped, &rays, TraceOptions::default()).unwrap();
     assert!(report.budget.geometric_miss > 0.5);
     assert!((report.budget.accounted() - report.budget.launched).abs() < 1e-12);
 }

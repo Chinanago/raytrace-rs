@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     design::{self, Component, Design, Issue, PartKind},
     geometry::intersect,
@@ -73,6 +75,7 @@ fn run(p: &Design) -> raytrace_rs::trace::Report {
             path_launch_count: 2,
         },
     )
+    .unwrap()
 }
 
 #[test]

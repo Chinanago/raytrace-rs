@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     coating::parse_zemax,
     design,
@@ -37,7 +39,7 @@ fn ray() -> Ray {
 #[test]
 fn coatings_conserve_power_for_both_directions_and_sequential_loss() {
     let prepared = scene(Mode::NonSequential, coating()).prepare().unwrap();
-    let forward = trace(&prepared, &[ray()], TraceOptions::default());
+    let forward = trace(&prepared, &[ray()], TraceOptions::default()).unwrap();
     near(forward.detectors[0].weights.iter().sum(), 0.7);
     near(forward.detectors[1].weights.iter().sum(), 0.1);
     near(forward.budget.surface_absorbed, 0.2);
@@ -46,7 +48,7 @@ fn coatings_conserve_power_for_both_directions_and_sequential_loss() {
     r.position_mm.0[2] = 1.;
     r.direction.0[2] = -1.;
     r.medium = 1;
-    let backward = trace(&prepared, &[r], TraceOptions::default());
+    let backward = trace(&prepared, &[r], TraceOptions::default()).unwrap();
     near(backward.detectors[0].weights.iter().sum(), 0.3);
     near(backward.detectors[1].weights.iter().sum(), 0.5);
     near(backward.budget.accounted(), 1.);
@@ -54,7 +56,8 @@ fn coatings_conserve_power_for_both_directions_and_sequential_loss() {
         &scene(Mode::Sequential, coating()).prepare().unwrap(),
         &[ray()],
         TraceOptions::default(),
-    );
+    )
+    .unwrap();
     near(sequential.budget.detected, 0.7);
     near(sequential.budget.sequential_reflection_not_followed, 0.1);
     near(sequential.budget.surface_absorbed, 0.2);
@@ -69,7 +72,7 @@ fn ideal_tir_uses_its_own_reflectance_and_absorption() {
     r.position_mm.0[2] = 1.;
     let a = 50f64.to_radians();
     r.direction = V3([a.sin(), 0., -a.cos()]);
-    let result = trace(&prepared, &[r], TraceOptions::default());
+    let result = trace(&prepared, &[r], TraceOptions::default()).unwrap();
     assert_eq!(result.total_internal_reflections, 1);
     near(result.budget.detected, 0.65);
     near(result.budget.surface_absorbed, 0.35);
@@ -134,7 +137,7 @@ fn native_zmx_coating_is_saved_with_results_and_uncoated_override_is_explicit() 
     std::fs::remove_file(dir.join("TEST.DAT")).unwrap();
     let saved = design::open(&json_path, &[]).unwrap();
     let trace_scene = saved.trace_scene().unwrap().prepare().unwrap();
-    let traced = trace(&trace_scene, &[ray()], TraceOptions::default());
+    let traced = trace(&trace_scene, &[ray()], TraceOptions::default()).unwrap();
     near(traced.budget.detected, 0.7);
     near(traced.budget.surface_absorbed, 0.2);
     p.conditions.allow_uncoated = true;
@@ -152,7 +155,7 @@ fn sequential_tir_coating_keeps_absorption_separate() {
         direction: V3([a.sin(), 0., -a.cos()]),
         ..ray()
     };
-    let result = trace(&prepared, &[r], TraceOptions::default());
+    let result = trace(&prepared, &[r], TraceOptions::default()).unwrap();
     assert_eq!(result.total_internal_reflections, 1);
     near(result.budget.sequential_tir, 0.65);
     near(result.budget.surface_absorbed, 0.35);

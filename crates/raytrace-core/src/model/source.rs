@@ -215,18 +215,14 @@ impl PreparedScene {
     pub fn ray_generator(&self) -> Result<RayGenerator<'_>> {
         let mut sources = Vec::new();
         let mut offsets = vec![0usize];
+        let mut total = 0usize;
         for source in &self.spec.sources {
             // Defer source errors to their launch offset to retain error order.
             sources.push(PreparedSource::new(self, source));
-            offsets.push(
-                offsets
-                    .last()
-                    .unwrap()
-                    .checked_add(source.count)
-                    .ok_or_else(|| {
-                        crate::Error::Limit("光源の光線数がusizeの上限を超えています".into())
-                    })?,
-            );
+            total = total.checked_add(source.count).ok_or_else(|| {
+                crate::Error::Limit("光源の光線数がusizeの上限を超えています".into())
+            })?;
+            offsets.push(total);
         }
         Ok(RayGenerator {
             scene: self,
@@ -243,7 +239,7 @@ impl PreparedScene {
 
 impl RayGenerator<'_> {
     pub fn len(&self) -> usize {
-        *self.offsets.last().unwrap()
+        self.offsets.last().copied().unwrap_or(0)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -425,7 +421,9 @@ impl<'a> PreparedSource<'a> {
             }
         }
         if let Some(diode) = &source.diode {
-            let frame = self.diode_frame.as_ref().unwrap();
+            let frame = self.diode_frame.as_ref().ok_or_else(|| {
+                crate::Error::Internal("ダイオード光源の座標系がありません".into())
+            })?;
             let mut xy = [0.0; 2];
             let mut angle = [0.0; 2];
             for axis in 0..2 {

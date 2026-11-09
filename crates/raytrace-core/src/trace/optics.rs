@@ -1,4 +1,6 @@
+use crate::Result;
 use crate::model::PreparedScene;
+use std::collections::hash_map::Entry;
 
 pub(super) struct OpticalCache {
     primary_key: u64,
@@ -20,27 +22,37 @@ impl OpticalCache {
                 .clamp(1, 256),
         }
     }
-    pub(super) fn get(&mut self, scene: &PreparedScene, wavelength: f64) -> &[(f64, f64)] {
+    /// `launch` is the ray id used to report a wavelength outside a material's range.
+    pub(super) fn get(
+        &mut self,
+        scene: &PreparedScene,
+        wavelength: f64,
+        launch: u64,
+    ) -> Result<&[(f64, f64)]> {
         let key = wavelength.to_bits();
         if key == self.primary_key {
-            return &self.primary;
+            return Ok(&self.primary);
         }
         if self.primary.is_empty() {
+            self.primary = evaluate_optics(scene, wavelength, launch).collect::<Result<_>>()?;
             self.primary_key = key;
-            self.primary = evaluate_optics(scene, wavelength).collect();
-            return &self.primary;
+            return Ok(&self.primary);
         }
         if self.other.len() + 1 < self.capacity {
-            self.other
-                .entry(key)
-                .or_insert_with(|| evaluate_optics(scene, wavelength).collect())
+            match self.other.entry(key) {
+                Entry::Occupied(entry) => Ok(entry.into_mut()),
+                Entry::Vacant(entry) => Ok(entry
+                    .insert(evaluate_optics(scene, wavelength, launch).collect::<Result<_>>()?)),
+            }
         } else if let Some(optics) = self.other.get(&key) {
-            optics
+            Ok(optics)
         } else {
             // Preserve exact wavelength evaluation beyond the cache budget; reuse storage.
             self.uncached.clear();
-            self.uncached.extend(evaluate_optics(scene, wavelength));
-            &self.uncached
+            for optics in evaluate_optics(scene, wavelength, launch) {
+                self.uncached.push(optics?);
+            }
+            Ok(&self.uncached)
         }
     }
 }
@@ -48,13 +60,23 @@ impl OpticalCache {
 pub(super) fn evaluate_optics(
     scene: &PreparedScene,
     wavelength: f64,
-) -> impl Iterator<Item = (f64, f64)> + '_ {
+    launch: u64,
+) -> impl Iterator<Item = Result<(f64, f64)>> + '_ {
     // Every branch keeps its launch wavelength; evaluate dispersion and spectral
     // absorption once per material, rather than on every internal reflection.
-    scene.spec.materials.iter().map(move |m| {
-        (
-            m.index(wavelength).expect("validated wavelength"),
-            m.absorption_at(wavelength).expect("validated wavelength"),
+    scene
+        .spec
+        .materials
+        .iter()
+        .enumerate()
+        .map(
+            move |(material, m)| match (m.index(wavelength), m.absorption_at(wavelength)) {
+                (Some(index), Some(absorption)) => Ok((index, absorption)),
+                _ => Err(crate::Error::Wavelength {
+                    material,
+                    wavelength_um: wavelength,
+                    launch,
+                }),
+            },
         )
-    })
 }

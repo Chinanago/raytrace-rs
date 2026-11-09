@@ -392,22 +392,21 @@ pub fn run(model: &Path, plan: &ConvergencePlan, output: &Path) -> Result<Conver
                     && (axis == "cad_deflection" || a.cad_deflection_mm == b.cad_deflection_mm)
             };
             let candidates: Vec<_> = summary.cases.iter().filter(same_other_axes).collect();
-            let reference = candidates
-                .into_iter()
-                .max_by(|a, b| match axis {
-                    "ray_count" => a.settings.rays_per_source.cmp(&b.settings.rays_per_source),
-                    "pixels" => a
-                        .settings
-                        .pixels
-                        .map(|p| p[0] * p[1])
-                        .cmp(&b.settings.pixels.map(|p| p[0] * p[1])),
-                    "cad_deflection" => b
-                        .settings
-                        .cad_deflection_mm
-                        .total_cmp(&a.settings.cad_deflection_mm),
-                    _ => b.index.cmp(&a.index),
-                })
-                .unwrap();
+            let Some(reference) = candidates.into_iter().max_by(|a, b| match axis {
+                "ray_count" => a.settings.rays_per_source.cmp(&b.settings.rays_per_source),
+                "pixels" => a
+                    .settings
+                    .pixels
+                    .map(|p| p[0] * p[1])
+                    .cmp(&b.settings.pixels.map(|p| p[0] * p[1])),
+                "cad_deflection" => b
+                    .settings
+                    .cad_deflection_mm
+                    .total_cmp(&a.settings.cad_deflection_mm),
+                _ => b.index.cmp(&a.index),
+            }) else {
+                continue;
+            };
             if case.index == reference.index {
                 continue;
             }

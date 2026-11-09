@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[path = "support/cli.rs"]
 mod cli_support;
 use raytrace_rs::{
@@ -203,16 +205,22 @@ fn controlled_trace_preserves_the_complete_report_and_cancellation_keeps_it_unpu
         keep_terminals: true,
         path_launch_count: 8,
     };
-    let expected = trace(&p, &rays, options);
+    let expected = trace(&p, &rays, options).unwrap();
     let control = TraceControl::default();
-    let actual = trace_controlled(&p, &rays, options, &control).unwrap();
+    let actual = trace_controlled(&p, &rays, options, &control)
+        .unwrap()
+        .unwrap();
     assert_eq!(
         serde_json::to_value(expected).unwrap(),
         serde_json::to_value(actual).unwrap()
     );
     assert_eq!(control.completed.load(Ordering::Relaxed), rays.len());
     control.cancel.store(true, Ordering::Relaxed);
-    assert!(trace_controlled(&p, &rays, options, &control).is_none());
+    assert!(
+        trace_controlled(&p, &rays, options, &control)
+            .unwrap()
+            .is_none()
+    );
     assert_eq!(control.completed.load(Ordering::Relaxed), 0);
 }
 #[test]

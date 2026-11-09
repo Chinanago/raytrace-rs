@@ -1,5 +1,7 @@
 //! Owned large-ray fixtures for before/after comparisons, including full reports.
 //! Usage: throughput_check [rays] [threads] [repeats] [case|all] [explicit|streaming|both]
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     geometry::intersect_ordered,
     model::{Mode, Scene},
@@ -106,15 +108,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let rays = prepared.generate_rays()?;
         let generation_seconds = start.elapsed().as_secs_f64();
         let source_signature = fingerprint(&serde_json::to_vec(&rays)?);
-        let expected = pool.install(|| trace(&prepared, &rays, TraceOptions::default()));
+        let expected = pool.install(|| trace(&prepared, &rays, TraceOptions::default()).unwrap());
         let expected_json = serde_json::to_value(&expected)?;
         let mut explicit = Vec::new();
         let mut streaming = Vec::new();
         for _ in 0..repeats {
             if mode != "streaming" {
                 let start = Instant::now();
-                let report =
-                    pool.install(|| trace(&prepared, black_box(&rays), TraceOptions::default()));
+                let report = pool.install(|| {
+                    trace(&prepared, black_box(&rays), TraceOptions::default()).unwrap()
+                });
                 explicit.push(start.elapsed().as_secs_f64());
                 assert_eq!(serde_json::to_value(&report)?, expected_json);
                 black_box(report);

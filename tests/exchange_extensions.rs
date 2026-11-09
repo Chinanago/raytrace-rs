@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     coating,
     design::{self, Design},
@@ -59,7 +61,8 @@ fn detected(p: &Design) -> (f64, f64) {
             keep_terminals: true,
             path_launch_count: 0,
         },
-    );
+    )
+    .unwrap();
     let t = r.terminals.iter().find(|t| t.reason == "detected").unwrap();
     (r.budget.detected, t.ray.optical_path_mm)
 }

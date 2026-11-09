@@ -1,4 +1,6 @@
 //! Generate an edited local ZMX and identical small-ray reference data.
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     design,
     math::V3,
@@ -58,7 +60,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             keep_terminals: true,
             path_launch_count: 0,
         },
-    );
+    )
+    .unwrap();
     fs::write(
         out.join("reference.json"),
         serde_json::to_vec_pretty(

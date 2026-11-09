@@ -345,7 +345,11 @@ pub fn parse_zemax(text: &str, name: &str) -> Result<Option<Coating>> {
                                 "TABLEのS/PごとのR+Tが1を超えています".into(),
                             ));
                         }
-                        grid.last_mut().unwrap().push(v[0]);
+                        grid.last_mut()
+                            .ok_or_else(|| {
+                                crate::Error::Coating("TABLEのWAVEの前にANGLが必要です".into())
+                            })?
+                            .push(v[0]);
                         data.push([(v[1] + v[2]) / 2.0, (v[3] + v[4]) / 2.0]);
                     }
                     _ => {

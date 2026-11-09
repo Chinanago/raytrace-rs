@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[path = "support/streaming.rs"]
 mod fixtures;
 
@@ -55,7 +57,7 @@ fn generated_reports_match_materialized_reports_exactly() {
             let scene = scene.prepare().unwrap();
             let rays = scene.generate_rays().unwrap();
             assert_eq!(
-                serde_json::to_value(trace(&scene, &rays, options)).unwrap(),
+                serde_json::to_value(trace(&scene, &rays, options).unwrap()).unwrap(),
                 serde_json::to_value(trace_generated(&scene, options).unwrap()).unwrap(),
                 "{name}, count={count}"
             );
@@ -204,7 +206,7 @@ fn cancellation_and_progress() {
     assert!(generator.is_empty());
     assert_eq!(generator.rays(0..0).count(), 0);
     assert_eq!(
-        serde_json::to_value(trace(&empty, &[], TraceOptions::default())).unwrap(),
+        serde_json::to_value(trace(&empty, &[], TraceOptions::default()).unwrap()).unwrap(),
         serde_json::to_value(trace_generated(&empty, TraceOptions::default()).unwrap()).unwrap()
     );
 }
@@ -239,7 +241,7 @@ fn record_replay_streams_and_keeps_validation() {
     };
     let prepared = scene.clone().prepare().unwrap();
     let rays = prepared.generate_rays().unwrap();
-    let expected = trace(&prepared, &rays, options);
+    let expected = trace(&prepared, &rays, options).unwrap();
     for explicit in [None, Some(rays.as_slice())] {
         let calculation = RunContext::capture(&design, &scene, explicit, 2, options);
         let mut record = RunRecord {

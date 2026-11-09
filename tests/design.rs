@@ -1,5 +1,7 @@
 //! The design document compiles to the scenes that the previous project model produced,
 //! and files of earlier builds (project v1 to v3) still open.
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     command::call_once,
     commands,

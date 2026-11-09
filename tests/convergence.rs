@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     convergence::{self, ConvergencePlan},
     design::{self, Design},
@@ -118,7 +120,7 @@ fn invalid_axes_fail_before_tracing_and_case_errors_are_retained() {
 #[test]
 fn owned_validation_fixtures_pass_local_checks_and_keep_external_status_pending() {
     let dir = folder();
-    let cases = validation::cases();
+    let cases = validation::cases().unwrap();
     assert_eq!(cases.len(), 8);
     for case in cases {
         let result = case.run(&dir.join(case.name)).unwrap();

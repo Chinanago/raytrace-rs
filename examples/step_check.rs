@@ -1,4 +1,6 @@
 //! Measure native STEP import and compare ray intersections with a reference mesh.
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     cad,
     math::{Pose, V3},
@@ -101,14 +103,15 @@ fn optical_report(scene: Scene, rays: &[Ray]) -> Result<Report, String> {
     for mut ray in rays.iter().copied() {
         ray.validate(&scene).map_err(|e| e.to_string())?;
     }
-    Ok(trace(
+    trace(
         &scene,
         rays,
         TraceOptions {
             keep_terminals: true,
             path_launch_count: 0,
         },
-    ))
+    )
+    .map_err(|e| e.to_string())
 }
 fn statistics(v: &mut [f64]) -> serde_json::Value {
     v.sort_by(f64::total_cmp);

@@ -1,4 +1,6 @@
 //! Repeatable stage timings on owned analytic fixtures; no OpticStudio API.
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     model::Scene,
     spectrum::Spectrum,
@@ -47,8 +49,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let rays = prepared.generate_rays()?;
             let generation = start.elapsed().as_secs_f64();
             let start = Instant::now();
-            let report =
-                pool.install(|| trace(&prepared, black_box(&rays), TraceOptions::default()));
+            let report = pool
+                .install(|| trace(&prepared, black_box(&rays), TraceOptions::default()).unwrap());
             let seconds = start.elapsed().as_secs_f64();
             let start = Instant::now();
             let streamed = pool.install(|| trace_generated(&prepared, TraceOptions::default()))?;

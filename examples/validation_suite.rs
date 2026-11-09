@@ -1,4 +1,6 @@
 //! Generate owned fixture data and local validation results; never vendor files.
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::validation;
 use std::{fs, path::PathBuf};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -9,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     fs::create_dir_all(&out)?;
     let mut cases = Vec::new();
-    for case in validation::cases() {
+    for case in validation::cases().unwrap() {
         let result = case.run(&out.join(case.name))?;
         println!(
             "{}: {} local checks; OpticStudio verification pending",

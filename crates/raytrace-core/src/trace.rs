@@ -1,6 +1,6 @@
-use crate::Result;
 use crate::acceleration::SurfaceIndex;
 use crate::model::{Mode, PreparedScene, Ray};
+use crate::{Error, Result};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -34,16 +34,15 @@ pub struct TraceOptions {
 }
 
 /// Rays must pass Ray::validate or originate from PreparedScene::generate_rays.
-pub fn trace(scene: &PreparedScene, rays: &[Ray], options: TraceOptions) -> Report {
+pub fn trace(scene: &PreparedScene, rays: &[Ray], options: TraceOptions) -> Result<Report> {
     trace_impl(
         scene,
         rays.len(),
         |range| rays[range].iter().copied().map(Ok),
         options,
         None,
-    )
-    .expect("explicit rays cannot fail generation")
-    .expect("uncontrolled tracing cannot be cancelled")
+    )?
+    .ok_or_else(|| Error::Internal("制御なしの追跡が中止されました".into()))
 }
 
 /// A cancelled calculation returns no partial report; callers retain completed runs.
@@ -53,7 +52,7 @@ pub fn trace_controlled(
     rays: &[Ray],
     options: TraceOptions,
     control: &TraceControl,
-) -> Option<Report> {
+) -> Result<Option<Report>> {
     control.completed.store(0, Ordering::Relaxed);
     control.total.store(rays.len(), Ordering::Relaxed);
     trace_impl(
@@ -63,13 +62,12 @@ pub fn trace_controlled(
         options,
         Some(control),
     )
-    .expect("explicit rays cannot fail generation")
 }
 
 /// Trace source rays without retaining the launch array.
 pub fn trace_generated(scene: &PreparedScene, options: TraceOptions) -> Result<Report> {
-    generated_impl(scene, options, None)
-        .map(|r| r.expect("uncontrolled tracing cannot be cancelled"))
+    generated_impl(scene, options, None)?
+        .ok_or_else(|| Error::Internal("制御なしの追跡が中止されました".into()))
 }
 
 pub fn trace_generated_controlled(
@@ -162,7 +160,7 @@ fn trace_mode<I: Iterator<Item = Result<Ray>>, const SEQUENTIAL: bool, const PAC
                     let ray = ray?;
                     let record_paths =
                         ((chunk_index * chunk_size + position) as u64) < options.path_launch_count;
-                    let optics = cache.get(scene, ray.wavelength_um);
+                    let optics = cache.get(scene, ray.wavelength_um, ray.id)?;
                     trace_one::<SEQUENTIAL, false>(
                         scene,
                         ray,
@@ -172,7 +170,7 @@ fn trace_mode<I: Iterator<Item = Result<Ray>>, const SEQUENTIAL: bool, const PAC
                         optics,
                         &mut traversal,
                         None,
-                    );
+                    )?;
                     if let Some(c) = control {
                         completed += 1;
                         if completed == 256 {
@@ -201,7 +199,7 @@ fn trace_mode<I: Iterator<Item = Result<Ray>>, const SEQUENTIAL: bool, const PAC
                     // No SoA gather or packet bookkeeping in an incoherent run.
                     let record_paths =
                         ((chunk_index * chunk_size + position) as u64) < options.path_launch_count;
-                    let optics = cache.get(scene, ray.wavelength_um);
+                    let optics = cache.get(scene, ray.wavelength_um, ray.id)?;
                     trace_one::<SEQUENTIAL, false>(
                         scene,
                         ray,
@@ -211,7 +209,7 @@ fn trace_mode<I: Iterator<Item = Result<Ray>>, const SEQUENTIAL: bool, const PAC
                         optics,
                         &mut traversal,
                         None,
-                    );
+                    )?;
                     if let Some(c) = control {
                         completed += 1;
                         if completed == 256 {
@@ -241,7 +239,11 @@ fn trace_mode<I: Iterator<Item = Result<Ray>>, const SEQUENTIAL: bool, const PAC
                         if mixed {
                             for (launch, material) in launches.iter().zip(&mut packet_optics) {
                                 material.clear();
-                                material.extend_from_slice(cache.get(scene, launch.wavelength_um));
+                                material.extend_from_slice(cache.get(
+                                    scene,
+                                    launch.wavelength_um,
+                                    launch.id,
+                                )?);
                             }
                             plan.build(
                                 scene,
@@ -250,7 +252,7 @@ fn trace_mode<I: Iterator<Item = Result<Ray>>, const SEQUENTIAL: bool, const PAC
                                 &mut packet_steps,
                             )
                         } else {
-                            let optics = cache.get(scene, ray.wavelength_um);
+                            let optics = cache.get(scene, ray.wavelength_um, ray.id)?;
                             plan.build(
                                 scene,
                                 &launches,
@@ -289,7 +291,7 @@ fn trace_mode<I: Iterator<Item = Result<Ray>>, const SEQUENTIAL: bool, const PAC
                     let optics = if prepared_optics {
                         &packet_optics[lane]
                     } else {
-                        cache.get(scene, ray.wavelength_um)
+                        cache.get(scene, ray.wavelength_um, ray.id)?
                     };
                     if cached {
                         trace_one::<SEQUENTIAL, true>(
@@ -301,7 +303,7 @@ fn trace_mode<I: Iterator<Item = Result<Ray>>, const SEQUENTIAL: bool, const PAC
                             optics,
                             &mut traversal,
                             Some((&packet_steps, lane)),
-                        );
+                        )?;
                     } else {
                         trace_one::<SEQUENTIAL, false>(
                             scene,
@@ -312,7 +314,7 @@ fn trace_mode<I: Iterator<Item = Result<Ray>>, const SEQUENTIAL: bool, const PAC
                             optics,
                             &mut traversal,
                             None,
-                        );
+                        )?;
                     }
                     if let Some(c) = control {
                         completed += 1;
@@ -363,7 +365,7 @@ mod packet_tests {
                 .num_threads(workers)
                 .build()
                 .unwrap();
-            let actual = pool.install(|| trace(scene, rays, options));
+            let actual = pool.install(|| trace(scene, rays, options)).unwrap();
             let encoded = serde_json::to_vec(&actual).unwrap();
             if encoded != expected {
                 let offset = encoded
@@ -383,12 +385,18 @@ mod packet_tests {
             }
         }
         let control = TraceControl::default();
-        let controlled = trace_controlled(scene, rays, options, &control).unwrap();
+        let controlled = trace_controlled(scene, rays, options, &control)
+            .unwrap()
+            .unwrap();
         assert_eq!(serde_json::to_vec(&controlled).unwrap(), expected);
         assert_eq!(control.completed.load(Ordering::Relaxed), rays.len());
         control.cancel.store(true, Ordering::Relaxed);
         if !rays.is_empty() {
-            assert!(trace_controlled(scene, rays, options, &control).is_none());
+            assert!(
+                trace_controlled(scene, rays, options, &control)
+                    .unwrap()
+                    .is_none()
+            );
         }
     }
 
@@ -450,7 +458,9 @@ mod packet_tests {
                     if let Some(plan) = crate::packet::Plan::new(&prepared) {
                         let first: [Ray; 4] = rays[..4].try_into().unwrap();
                         let materials: [Vec<_>; 4] = std::array::from_fn(|i| {
-                            evaluate_optics(&prepared, first[i].wavelength_um).collect()
+                            evaluate_optics(&prepared, first[i].wavelength_um, first[i].id)
+                                .collect::<Result<_>>()
+                                .unwrap()
                         });
                         let mut steps = Vec::new();
                         assert!(

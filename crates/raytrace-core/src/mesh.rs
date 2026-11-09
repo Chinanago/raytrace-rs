@@ -63,7 +63,7 @@ impl Data {
         if end - start > 8 {
             let axis = (0..3)
                 .max_by(|&a, &b| (max.0[a] - min.0[a]).total_cmp(&(max.0[b] - min.0[b])))
-                .unwrap();
+                .unwrap_or(0);
             let triangles = &self.triangles;
             let vertices = &self.vertices;
             self.order[start..end].sort_unstable_by(|&a, &b| {

@@ -517,7 +517,7 @@ mod tests {
         let scene = app.design().trace_scene().unwrap();
         let prepared = scene.clone().prepare().unwrap();
         let rays = prepared.generate_rays().unwrap();
-        let report = trace(&prepared, &rays, TraceOptions::default());
+        let report = trace(&prepared, &rays, TraceOptions::default()).unwrap();
         assert_eq!(report.diagnostics[0].reason, "medium_mismatch");
         let label = format!(
             "媒質の不整合 · {} · {}",

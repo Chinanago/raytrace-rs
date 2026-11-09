@@ -1,4 +1,6 @@
 //! Re-evaluate frozen launch rays while changing only the interaction allowance.
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     geometry,
     record::{RunContext, RunRecord},
@@ -33,7 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         scene.settings.max_events_per_launch = events;
         let prepared = scene.clone().prepare()?;
         let start = Instant::now();
-        let report = pool.install(|| trace(&prepared, &rays, TraceOptions::default()));
+        let report = pool.install(|| trace(&prepared, &rays, TraceOptions::default()).unwrap());
         let seconds = start.elapsed().as_secs_f64();
         RunContext::capture(
             &record.calculation.design,

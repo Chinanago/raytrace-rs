@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     design::{self, Design, Part},
     math::V3,
@@ -145,7 +147,7 @@ fn native_source_diode_angular_distribution_and_detector() {
         rays.iter()
             .all(|r| r.position_mm.0[0].abs() <= 0.01 && r.position_mm.0[1].abs() <= 0.01)
     );
-    let report = trace(&scene, &rays, TraceOptions::default());
+    let report = trace(&scene, &rays, TraceOptions::default()).unwrap();
     assert!((report.budget.detected - 1.0).abs() < 1e-8);
 }
 
@@ -344,7 +346,8 @@ fn mesh_bvh_and_absorbing_medium_match_planar_solution() {
             keep_terminals: true,
             path_launch_count: 0,
         },
-    );
+    )
+    .unwrap();
     let primary = 0.96f64.powi(2) * (-0.1f64).exp();
     let expected = primary / (1.0 - 0.04f64.powi(2) * (-0.2f64).exp());
     assert!((report.budget.detected - expected).abs() < 1e-7);
@@ -395,7 +398,8 @@ fn flat_even_asphere_import_trace_and_edited_roundtrip() {
             path_launch_count: 1,
             ..TraceOptions::default()
         },
-    );
+    )
+    .unwrap();
     assert!(result.paths.len() >= 2);
     assert!((result.paths[1].end_mm.0[0] - h).abs() > 1e-3);
     part_mut(&mut p).scene.surfaces[1].pose.translation_mm.0[2] = 6.;

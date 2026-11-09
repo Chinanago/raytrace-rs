@@ -1,4 +1,6 @@
 //! The JSON engine: CLI responses, `run` requests, in-process execution and schemas.
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[path = "support/cli.rs"]
 mod cli_support;
 use raytrace_rs::{

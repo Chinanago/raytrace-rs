@@ -68,6 +68,11 @@ impl Spectrum {
             }
             target -= weight;
         }
-        self.samples.iter().rfind(|v| v[1] > 0.).unwrap()[0]
+        // A validated spectrum always has a positive weight; otherwise the
+        // wavelength 0 is rejected when the ray is validated.
+        self.samples
+            .iter()
+            .rfind(|v| v[1] > 0.)
+            .map_or(0., |v| v[0])
     }
 }

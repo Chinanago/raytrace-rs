@@ -104,7 +104,7 @@ pub(super) fn calculate_demo(app: &mut App) {
                 TraceOptions::default(),
             ),
             trace_seconds: 0.0,
-            report: trace(&prepared, &rays, TraceOptions::default()),
+            report: trace(&prepared, &rays, TraceOptions::default()).unwrap(),
         },
     ));
 }

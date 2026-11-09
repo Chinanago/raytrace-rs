@@ -1,7 +1,12 @@
 use super::queue::{Traversal, Work, WorkQueue};
 use super::{IntersectionContext, PathEvent, Report, TraceOptions};
+use crate::Result;
 use crate::geometry::{Miss, dielectric_with_reflectance, intersect_ordered};
 use crate::model::{Interaction, PreparedScene, Ray};
+
+fn missing_packet() -> crate::Error {
+    crate::Error::Internal("キャッシュ経路に光線パケットがありません".into())
+}
 
 // The cached path shares the state machine to retain scalar accumulation order.
 #[allow(clippy::too_many_arguments)]
@@ -14,7 +19,7 @@ pub(super) fn trace_one<const SEQUENTIAL: bool, const CACHED: bool>(
     optics: &[(f64, f64)],
     traversal: &mut Traversal<'_>,
     packet: Option<(&[[crate::packet::Step; crate::packet::WIDTH]], usize)>,
-) {
+) -> Result<()> {
     // The sequential path has at most one successor. Keep its state local so
     // LLVM can scalarize it; only NSC rays need a reusable priority queue.
     let mut sequential = WorkQueue::Sequential(None);
@@ -73,7 +78,7 @@ pub(super) fn trace_one<const SEQUENTIAL: bool, const CACHED: bool>(
         let selection = if SEQUENTIAL {
             match scene.surfaces.get(next_surface) {
                 Some(s) => (if CACHED {
-                    let (steps, lane) = packet.expect("cached packet");
+                    let (steps, lane) = packet.ok_or_else(missing_packet)?;
                     Ok(steps[next_surface][lane].hit)
                 } else {
                     intersect_ordered(s, ray.position_mm, ray.direction)
@@ -160,7 +165,13 @@ pub(super) fn trace_one<const SEQUENTIAL: bool, const CACHED: bool>(
                 );
             }
             Interaction::Detector { pixels } => {
-                let detector = &mut report.detectors[surface.detector_index.unwrap()];
+                let detector_index = surface.detector_index.ok_or_else(|| {
+                    crate::Error::Internal(format!(
+                        "検出面 {} に検出器の番号がありません",
+                        surface.spec.name
+                    ))
+                })?;
+                let detector = &mut report.detectors[detector_index];
                 let [hx, hy] = detector.half_extent_mm;
                 let x = (((hit.local_point.0[0] / hx + 1.0) * 0.5 * pixels[0] as f64) as usize)
                     .min(pixels[0] - 1);
@@ -253,8 +264,10 @@ pub(super) fn trace_one<const SEQUENTIAL: bool, const CACHED: bool>(
                     reflectance
                 };
                 let mut result = if CACHED {
-                    let (steps, lane) = packet.expect("cached packet");
-                    steps[index][lane].interface.expect("cached dielectric")
+                    let (steps, lane) = packet.ok_or_else(missing_packet)?;
+                    steps[index][lane].interface.ok_or_else(|| {
+                        crate::Error::Internal("キャッシュされた誘電体界面がありません".into())
+                    })?
                 } else {
                     dielectric_with_reflectance(
                         ray.direction,
@@ -354,4 +367,5 @@ pub(super) fn trace_one<const SEQUENTIAL: bool, const CACHED: bool>(
             }
         }
     }
+    Ok(())
 }

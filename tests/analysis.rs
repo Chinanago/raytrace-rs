@@ -1,6 +1,8 @@
 //! The analysis registry: `analysis.budget` and `analysis.screen` work on the latest
 //! calculation record of the session or on a record given as `run`, and their numbers are the
 //! ones the pipeline and the screen post-processing compute from the same record.
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[path = "support/cli.rs"]
 mod cli_support;
 use raytrace_rs::{

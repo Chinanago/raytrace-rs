@@ -145,7 +145,7 @@ impl SurfaceIndex {
                     (bounds.max.0[a] - bounds.min.0[a])
                         .total_cmp(&(bounds.max.0[b] - bounds.min.0[b]))
                 })
-                .unwrap();
+                .unwrap_or(0);
             let mid = (start + end) / 2;
             self.order[start..end].select_nth_unstable_by(mid - start, |&a, &b| {
                 let centre =

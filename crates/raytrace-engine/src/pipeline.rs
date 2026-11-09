@@ -251,7 +251,7 @@ pub fn trace_once(
     control: &TraceControl,
 ) -> Result<Completion<Report>> {
     let report = match launch.rays() {
-        Some(rays) => trace_controlled(scene, rays, options, control),
+        Some(rays) => trace_controlled(scene, rays, options, control)?,
         None => trace_generated_controlled(scene, options, control)?,
     };
     Ok(report.map_or(Completion::Cancelled, Completion::Done))

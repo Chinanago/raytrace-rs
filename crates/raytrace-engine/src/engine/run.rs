@@ -382,7 +382,9 @@ fn preview_paths(
                 let ray = generator
                     .rays(offset + layer..offset + layer + 1)
                     .next()
-                    .expect("the range holds one ray")?;
+                    .ok_or_else(|| {
+                        raytrace_core::Error::Internal("プレビューの光線を生成できません".into())
+                    })??;
                 preview.push(Ray {
                     id: preview.len() as u64,
                     ..ray

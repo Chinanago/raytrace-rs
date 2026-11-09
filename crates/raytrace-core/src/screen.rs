@@ -132,8 +132,7 @@ impl ScreenAnalysis {
             let (i, &peak) = weights
                 .iter()
                 .enumerate()
-                .max_by(|a, b| a.1.total_cmp(b.1).then_with(|| b.0.cmp(&a.0)))
-                .unwrap();
+                .max_by(|a, b| a.1.total_cmp(b.1).then_with(|| b.0.cmp(&a.0)))?;
             (peak > 0.).then(|| Profile::new(weights, half, i, peak))
         };
         let (x_profile, y_profile) = if let Some([x, y]) = selected {

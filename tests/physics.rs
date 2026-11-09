@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::geometry::{dielectric, intersect, sag};
 use raytrace_rs::math::{Frame, Pose, V3};
 use raytrace_rs::model::{Material, Mode, PreparedScene, Ray, Scene};
@@ -77,7 +79,7 @@ fn oblique_plate_matches_analytic_position_and_optical_path() {
     let a = 25f64.to_radians();
     let mut r = ray();
     r.direction = V3([a.sin(), 0.0, a.cos()]);
-    let report = trace(&s, &[r], terminals());
+    let report = trace(&s, &[r], terminals()).unwrap();
     let hit = report
         .terminals
         .iter()
@@ -104,7 +106,7 @@ fn nonsequential_slab_sums_infinite_internal_reflection_series() {
         serde_json::from_str(include_str!("../examples/nonsequential_slab.json")).unwrap();
     spec.sources.clear();
     let s = spec.prepare().unwrap();
-    let report = trace(&s, &[ray()], terminals());
+    let report = trace(&s, &[ray()], terminals()).unwrap();
     let forward = report
         .detectors
         .iter()
@@ -132,7 +134,8 @@ fn nonsequential_slab_sums_infinite_internal_reflection_series() {
         &reversed.prepare().unwrap(),
         &[ray()],
         TraceOptions::default(),
-    );
+    )
+    .unwrap();
     near(again.budget.detected, report.budget.detected, 1e-13);
 }
 
@@ -146,7 +149,7 @@ fn sequential_primary_plate_and_reflection_budget() {
             detector("sensor", 2.0),
         ],
     );
-    let report = trace(&s, &[ray()], TraceOptions::default());
+    let report = trace(&s, &[ray()], TraceOptions::default()).unwrap();
     near(report.budget.detected, 0.96 * 0.96, 1e-14);
     near(
         report.budget.sequential_reflection_not_followed,
@@ -171,7 +174,7 @@ fn absorption_and_trace_limit_preserve_budget() {
         n: 1.5,
         absorption_per_mm: 0.1,
     };
-    let report = trace(&spec.prepare().unwrap(), &[ray()], TraceOptions::default());
+    let report = trace(&spec.prepare().unwrap(), &[ray()], TraceOptions::default()).unwrap();
     near(
         report.budget.detected,
         0.96f64.powi(2) * (-0.5f64).exp(),
@@ -189,7 +192,7 @@ fn absorption_and_trace_limit_preserve_budget() {
     spec.settings.max_events_per_launch = 7;
     let mut r = ray();
     r.position_mm.0[2] = 1.0;
-    let report = trace(&spec.prepare().unwrap(), &[r], TraceOptions::default());
+    let report = trace(&spec.prepare().unwrap(), &[r], TraceOptions::default()).unwrap();
     near(report.budget.interaction_limit, 1.0, 1e-14);
     assert_eq!(report.surface_intersections, 7);
 }
@@ -201,7 +204,7 @@ fn tilted_mirror_is_identical_in_both_modes() {
     let r = ray();
     for mode in [Mode::Sequential, Mode::NonSequential] {
         spec.mode = mode;
-        let report = trace(&spec.clone().prepare().unwrap(), &[r], terminals());
+        let report = trace(&spec.clone().prepare().unwrap(), &[r], terminals()).unwrap();
         near(report.budget.detected, 0.98, 1e-13);
         let hit = report
             .terminals
@@ -251,9 +254,9 @@ fn dispersive_lens_changes_ray_position_and_fresnel_weight() {
         let mut r = ray();
         r.position_mm = V3([3.0, 0.0, 0.0]);
         r.wavelength_um = 0.45;
-        let blue = trace(&s, &[r], terminals());
+        let blue = trace(&s, &[r], terminals()).unwrap();
         r.wavelength_um = 0.635;
-        let red = trace(&s, &[r], terminals());
+        let red = trace(&s, &[r], terminals()).unwrap();
         let blue_hit = blue
             .terminals
             .iter()
@@ -293,7 +296,8 @@ fn asphere_intersection_obeys_sag_and_backward_rays_miss() {
             ..ray()
         }],
         TraceOptions::default(),
-    );
+    )
+    .unwrap();
     near(missed.budget.geometric_miss, 1.0, 1e-14);
 }
 
@@ -313,7 +317,8 @@ fn frame_inverse_and_detector_edge() {
             ..ray()
         }],
         TraceOptions::default(),
-    );
+    )
+    .unwrap();
     near(report.detectors[0].weights[15], 1.0, 1e-14);
 }
 
@@ -416,7 +421,7 @@ fn monotone_grazing_asphere_finishes_when_the_root_bracket_reaches_precision() {
 #[test]
 fn wrong_medium_is_reported_and_invalid_configuration_is_rejected() {
     let s = scene(Mode::Sequential, vec![plane("glass", 0.0, glass(0, 1))]);
-    let report = trace(&s, &[Ray { medium: 1, ..ray() }], TraceOptions::default());
+    let report = trace(&s, &[Ray { medium: 1, ..ray() }], TraceOptions::default()).unwrap();
     near(report.budget.medium_mismatch, 1.0, 1e-14);
     let mut spec = s.spec;
     spec.settings.max_depth = 0;
@@ -436,12 +441,12 @@ fn nsc_event_allowance_resolves_strong_reflections_before_weak_descendants() {
         ],
     );
     prepared.spec.settings.max_events_per_launch = 8;
-    let limited = trace(&prepared, &[ray()], terminals());
+    let limited = trace(&prepared, &[ray()], terminals()).unwrap();
     assert!(limited.budget.detected >= 0.875);
     assert!(limited.budget.interaction_limit <= 0.125);
     near(limited.budget.accounted(), 1., 1e-14);
     prepared.spec.settings.max_events_per_launch = 256;
-    let complete = trace(&prepared, &[ray()], terminals());
+    let complete = trace(&prepared, &[ray()], terminals()).unwrap();
     near(complete.budget.detected, 1., 1e-12);
     near(
         complete.detectors[0].weights.iter().sum::<f64>(),
@@ -476,7 +481,7 @@ fn interpolated_mesh_normals_preserve_the_geometric_boundary_side() {
             direction: V3([1., 0., -0.3]).unit(),
             ..ray()
         };
-        let report = trace(&s, &[r], terminals());
+        let report = trace(&s, &[r], terminals()).unwrap();
         assert_eq!(report.budget.medium_mismatch, 0.);
         assert_eq!(report.budget.numerical_failure, 0.);
         assert!(report.surfaces[0].normal_fallbacks > 0);
@@ -510,7 +515,7 @@ fn dispersive_rod_matches_unfolded_path_and_wavelength_dependent_optical_length(
         } else {
             -1.0
         };
-        let report = trace(&s, &[r], terminals());
+        let report = trace(&s, &[r], terminals()).unwrap();
         let forward = s
             .surfaces
             .iter()
@@ -578,7 +583,7 @@ fn thread_count_preserves_results_and_sampling() {
             .num_threads(n)
             .build()
             .unwrap()
-            .install(|| trace(&scene, &rays, TraceOptions::default()))
+            .install(|| trace(&scene, &rays, TraceOptions::default()).unwrap())
     };
     let one = run(1);
     let four = run(4);
@@ -630,13 +635,13 @@ fn farther_numerical_asphere_does_not_discard_nearer_detector() {
         intersect(&s.surfaces[1], r.position_mm, r.direction),
         Err(raytrace_rs::geometry::Miss::Numerical)
     ));
-    let report = trace(&s, &[r], terminals());
+    let report = trace(&s, &[r], terminals()).unwrap();
     near(report.detectors[0].weights.iter().sum(), 1., 1e-14);
     assert_eq!(report.budget.numerical_failure, 0.);
     // Without the nearer detector, the unresolved search still terminates the ray.
     let mut spec = s.spec;
     spec.surfaces.remove(0);
-    let report = trace(&spec.prepare().unwrap(), &[r], terminals());
+    let report = trace(&spec.prepare().unwrap(), &[r], terminals()).unwrap();
     near(report.budget.numerical_failure, 1., 1e-14);
     assert_eq!(report.diagnostics[0].reason, "numerical_failure");
 }
@@ -651,7 +656,7 @@ fn sequential_tir_terminates_inside_glass_and_closes_budget() {
         Mode::Sequential,
         vec![front, exit, plane("next", -2., glass(1, 0))],
     );
-    let report = trace(&s, &[ray()], terminals());
+    let report = trace(&s, &[ray()], terminals()).unwrap();
     near(report.budget.sequential_tir, 1., 1e-14);
     assert_eq!(report.total_internal_reflections, 1);
     assert_eq!(report.budget.medium_mismatch, 0.);
@@ -679,7 +684,8 @@ fn path_launch_count_selects_input_order_with_arbitrary_ids() {
             path_launch_count: 1,
             ..TraceOptions::default()
         },
-    );
+    )
+    .unwrap();
     assert_eq!(report.paths.len(), 1);
     assert_eq!(report.paths[0].id, 1000);
 }
@@ -698,6 +704,6 @@ fn tiny_closed_mesh_intersects_at_oblique_incidence() {
     };
     let h = intersect(&s.surfaces[0], r.position_mm, r.direction).unwrap();
     near(h.distance_mm, 1e-3, 1e-14);
-    let report = trace(&s, &[r], TraceOptions::default());
+    let report = trace(&s, &[r], TraceOptions::default()).unwrap();
     near(report.budget.surface_absorbed, 1., 1e-14);
 }

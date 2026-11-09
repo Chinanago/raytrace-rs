@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     design::{self, Component, Design, Part, PartKind},
     math::{Frame, Pose, V3},
@@ -62,7 +64,7 @@ fn finite_objects_fill_the_bound_pupil_and_preserve_field_weights_after_composit
         assert!(hit.0[0].hypot(hit.0[1]) < 2.);
         assert!(r.direction.0[2] > 0.);
     }
-    let report = trace(&prepared, &rays, TraceOptions::default());
+    let report = trace(&prepared, &rays, TraceOptions::default()).unwrap();
     assert!((report.budget.detected - 1.).abs() < 1e-12);
     let mut c = Component::imported(p.clone(), PartKind::System).unwrap();
     c.occurrence.pose = Pose {
@@ -199,7 +201,7 @@ fn folded_native_mirror_then_glass_preserves_negative_gaps_and_optical_path() {
         keep_terminals: true,
         ..TraceOptions::default()
     };
-    let r = trace(&prepared, &rays, options);
+    let r = trace(&prepared, &rays, options).unwrap();
     assert!((r.budget.detected - 0.9216).abs() < 1e-12);
     assert!(
         (r.terminals
@@ -217,7 +219,7 @@ fn folded_native_mirror_then_glass_preserves_negative_gaps_and_optical_path() {
     let q = zemax::read_zmx(&out, &[]).unwrap();
     let prepared = q.trace_scene().unwrap().prepare().unwrap();
     let rays = prepared.generate_rays().unwrap();
-    let after = trace(&prepared, &rays, options);
+    let after = trace(&prepared, &rays, options).unwrap();
     assert!((after.budget.detected - r.budget.detected).abs() < 1e-12);
     assert!(after.budget.medium_mismatch < 1e-12);
 }

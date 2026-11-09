@@ -1,3 +1,5 @@
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 use raytrace_rs::{
     design::{self, Design, Part},
     model::{Material, Scene},
@@ -78,7 +80,7 @@ fn spectral_sobol_matches_power_weights_without_position_correlation_and_replays
         serde_json::to_value(context.rays().unwrap()).unwrap(),
         serde_json::to_value(&rays).unwrap()
     );
-    let result = trace(&prepared, &rays, TraceOptions::default());
+    let result = trace(&prepared, &rays, TraceOptions::default()).unwrap();
     near(result.budget.detected, 4.);
     let mut overridden = p;
     overridden.conditions.monochromatic_override_um = Some(0.55);

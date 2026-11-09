@@ -440,7 +440,10 @@ impl PreparedPupil {
         Err(crate::Error::InvalidScene("STOPがありません".into()))
     }
     pub(crate) fn launch(&self, source: &Source, wavelength: f64, u: [f64; 2]) -> Result<(V3, V3)> {
-        let p = source.pupil.as_ref().unwrap();
+        let p = source
+            .pupil
+            .as_ref()
+            .ok_or_else(|| crate::Error::Internal("光源に瞳の設定がありません".into()))?;
         let phi = std::f64::consts::TAU * u[1];
         let r = u[0].sqrt();
         let xy = p.vignetting.transform([r * phi.cos(), r * phi.sin()]);

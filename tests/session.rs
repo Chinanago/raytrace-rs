@@ -1,5 +1,7 @@
 //! The session and the command registry: revisions, undo and redo, `doc.set`, one-shot use of
 //! `model`, schemas from the registry and a stream of requests sharing one session.
+// Tests and examples may panic on failure; the no-panic rule (DESIGN.md P8) covers product code.
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #[path = "support/cli.rs"]
 mod cli_support;
 use raytrace_rs::{
