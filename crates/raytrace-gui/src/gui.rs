@@ -275,7 +275,14 @@ impl App {
         app
     }
     fn demo() -> Self {
-        Self::with_design(design::demo_design().expect("assembly demo"))
+        match design::demo_design() {
+            Ok(design) => Self::with_design(design),
+            Err(e) => {
+                let mut app = Self::with_design(Design::empty());
+                app.error = Some(format!("サンプルを開けません: {e}"));
+                app
+            }
+        }
     }
     fn with_design(design: Design) -> Self {
         let mut app = Self {
@@ -428,22 +435,22 @@ impl App {
                 "scan_cases":self.study.manifest.as_ref().map(|m|&m.cases),
                 "comparison_screens":self.study.comparisons.len(),
             });
-            let _ = std::fs::write(
-                dir.join("gui_smoke.json"),
-                serde_json::to_vec_pretty(&status).unwrap(),
-            );
+            if let Ok(bytes) = serde_json::to_vec_pretty(&status) {
+                let _ = std::fs::write(dir.join("gui_smoke.json"), bytes);
+            }
             let path = dir.join("gui.png");
             let context = ctx.clone();
             ctx.request_screenshot(move |image| {
                 let bytes: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_array()).collect();
-                image::save_buffer(
+                if let Err(e) = image::save_buffer(
                     path,
                     &bytes,
                     image.width() as u32,
                     image.height() as u32,
                     image::ColorType::Rgba8,
-                )
-                .expect("save smoke screenshot");
+                ) {
+                    eprintln!("スモークテストのスクリーンショットを保存できません: {e}");
+                }
                 context.send_viewport_cmd(egui::ViewportCommand::Close);
             });
             self.screenshot_requested = true;

@@ -150,15 +150,17 @@ impl App {
                                         egui::TextureOptions::NEAREST,
                                     ));
                                 }
-                                draw_detector_map(
-                                    ui,
-                                    &c.map,
-                                    &c.analysis,
-                                    c.texture.as_ref().unwrap(),
-                                    c.reference,
-                                    330.0,
-                                    &display,
-                                );
+                                if let Some(texture) = c.texture.as_ref() {
+                                    draw_detector_map(
+                                        ui,
+                                        &c.map,
+                                        &c.analysis,
+                                        texture,
+                                        c.reference,
+                                        330.0,
+                                        &display,
+                                    );
+                                }
                                 for (axis, profile, extent) in [
                                     ("X", c.analysis.x_slice.as_ref(), c.map.half_extent_mm[0]),
                                     ("Y", c.analysis.y_slice.as_ref(), c.map.half_extent_mm[1]),

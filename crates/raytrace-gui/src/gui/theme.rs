@@ -291,26 +291,23 @@ pub fn install(ctx: &egui::Context) {
             .font_data
             .insert(name.into(), egui::FontData::from_static(bytes).into());
     }
-    let mut defaults = fonts.families[&FontFamily::Proportional].clone();
+    let mut defaults = fonts
+        .families
+        .get(&FontFamily::Proportional)
+        .cloned()
+        .unwrap_or_default();
     // Undo/redo arrows are in egui's bundled Hack, but not its proportional list.
     defaults.push("Hack".into());
     let mut bold = vec!["Noto Sans JP Bold".into(), "Noto Sans JP".into()];
     bold.extend(defaults);
     fonts.families.insert(FontFamily::Name("bold".into()), bold);
+    let proportional = fonts.families.entry(FontFamily::Proportional).or_default();
+    proportional.insert(0, "Noto Sans JP".into());
+    proportional.push("Hack".into());
     fonts
         .families
-        .get_mut(&FontFamily::Proportional)
-        .unwrap()
-        .insert(0, "Noto Sans JP".into());
-    fonts
-        .families
-        .get_mut(&FontFamily::Proportional)
-        .unwrap()
-        .push("Hack".into());
-    fonts
-        .families
-        .get_mut(&FontFamily::Monospace)
-        .unwrap()
+        .entry(FontFamily::Monospace)
+        .or_default()
         .splice(0..0, ["Noto Sans Mono".into(), "Noto Sans JP".into()]);
     ctx.set_fonts(fonts);
 

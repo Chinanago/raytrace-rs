@@ -162,14 +162,17 @@ impl App {
                 .add_filter("Raytrace calculation", &["json"])
                 .save_file()
             {
-                let record = self.result.as_ref().unwrap().record(false);
-                let request = SaveRunRequest {
-                    record: Box::new(record),
-                    output: path,
-                };
-                match Session::new().run(commands::RUN_SAVE, request) {
-                    Ok(_) => self.status = "計算時の条件と結果を保存しました".into(),
-                    Err(e) => self.error = Some(e.to_string()),
+                if let Some(record) = self.result.as_ref().map(|r| r.record(false)) {
+                    let request = SaveRunRequest {
+                        record: Box::new(record),
+                        output: path,
+                    };
+                    match Session::new().run(commands::RUN_SAVE, request) {
+                        Ok(_) => self.status = "計算時の条件と結果を保存しました".into(),
+                        Err(e) => self.error = Some(e.to_string()),
+                    }
+                } else {
+                    self.error = Some("保存できる計算結果がありません".into());
                 }
             }
         }
@@ -222,8 +225,13 @@ impl App {
         ui.separator();
         ui.menu_button("サンプルを開く", |ui| {
             if ui.button("光源＋レンズ＋ロッド").clicked() {
-                self.replace_design(Some(design::demo_design().expect("assembly demo")), None, 2);
-                self.run(ctx);
+                match design::demo_design() {
+                    Ok(design) => {
+                        self.replace_design(Some(design), None, 2);
+                        self.run(ctx);
+                    }
+                    Err(e) => self.error = Some(format!("サンプルを開けません: {e}")),
+                }
                 ui.close();
             }
             for (name, text) in [
@@ -241,12 +249,13 @@ impl App {
                 ),
             ] {
                 if ui.button(name).clicked() {
-                    self.replace_design(
-                        Some(Design::from_scene(serde_json::from_str(text).unwrap())),
-                        None,
-                        0,
-                    );
-                    self.run(ctx);
+                    match serde_json::from_str(text) {
+                        Ok(scene) => {
+                            self.replace_design(Some(Design::from_scene(scene)), None, 0);
+                            self.run(ctx);
+                        }
+                        Err(e) => self.error = Some(format!("サンプルを開けません: {e}")),
+                    }
                     ui.close();
                 }
             }

@@ -278,7 +278,9 @@ fn draw_detector(
         }
     }
     let map = &result.record.report.detectors[index];
-    let analysis = result.screen.as_ref().unwrap();
+    let Some(analysis) = result.screen.as_ref() else {
+        return;
+    };
     let peak = analysis.peak_weight;
     let reference = result.record.report.budget.launched.max(1e-300);
     let maximum = display.maximum_weight(peak, reference);
@@ -296,7 +298,9 @@ fn draw_detector(
             egui::TextureOptions::NEAREST,
         ));
     }
-    let texture = result.texture.as_ref().unwrap();
+    let Some(texture) = result.texture.as_ref() else {
+        return;
+    };
     if display.profiles {
         ui.columns(2, |cols| {
             draw_detector_map(
@@ -335,8 +339,9 @@ fn draw_detector(
                 .and_then(|analysis| analysis.roi.ok_or_else(|| "ROIの積分がありません".into()));
             result.roi_cache = Some((roi, integral));
         }
-        match &result.roi_cache.as_ref().unwrap().1 {
-            Ok(r) => {
+        match result.roi_cache.as_ref().map(|(_, integral)| integral) {
+            None => (),
+            Some(Ok(r)) => {
                 ui.label(format!(
                     "ROI {:.2}% · 面積 {:.4} mm² · 平均 {:.2} %/mm²",
                     r.percent_of_reference, r.area_mm2, r.percent_of_reference_per_mm2
@@ -345,7 +350,7 @@ fn draw_detector(
                     r.percent_of_reference, r.percent_of_reference_per_mm2
                 ));
             }
-            Err(e) => {
+            Some(Err(e)) => {
                 ui.label(e);
             }
         }
