@@ -4,8 +4,11 @@ name: Release assets
 # uploaded twice: with the version in its name and under a fixed name, so that
 # https://github.com/Chinanago/raytrace-rs/releases/latest/download/<fixed name> always
 # resolves to the newest release. Every file also gets a `<file>.sha256` next to it
-# (`<hex>  <filename>`), which install.sh and install.ps1 verify. Release notes stay manual;
-# reruns replace the files.
+# (`<hex>  <filename>`), which install.sh and install.ps1 verify. Reruns replace the files.
+#
+# Run by hand with an existing tag, it first publishes the release (title and notes from the
+# version's CHANGELOG.md section) when the tag has none yet. A release that already exists
+# is left as it is.
 #
 #   raytrace-rs-<version>-windows-x64.zip   raytrace-rs-windows-x64.zip
 #   raytrace-rs-<version>-windows.mcpb      raytrace-rs-windows.mcpb
@@ -18,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing release tag, for example v0.12.0
+        description: Existing tag, for example v0.12.0 (the release is created when missing)
         required: true
 
 permissions:
@@ -28,7 +31,44 @@ env:
   TAG: ${{ github.event.release.tag_name || inputs.tag }}
 
 jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ env.TAG }}
+          persist-credentials: false
+      - name: Publish the release when the tag has none
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")
+          if [ "$TAG" != "v$version" ]; then
+            echo "Tag $TAG does not match the workspace version $version" >&2
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+            exit 0
+          fi
+          awk -v v="$version" '
+            index($0, "## " v) == 1 { on = 1; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "CHANGELOG.md has no section for $version" >&2
+            exit 1
+          fi
+          heading=$(grep -m1 "^## $version" CHANGELOG.md | sed 's/^## //')
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "raytrace-rs $heading" --notes-file notes.md
+
   windows:
+    needs: release
     runs-on: windows-2025
     timeout-minutes: 60
     permissions:
@@ -84,6 +124,7 @@ jobs:
           gh release upload "$TAG" "${upload[@]}" --clobber --repo "$GITHUB_REPOSITORY"
 
   macos:
+    needs: release
     runs-on: macos-15
     timeout-minutes: 60
     permissions:
@@ -129,6 +170,7 @@ jobs:
           gh release upload "$TAG" "${upload[@]}" --clobber --repo "$GITHUB_REPOSITORY"
 
   linux:
+    needs: release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
