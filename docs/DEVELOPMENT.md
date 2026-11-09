@@ -39,31 +39,73 @@ cargo install cargo-deny --version 0.20.2 --locked
 cargo deny --workspace check
 ```
 
-## Windows配布ZIPを作成する
+## 配布物の作成
 
-配布用ZIPは `python scripts/package_windows.py` で作成できます。ビルド済みの場合は `--no-build` を指定します。実行ファイル・サンプル・操作説明・ライセンスを同梱し、`package.json` に版とSHA-256を記録します。
+配布物は3つのOSと、Claude Desktop用の拡張（MCPB）です。版は `Cargo.toml` の `[workspace.package] version` から取り、ファイル名に入ります。リリースごとに `CHANGELOG.md` を更新します。ベータの間は後方互換性を保ちません。
 
-README、機能一覧、操作ガイド、開発と検証の文書もZIPに同梱します。
+| 配布物 | スクリプト | ファイル名（版付き） |
+|---|---|---|
+| Windows ZIP | `scripts/package_windows.py`、確認は `scripts/check_portable.py` | `raytrace-rs-<版>-windows-x64.zip` |
+| macOS | `scripts/package_macos.py` | `raytrace-rs-<版>-macos.tar.gz` |
+| Linux（CLIのみ） | `scripts/package_linux.py` | `raytrace-rs-<版>-linux-x64.tar.gz` |
+| Claude Desktop拡張 | `scripts/package_mcpb.py` | `raytrace-rs-<版>-windows.mcpb`・`raytrace-rs-<版>-macos.mcpb` |
+
+スクリプトは標準ライブラリだけで動き、出力先は既定で `results/packages` です。ビルド済みの場合は `--no-build` を指定します。展開後のスモークテスト（バージョン、4サンプルの追跡、再計算、JSONリクエスト、PNG出力、MCPセッション）は `scripts/smoke.py` にまとめ、LinuxとmacOSの作成スクリプトとWindowsの `check_portable.py` が共有します。
+
+### Windows配布ZIP
+
+`python scripts/package_windows.py` で作成します。実行ファイル・サンプル・操作説明・変更履歴・ライセンスを同梱し、`package.json` に版とSHA-256を記録します。
 
 ```powershell
 python scripts/package_windows.py
-python scripts/check_portable.py results/packages/raytrace-rs-0.11.0-windows-x64.zip
+python scripts/check_portable.py results/packages/raytrace-rs-0.12.0-windows-x64.zip
 ```
 
-## Linux版CLIを作成する
+### macOS版
 
-Linux版は静的リンクしたCLIだけを配布します。muslターゲットで依存ライブラリなしにビルドし、サンプル・スキーマ・文書・CLIの依存ライブラリのライセンスと一緒に `raytrace-rs-<版>-linux-x64.tar.gz` へまとめます。作成後に空のフォルダーへ展開し、4サンプルの追跡・再計算・JSONリクエスト・PNG出力を確認します。
+`python3 scripts/package_macos.py` は、macOS上で `raytrace-rs`（CLI）と `raytrace-gui` を `aarch64-apple-darwin` と `x86_64-apple-darwin` の両方で `--release --locked` ビルドし、`lipo -create` でユニバーサルバイナリにまとめます（`lipo -info` で両方のアーキテクチャーを確認し、`codesign` でアドホック署名します）。最低のmacOSは11.0です（`MACOSX_DEPLOYMENT_TARGET`）。実行ファイル2つ・文書・変更履歴・サンプル・スキーマ・`THIRD_PARTY_LICENSES.txt`（GUIのフォントを含む）・`package.json` を `raytrace-rs-<版>-macos/` に入れて固めます。
+
+```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+python3 scripts/package_macos.py
+```
+
+作成後に空のフォルダーへ展開し、4サンプルの追跡・再計算・JSONリクエスト・PNG出力に加えて、`raytrace-rs mcp` のセッション（`initialize`、`doc.open`、`analysis.trace`、`analysis.budget`）を確認します。アプリケーションバンドル（`.app`）は作らず、署名と公証もしていないため、ブラウザーで取得したファイルには `xattr -dr com.apple.quarantine` が必要になることがあります。一部の依存クレート（`objc2` 系）は公開パッケージにライセンスファイルを含まないため、`THIRD_PARTY_LICENSES.txt` にはパッケージ情報から作ったMITの表示を入れ、その旨を節に書きます。上流の本文に差し替えるときは `scripts/third_party_notices.toml` に追加します。
+
+### Claude Desktop拡張（MCPB）
+
+`python3 scripts/package_mcpb.py PLATFORM BINARY OUTPUT_DIR` は、`PLATFORM`（`macos` または `windows`）用の `raytrace-rs` を [MCPB](https://github.com/modelcontextprotocol/mcpb)（`manifest_version` 0.3）にまとめます。ZIPの直下に `manifest.json`、`server/raytrace-rs`（Windowsは `server/raytrace-rs.exe`）、`LICENSE` を置き、サーバーは `raytrace-rs mcp` で起動します。`compatibility.platforms` は `darwin` または `win32` です。`--check-server` を付けると、実行ファイルを起動して `tools/list` がマニフェストの `tools` と一致するか確認します（そのOSで実行できる場合のみ）。Claude Desktopで `.mcpb` を開くと導入できます。マニフェストの検証は `npx -y @anthropic-ai/mcpb validate manifest.json` でできます。
+
+### Linux版CLI
+
+Linux版は静的リンクしたCLIだけを配布します。muslターゲットで依存ライブラリなしにビルドし、サンプル・スキーマ・文書・CLIの依存ライブラリのライセンスと一緒に `raytrace-rs-<版>-linux-x64.tar.gz` へまとめます。作成後の確認はmacOS版と同じです。
 
 ```bash
 rustup target add x86_64-unknown-linux-musl
 python3 scripts/package_linux.py
 ```
 
-CIの `linux-core` ジョブはpushごとにこの確認を行い、アーカイブを成果物として保存します。リリースを公開すると `release.yml` がタグと版の一致を確かめ、版付きのファイルと、`releases/latest/download/raytrace-rs-linux-x64.tar.gz` で取得できる版なしのファイルを添付します。Windows版ZIPとリリースノートはこれまで通り手作業で用意します。muslの静的リンク版は、2026-11-08の計測でglibc版と同じ結果を出し、追跡時間の差は4%以内でした。
+muslの静的リンク版は、2026-11-08の計測でglibc版と同じ結果を出し、追跡時間の差は4%以内でした。
+
+### CIとリリース
+
+`.github/workflows/windows.yml`（表示名 Checks）は、pushごとにWindowsの `test-and-package`（整形・Clippy・全テスト・Windows ZIPとMCPBの作成と確認）、macOSの `macos`（全テスト、macOS版とMCPBの作成と確認）、Linuxの `linux-core`（層の検査、WASM、Linux版の作成と確認）を実行し、成果物を14日間保存します。GUIのテストは `egui::Context` をウィンドウなしで作るため、ディスプレイのないmacOSランナーでも動きます。
+
+リリースを公開すると `.github/workflows/release.yml` が動きます（既存のタグを指定した手動実行もできます）。WindowsとmacOSとLinuxのジョブが、タグと `Cargo.toml` の版の一致を確かめてからビルドと確認を行い、次のファイルを `gh release upload --clobber` で添付します。版なしの固定名は `releases/latest/download/<固定名>` で最新版を取得するためのものです。リリースノートは手作業で用意します。ファイルの追加は、書き込み権限（`contents: write`）を持つこれらのジョブだけが行います。
+
+| 版付き | 固定名 |
+|---|---|
+| `raytrace-rs-<版>-windows-x64.zip` | `raytrace-rs-windows-x64.zip` |
+| `raytrace-rs-<版>-windows.mcpb` | `raytrace-rs-windows.mcpb` |
+| `raytrace-rs-<版>-macos.tar.gz` | `raytrace-rs-macos.tar.gz` |
+| `raytrace-rs-<版>-macos.mcpb` | `raytrace-rs-macos.mcpb` |
+| `raytrace-rs-<版>-linux-x64.tar.gz` | `raytrace-rs-linux-x64.tar.gz` |
+
+版を上げるときは、`Cargo.toml` の `[workspace.package]` と `[workspace.dependencies]` の内部クレートの版を揃え、`cargo update -w` で `Cargo.lock` を更新し、`CHANGELOG.md` を書いてから、`v<版>` のタグでリリースを公開します。
 
 ## 自動テストと配布確認
 
-GitHubへのpushとPull Requestで、Windows上の整形・Clippy・全テスト・解析解／ZMX往復保存・配布ZIPの作成と確認を自動実行します。配布確認はWindows標準ディレクトリだけをPATHに残し、4サンプル、ZMX読込、配置編集、保存と元ファイル削除後の再計算を実行します。STEPは変換キャッシュを空にし、外部Pythonの参照先も使用できない状態で、ZMXから初回読込・配置・追跡・保存・再生を確認します。別PCでのGUIの対話操作は別途確認します。
+GitHubへのpushとPull Requestで、Windows上の整形・Clippy・全テスト・解析解／ZMX往復保存・配布ZIPの作成と確認を自動実行します（macOSとLinuxは上の「CIとリリース」を参照）。配布確認はWindows標準ディレクトリだけをPATHに残し、4サンプル、ZMX読込、配置編集、保存と元ファイル削除後の再計算を実行し、MCPサーバーのセッションも確認します。STEPは変換キャッシュを空にし、外部Pythonの参照先も使用できない状態で、ZMXから初回読込・配置・追跡・保存・再生を確認します。別PCでのGUIの対話操作は別途確認します。
 
 STEPの回帰テストは、自作6形状について従来の変換結果から固定した900本の光線で、交差有無・交点・法線を照合します。曲面の比較許容差は分割精度・入射角・曲率から求め、平面は丸め誤差の範囲で比較します。NURBS半球は独立した球の解析解でも検証します。穴、周期の継ぎ目、極、単位換算、配置、閉じた形状、分割精度の収束と再現性もテスト対象です。
 
