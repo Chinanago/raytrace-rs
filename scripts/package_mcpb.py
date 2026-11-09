@@ -55,8 +55,8 @@ def manifest(platform, version):
         "version": version,
         "description": "幾何光学のレイトレーサー。光学系を開いて編集し、光線追跡と光量分布の解析をAIから実行できます。",
         "long_description": (
-            "raytrace-rsは幾何光学の光線追跡ソフトウェアです。光源・レンズ・インテグレーターロッド・"
-            "スクリーンで照明系や結像系を組み立て、スクリーン上の光量分布と光量収支を求めます。"
+            "raytrace-rsは幾何光学の光線追跡ソフトウェアです。光学素子を配置して照明系や結像系を"
+            "組み立て、光線を追跡し、その結果を解析します。"
             ".zmx のレンズデータ、STEPの形状、JSONの光学系をインポートできます。\n\n"
             "この拡張は `raytrace-rs mcp` を起動し、Claudeから光学系の読込・編集（取り消し付き）・"
             "光線追跡・解析を行えるようにします。ツールは list_commands・describe_command・"
