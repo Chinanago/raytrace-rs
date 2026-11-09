@@ -111,7 +111,7 @@ muslの静的リンク版は、2026-11-08の計測でglibc版と同じ結果を�
 
 `.github/workflows/windows.yml`（表示名 Checks）は、pushごとにWindowsの `test-and-package`（整形・Clippy・全テスト・Windows ZIPとMCPBの作成と確認）、macOSの `macos`（全テスト、macOS版とMCPBの作成と確認）、Linuxの `linux-core`（層の検査、WASM、Linux版の作成と確認）を実行します。Windows・macOS・Linuxのジョブはそれぞれ、パッケージの作成と確認の後にインストールスクリプトの確認（`check_install.py`）も行い、成果物を14日間保存します。GUIのテストは `egui::Context` をウィンドウなしで作るため、ディスプレイのないmacOSランナーでも動きます。
 
-リリースを公開すると `.github/workflows/release.yml` が動きます（既存のタグを指定した手動実行もできます。そのタグにリリースがなければ、最初のジョブが `CHANGELOG.md` の該当版の節を本文にしてリリースを公開します）。WindowsとmacOSとLinuxのジョブが、タグと `Cargo.toml` の版の一致を確かめてからビルドと確認を行い、次のファイルと、それぞれの `.sha256` を `gh release upload --clobber` で添付します。版なしの固定名は `releases/latest/download/<固定名>` で最新版を取得するためのものです。リリースノートは `CHANGELOG.md` から作るか、手作業で用意します。ファイルの追加は、書き込み権限（`contents: write`）を持つこれらのジョブだけが行います。
+リリースを公開すると `.github/workflows/release.yml` が動きます（タグ名を指定した手動実行もできます。リリースがなければ、最初のジョブが `CHANGELOG.md` の該当版の節を本文にしてリリースを公開します。タグがなければ、実行したブランチの先頭に作ります）。WindowsとmacOSとLinuxのジョブが、タグと `Cargo.toml` の版の一致を確かめてからビルドと確認を行い、次のファイルと、それぞれの `.sha256` を `gh release upload --clobber` で添付します。版なしの固定名は `releases/latest/download/<固定名>` で最新版を取得するためのものです。リリースノートは `CHANGELOG.md` から作るか、手作業で用意します。ファイルの追加は、書き込み権限（`contents: write`）を持つこれらのジョブだけが行います。
 
 | 版付き | 固定名 |
 |---|---|
@@ -121,7 +121,7 @@ muslの静的リンク版は、2026-11-08の計測でglibc版と同じ結果を�
 | `raytrace-rs-<版>-macos.mcpb` | `raytrace-rs-macos.mcpb` |
 | `raytrace-rs-<版>-linux-x64.tar.gz` | `raytrace-rs-linux-x64.tar.gz` |
 
-版を上げるときは、`Cargo.toml` の `[workspace.package]` と `[workspace.dependencies]` の内部クレートの版を揃え、`cargo update -w` で `Cargo.lock` を更新し、`CHANGELOG.md` を書いてから、`v<版>` のタグでリリースを公開します（タグを押して `Release assets` を手動実行しても公開されます）。
+版を上げるときは、`Cargo.toml` の `[workspace.package]` と `[workspace.dependencies]` の内部クレートの版を揃え、`cargo update -w` で `Cargo.lock` を更新し、`CHANGELOG.md` を書いてから、`v<版>` のタグでリリースを公開します（`Release assets` をmainでタグ名を指定して手動実行すると、タグとリリースを作って公開します）。
 
 ## 自動テストと配布確認
 

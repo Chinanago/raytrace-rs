@@ -6,9 +6,9 @@ name: Release assets
 # resolves to the newest release. Every file also gets a `<file>.sha256` next to it
 # (`<hex>  <filename>`), which install.sh and install.ps1 verify. Reruns replace the files.
 #
-# Run by hand with an existing tag, it first publishes the release (title and notes from the
-# version's CHANGELOG.md section) when the tag has none yet. A release that already exists
-# is left as it is.
+# Run by hand with a tag name, it first publishes the release (title and notes from the
+# version's CHANGELOG.md section) when there is none, creating the tag on the chosen ref if
+# needed. A release that already exists is left as it is.
 #
 #   raytrace-rs-<version>-windows-x64.zip   raytrace-rs-windows-x64.zip
 #   raytrace-rs-<version>-windows.mcpb      raytrace-rs-windows.mcpb
@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag, for example v0.12.0 (the release is created when missing)
+        description: Release tag, for example v0.12.0 (a missing tag and release are created on the chosen ref)
         required: true
 
 permissions:
@@ -37,9 +37,10 @@ jobs:
     permissions:
       contents: write
     steps:
+      # The commit the run was started from: the tag's commit for a published release, the
+      # chosen branch or tag for a manual run.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ env.TAG }}
           persist-credentials: false
       - name: Publish the release when the tag has none
         env:
@@ -64,7 +65,13 @@ jobs:
             exit 1
           fi
           heading=$(grep -m1 "^## $version" CHANGELOG.md | sed 's/^## //')
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+          # A missing tag is created on the run's commit; an existing one must point at it.
+          tagged=$(gh api "repos/$GITHUB_REPOSITORY/commits/refs/tags/$TAG" --jq .sha 2>/dev/null || true)
+          if [ -n "$tagged" ] && [ "$tagged" != "$GITHUB_SHA" ]; then
+            echo "Tag $TAG points at $tagged, not at $GITHUB_SHA; run the workflow from the tag" >&2
+            exit 1
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "raytrace-rs $heading" --notes-file notes.md
 
   windows:
