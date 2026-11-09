@@ -13,7 +13,7 @@
       "license": "MIT",
       "homepage": "https://github.com/Chinanago/raytrace-rs",
       "repository": "https://github.com/Chinanago/raytrace-rs",
-      "keywords": ["optics", "raytracing", "zemax", "simulation"],
+      "keywords": ["optics", "raytracing", "zmx", "simulation"],
       "category": "science"
     }
   ]

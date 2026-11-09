@@ -1,8 +1,14 @@
 # raytrace-rs
 
-光源・レンズ・インテグレータロッドを並べて、光の通り道とスクリーン上の明るさの分布を計算するソフトです。Zemaxの `.zmx` をそのまま読み込めます。日本語のGUIとコマンドライン（CLI）があります。
+幾何光学の光線追跡ソフトウェアです。光源・レンズ・インテグレーターロッド・スクリーンで照明系や結像系を組み立て、光線を追跡して、スクリーン上の光量分布と光量収支を求めます。GUI・コマンドライン・AIエージェントのどれからでも、同じ計算を同じ結果で実行できます。
 
-> **ベータ版（0.12.0）です。** 動作確認を目的に公開しています。ベータの間は後方互換性がなく、コマンド・JSONの形式・保存ファイルを予告なく変えることがあります。変更点は[CHANGELOG](CHANGELOG.md)にあります。
+- シーケンシャル追跡と非シーケンシャル追跡（屈折・反射・コーティング・材料分散）
+- ZMX形式のレンズデータとSTEP形状の読み込み、ZMX形式への書き出し
+- 光量分布・断面・半値幅・光量収支の解析と、パラメーター走査・収束確認
+- 計算記録から同じ条件での再計算（入力と設定をすべて記録に残します）
+- コマンドと入出力をJSONスキーマで公開し、MCPサーバーからAIエージェントが操作可能
+
+> **ベータ版（0.12.0）です。** ベータの間は後方互換性がなく、コマンド・JSONの形式・保存ファイルを予告なく変えることがあります。変更点は[変更履歴](CHANGELOG.md)にあります。
 
 [最新版をダウンロード](https://github.com/Chinanago/raytrace-rs/releases/latest) · [AIから使う](docs/AI.md) · [操作ガイド](docs/GUIDE.md) · [機能と対応範囲](docs/FEATURES.md) · [変更履歴](CHANGELOG.md)
 
@@ -29,7 +35,7 @@ irm https://raw.githubusercontent.com/Chinanago/raytrace-rs/main/install.ps1 | i
 | Claude Desktop | `raytrace-rs-windows.mcpb` / `raytrace-rs-macos.mcpb` | MCPサーバーの拡張。開くとClaude Desktopに導入できる |
 | Linux（CLIのみ） | `raytrace-rs-linux-x64.tar.gz` | 依存ライブラリなしで動く静的リンク版 |
 
-**Windows**：ZIPを展開して「Raytraceを起動.cmd」を開くだけです。RustやOpticStudioは要りません。起動時にDLL不足と表示されたら、[Visual C++ x64ランタイム](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)を入れてください。
+**Windows**：ZIPを展開して「Raytraceを起動.cmd」を開くだけです。ほかに用意するものはありません。起動時にDLL不足と表示されたら、[Visual C++ x64ランタイム](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist)を入れてください。
 
 **macOS**：`tar xzf raytrace-rs-macos.tar.gz` で展開し、展開先で `./raytrace-gui`（GUI）または `./raytrace-rs`（CLI）を実行します。署名・公証をしていないため、ブラウザーで取得したファイルは初回に開けないことがあります。その場合は `xattr -dr com.apple.quarantine raytrace-rs-*-macos` で隔離属性を外してください。macOS 11以降が必要です。
 
@@ -66,7 +72,7 @@ Rustがあれば、どのOSでも `cargo install --git https://github.com/Chinan
 ./raytrace-rs.exe run.replay record.path=results/lens.json output=results/lens_replay.json
 ```
 
-`./raytrace-rs.exe --help` でコマンドの一覧、`./raytrace-rs.exe analysis.trace --help` で使えるフィールドと説明が出ます。どちらもコマンドのJSONスキーマから生成しているので、CLIに独自のオプションはありません。コマンドはドット区切りのIDだけで呼べます（以前の短い名前は使えません）。
+`./raytrace-rs.exe --help` でコマンドの一覧、`./raytrace-rs.exe analysis.trace --help` で使えるフィールドと説明が出ます。どちらもコマンドのJSONスキーマから生成しています。
 
 結果は標準出力に1行のJSONで返ります（`"ok"`・`"result"`、失敗時は `"error"`）。読みやすい表示は標準エラーに出ます。同じリクエストをJSONで渡すこともできます。
 

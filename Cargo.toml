@@ -38,7 +38,7 @@ rust-version.workspace = true
 repository.workspace = true
 description = "Experimental sequential and non-sequential geometric optical ray tracing"
 readme = "README.md"
-keywords = ["optics", "raytracing", "zemax"]
+keywords = ["optics", "raytracing", "zmx"]
 categories = ["science", "simulation"]
 
 [features]

@@ -55,9 +55,9 @@ def manifest(platform, version):
         "version": version,
         "description": "幾何光学のレイトレーサー。光学系を開いて編集し、光線追跡と光量分布の解析をAIから実行できます。",
         "long_description": (
-            "raytrace-rsは、光源・レンズ・インテグレータロッドを並べて光線を追跡し、"
-            "スクリーン上の明るさの分布と光量収支を計算する幾何光学のレイトレーサーです。"
-            "ZemaxのZMXファイルとJSONの光学系を読み込めます。\n\n"
+            "raytrace-rsは幾何光学の光線追跡ソフトウェアです。光源・レンズ・インテグレーターロッド・"
+            "スクリーンで照明系や結像系を組み立て、スクリーン上の光量分布と光量収支を求めます。"
+            "ZMX形式のレンズデータ、STEP形状、JSONの光学系を読み込めます。\n\n"
             "この拡張は `raytrace-rs mcp` を起動し、Claudeから光学系の読込・編集（取り消し付き）・"
             "光線追跡・解析を行えるようにします。ツールは list_commands・describe_command・"
             "execute・batch の4つで、コマンドは describe_command でスキーマを確認できます。"
@@ -70,7 +70,7 @@ def manifest(platform, version):
         "documentation": "https://github.com/Chinanago/raytrace-rs/blob/main/docs/GUIDE.md",
         "support": "https://github.com/Chinanago/raytrace-rs/issues",
         "license": "MIT",
-        "keywords": ["optics", "raytracing", "zemax", "simulation"],
+        "keywords": ["optics", "raytracing", "zmx", "simulation"],
         "server": {"type": "binary", "entry_point": f"server/{executable}", "mcp_config": mcp_config},
         "tools": TOOLS,
         "compatibility": {"platforms": [node]},
