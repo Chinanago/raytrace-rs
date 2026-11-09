@@ -184,6 +184,8 @@ fn a_session_over_stdio() {
             "describe_command",
             "doc.open",
             "doc.inspect",
+            "analysis.budget",
+            "analysis.screen",
         ] {
             assert!(instructions.contains(word), "{word}");
         }

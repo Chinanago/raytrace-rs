@@ -16,6 +16,8 @@ Run commands with execute (one command) or batch (several, in order, stopping at
 The server keeps one session with an open design: doc.open loads a JSON/ZMX/STEP design, doc.set and component.* edit it, \
 analysis.trace traces it when you omit `model`, and session.undo / session.redo step through the edits (session.log lists them). \
 Commands that take `model` use the session's design when it is omitted. \
+Typical workflow: doc.open, then doc.inspect for a ZMX, analysis.trace, then analysis.budget (power budget) and analysis.screen (screen distribution, FWHM, ROI), which read the latest trace. \
+Percentages are relative to the launched light (100 %); check the budget closure error and the unresolved share before trusting a result, and trace again when a result says `stale`. \
 Units are millimetres for lengths and micrometres for wavelengths. \
 A ZMX import may use features that cannot be traced: call doc.inspect and check `traceable` and the compatibility report before tracing. \
 Long calculations can be cancelled by the client; send a progressToken to receive progress.";

@@ -1,6 +1,6 @@
 interface:
   display_name: "raytrace-rs"
-  short_description: "Run raytrace-rs models, scans and saved calculations"
-  default_prompt: "Use $raytrace-rs to load the provided model, run the requested calculation and explain its output."
+  short_description: "Open, edit and trace optical designs; read screen distributions, power budgets and scans"
+  default_prompt: "Use $raytrace-rs to open the provided ZMX or design, check that it can be traced, run the calculation and explain the screen distribution and power budget."
 policy:
   allow_implicit_invocation: true

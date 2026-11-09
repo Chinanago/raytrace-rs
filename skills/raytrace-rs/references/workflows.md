@@ -1,147 +1,87 @@
-# Running raytrace-rs
+# raytrace-rs reference (0.12+)
 
-## Locate the application and documentation
+Commands, fields and result meanings. The schemas are the source of truth: `describe_command` over MCP, `raytrace-rs COMMAND --help` or `raytrace-rs command.describe id=COMMAND` on the CLI, `raytrace-rs schema.get name=NAME` (`request`, `response`, `scene`, `design`, `run`, `scan_plan`, `scan`, `convergence_plan`, `convergence`) for file formats. v0.11 used a different CLI (options such as `--inspect`); upgrade instead of mapping its options.
 
-1. Use the executable or installation explicitly selected by the user.
-2. Otherwise check `raytrace-rs` on PATH, an extracted Windows or Linux package, or the current raytrace-rs source checkout. On Linux without a package, newer releases provide `https://github.com/Chinanago/raytrace-rs/releases/latest/download/raytrace-rs-linux-x64.tar.gz` (static CLI), and `cargo install --git https://github.com/Chinanago/raytrace-rs --locked raytrace-cli` builds the CLI anywhere Rust is available. The release CLI is `raytrace-rs.exe`; a Windows source build places it in `target/release`. The GUI is `raytrace-gui.exe`.
-3. Check `--version` and `--help` before using version-specific arguments. The skill directory and application checkout can be separate.
+## Locate the application
 
-Upstream: [source](https://github.com/Chinanago/raytrace-rs), [Windows releases](https://github.com/Chinanago/raytrace-rs/releases).
+1. Use the executable the user names.
+2. Otherwise `raytrace-rs` on PATH, then the installer's location: `~/.local/bin/raytrace-rs` (macOS, Linux) or `%LOCALAPPDATA%\Programs\raytrace-rs\raytrace-rs.exe` (Windows). Examples, schemas and docs sit in `~/.local/share/raytrace-rs` (macOS, Linux) or beside the Windows executable.
+3. If it is missing, point the user to `docs/AI.md` (installer one-liners and Releases at `https://github.com/Chinanago/raytrace-rs/releases/latest`). Linux CLI: `raytrace-rs-linux-x64.tar.gz`; anywhere with Rust: `cargo install --git https://github.com/Chinanago/raytrace-rs --locked raytrace-cli`.
+4. Check `raytrace-rs --version` and `raytrace-rs --help` (lists all commands). MCP clients start the server as `raytrace-rs mcp` with the absolute path configured in the client.
 
-The baseline below is **v0.11.0**. For another installed version, use its matching documentation:
+Documentation next to the application (or upstream under `https://github.com/Chinanago/raytrace-rs/tree/main`): `docs/AI.md` (setup), `docs/GUIDE.md` (operations, plans, error codes), `docs/FEATURES.md` (supported physics and inputs), `examples/*.json` (four sample models), `schemas/*.schema.json`.
 
-| Need | Local documentation | v0.11.0 upstream copy |
-|---|---|---|
-| Physics, supported inputs and restrictions | `docs/FEATURES.md` | [Features](https://github.com/Chinanago/raytrace-rs/blob/v0.11.0/docs/FEATURES.md) |
-| Import, placement, sources, screens, scans, convergence and replay | `docs/GUIDE.md` | [Guide](https://github.com/Chinanago/raytrace-rs/blob/v0.11.0/docs/GUIDE.md) |
-| Build, test or modify the application | `docs/DEVELOPMENT.md` | [Development](https://github.com/Chinanago/raytrace-rs/blob/v0.11.0/docs/DEVELOPMENT.md) |
-| Model examples and exact schemas | `schemas/*.schema.json` (newer builds), `examples/*.json`, `crates/raytrace-doc/src/design.rs` (newer builds; older: `crates/raytrace-io/src/project.rs`, `crates/raytrace-io/src/assembly.rs`), `crates/raytrace-core/src/model.rs` | [Examples](https://github.com/Chinanago/raytrace-rs/tree/v0.11.0/examples) |
+## Calling commands
 
-The Windows ZIP runs without Rust or OpticStudio installed. If a source build is needed, run `cargo build --release --locked -p raytrace-cli` from the checkout for the CLI, or `cargo build --release --locked --workspace --bins` for CLI and GUI together. Windows is the verified distribution platform for v0.11.0.
+- MCP: `execute {"command": "analysis.trace", "params": {...}}`; `batch {"requests": [{"command": ..., "params": ...}], "stop_on_error": true}`; `list_commands` returns `{commands: [{id, kind, summary}]}` (`kind` is `query`, `mutation` or `job`); `describe_command {command}` returns `input_schema` and `output_schema`. A failed command comes back with `isError` and `error.code`/`error.message`. Long jobs (`job`) can be cancelled by the client (`error.code` `cancelled`) and report progress.
+- CLI: `raytrace-rs COMMAND field=text field:=JSON field:=@file.json`; dotted names reach nested fields (`overrides.rays_per_source:=1024`); unknown fields fail with `invalid_request`. Only dotted ids work (the pre-0.12 short names `trace`, `inspect`, `open`, ... fail with a hint). A single command line is a new session, so pass `model.path=...`. Stdin: `raytrace-rs run -` or `run FILE.json` executes `{"command": "<id>", ...fields}` lines in one session; the same MCP calls apply (`doc.open` first, later commands omit `model`).
+- Responses: `{"ok": true, "command", "revision": N, "result": {...}}` or `{"ok": false, ..., "error": {"code", "message"}}` (exit code 1 on the CLI). Human text and progress go to stderr.
+- `error.code` values: `io`, `invalid_json`, `invalid_request`, `usage`, `invalid_scene`, `invalid_ray`, `design`, `zmx`, `agf`, `step`, `plan`, `limit`, `cases_failed`, `cancelled`, `revision`, `no_document`, `no_run`, `history`. Messages are Japanese.
 
-## MCP server
+## Commands
 
-`raytrace-rs mcp` (builds with the session; check `raytrace-rs --help` for `mcp`) is an MCP server on stdio. It needs `raytrace-rs` on PATH to be registered: `claude mcp add raytrace-rs -- raytrace-rs mcp`, or `[mcp_servers.raytrace-rs] command = "raytrace-rs"` and `args = ["mcp"]` in `~/.codex/config.toml`; the Claude Code plugin ships the same registration in `.mcp.json`. When its tools are available, prefer them to the CLI:
+| Area | Commands |
+|---|---|
+| Document | `doc.new`, `doc.open {path}`, `doc.save`, `doc.get {path?}`, `doc.inspect`, `doc.export_zmx`, `doc.set {path, value}`, `doc.replace` |
+| Components | `component.add` (`path` + `kind` source / optic / system, or `kind` rod / detector), `component.remove {occurrence}`, `component.duplicate` |
+| Calculation | `analysis.trace`, `run.replay`, `run.open`, `run.save`, `run.export_screen` |
+| Analyses | `analysis.budget`, `analysis.screen` |
+| Studies | `study.scan`, `study.resume`, `study.convergence`, `study.open` |
+| Session | `session.undo`, `session.redo`, `session.status`, `session.log` |
+| Meta | `app.version`, `command.list`, `command.describe`, `schema.get` |
 
-- `list_commands` returns `{commands: [{id, kind, summary}]}`; `describe_command {command}` returns `input_schema` and `output_schema` for one command. Describe before using an unfamiliar command; the fields are exactly the CLI fields below.
-- `execute {command, params}` runs one command and returns the CLI response `{ok, command, revision, result | error}` as structured content; a failed command sets `isError`. `batch {requests: [{command, params}], stop_on_error}` runs several in order in the same session and returns `{ok, executed, requested, responses}`; it stops at the first failure by default.
-- The server has one session. `doc.open {path}`, then `doc.set`/`component.*`, `analysis.trace` without `model`, `session.undo`/`session.redo`, `session.log`. Calls run one at a time in order; a client can cancel one (the result has `error.code` `cancelled`) and may pass a progress token for progress. For a ZMX, run `doc.inspect` and check `traceable` before tracing.
+## Session and editing
+
+- `doc.open` makes a file the session document; commands that take `model` (`analysis.trace`, `doc.inspect`, `doc.export_zmx`, `study.scan`, ...) use it when `model` is omitted. `model` can also be `{"path"}`, `{"design": {...}}` or `{"scene": {...}}`.
+- A design (`raytrace-design-v1`) holds `parts` (what a thing is: a `system` with a `scene`, a rod, a detector, ...) and `occurrences` (placements, with a `pose`). Ids are stable (`rod-4`, `system-1`). A scene JSON opens as a design with one part. Read the structure with `doc.get {"path": "/occurrences"}`.
+- `doc.set {"path": "/occurrences/@rod-4/pose/translation_mm/2", "value": 12.5}` writes one value by JSON Pointer; array elements by index or `@<id>`. Typical paths: `/parts/@system-1/scene/surfaces/2/pose/translation_mm/2`, `/parts/0/scene/sources/0/count`. `component.remove {"occurrence": "rod-4"}` deletes a placement.
+- Changes take an optional `group`: consecutive changes with the same `group` become one undo step. `expected_revision` rejects a change if the document moved (`error.code` `revision`). A failed change leaves the document untouched. `session.undo` / `session.redo` step through the history (64 steps); `session.log` returns `{base, entries}` of committed `{command, params}`; `session.status` shows the revision and the latest run.
+- ZMX import: AGF catalogs are searched beside the ZMX, in the extra `catalogs` folders and the standard Zemax Glasscat folder; STEP files referenced by the ZMX are found beside it. Missing dependencies and unsupported definitions are reported by `doc.inspect`.
+
+## Calculation
+
+- `analysis.trace` fields: `model`, `output` (save the record), `overrides.mode|sampling|rays_per_source|wavelength_um|ignore_coatings`, `rays.csv` (explicit rays: `id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium`), `terminals:=true`, `paths:=N` (path segments of the first N rays), `threads`, `include_record`. Without `output` nothing is saved and only the summary returns. Omitted overrides keep the model's settings; default sampling is Sobol (best for power-of-two counts); `pseudorandom` is the alternative.
+- Summary: `launched_rays`, `detected_percent_of_reference`, `budget_percent_of_reference`, `detector_percent_of_reference` (by screen), `relative_budget_closure_error`, `warnings`.
+- Sequential mode follows the surface order (a ray that fails total internal reflection ends); non-sequential mode follows the nearest hit and splits Fresnel branches. Assemblies use non-sequential tracing.
+- `run.replay record.path=... output=...` repeats a saved record with its frozen optical conditions (threads and recording can change; source, geometry, wavelength and mode need a new `analysis.trace`). `run.export_screen record.path=... output=DIR` writes CSV and PNG of a screen.
+
+## Analyses
+
+`analysis.budget` and `analysis.screen` post-process a record, so trace first. Without `run` they use the latest record in the session (from `analysis.trace`, `run.replay` or `run.open`, only one is kept; `no_run` if none); `run` takes `{"path": ...}` or `{"record": {...}}`.
+
+- Every result has `run_revision` (the document revision that was traced; null for a given `run`) and `stale` (true once the document changed after the trace).
+- `analysis.budget`: `reference_weight`, `entries` (each with `weight` and `percent_of_reference`: `launched`, `detected`, `escaped`, `geometric_miss`, `bulk_absorbed`, `surface_absorbed`, `sequential_tir`, `sequential_reflection_not_followed`, `numerical_failure`, `medium_mismatch`, `branch_cutoff`, `interaction_limit`), `relative_budget_closure_error` = (accounted - launched) / launched, `unresolved_percent_of_reference` (numerical failure + medium mismatch + branch cutoff + interaction limit), `detectors` (received power per screen), `surfaces` (arrivals per surface, repeated encounters counted each time, so they are not a stage budget).
+- `analysis.screen` (`detector` index or name, `cursor_mm:=[x,y]`, `roi:={"minimum_mm":[x,y],"maximum_mm":[x,y]}`, `include_profiles:=true`): pixels and pitch, `received_percent_of_reference`, peak (weight, pixel, position), `x_slice` / `y_slice` with `fwhm_mm` (null if a crossing is missing), `lower_mm`, `upper_mm`, `multiple_lobes`, and the ROI integral (percent of reference, weight, area, mean).
+- The reference is the weight actually launched (for sequential ZMX, the corrected illumination region), not the source's total emission. Peak normalization in the GUI changes only the display.
+
+## Studies
+
+- `study.scan model.path=... plan:=@plan.json output=DIR` (new directory; at most 256 cases, 2 million rays per case). Plan: `{"parameter": {...}, "values": [...], "secondary": {"parameter": {...}, "values": [...]}, "links": [], "threads": 4, "rays_per_source": 4096}`; `rays_per_source: null` keeps the model. Parameter types: `component_position` / `component_rotation` (`occurrence`, `axis`), `rod_size` (`occurrence`, `axis`: width X, width Y, length), `surface_position` / `surface_rotation` (`surface` name, `axis`; add `occurrence` for a placed part's surface), `wavelength`. Axes 0/1/2 = X/Y/Z; units mm, degrees, µm. Links tie one parameter to another (`target = source * factor + offset`). `study.resume directory=DIR` continues unfinished cases; `study.open` reads `scan.json`; `include_manifest` returns the manifest.
+- `study.convergence model.path=... plan:=@plan.json output=DIR`: plan has `ray_counts`, `seeds`, `pixels`, `cad_deflections_mm` (needs the original STEP-referencing ZMX), `wavelength_um`, `allow_uncoated`; every combination is traced and compared.
+- Read ids first: `doc.inspect include_design:=true` or `doc.get`.
 
 ```text
-execute {"command": "doc.open", "params": {"path": "examples/integrator_rod.json"}}
-execute {"command": "doc.set", "params": {"path": "/parts/0/scene/sources/0/count", "value": 256}}
-execute {"command": "analysis.trace", "params": {"output": "results/rod.json"}}
+execute doc.open       {"path": "/abs/path/examples/integrator_rod.json"}
+execute analysis.trace {"overrides": {"rays_per_source": 4096}, "output": "/abs/path/results/rod.json"}
+execute analysis.budget
+execute analysis.screen {"cursor_mm": [0, 0], "roi": {"minimum_mm": [-1, -1], "maximum_mm": [1, 1]}}
+execute doc.set        {"path": "/parts/0/scene/sources/0/count", "value": 8192, "group": "rays"}
+execute session.undo
 ```
 
-Without MCP tools, use the CLI forms below.
-
-## Command forms by version
-
-Check `--help` first. v0.11.0 uses the options shown in the PowerShell examples below. Newer builds (`--help` lists commands such as `analysis.trace` and `run`) have no options of their own: every argument sets a field of a command's parameters, and the GUI calls the same commands. Builds with the session (`--help` lists ids such as `analysis.trace`) name commands `<area>.<action>`. Current builds accept only the dotted ids: the short names of earlier builds (`trace`, `inspect`, `replay`, `scan`, `resume_scan`, `convergence`, `open`, `save_design`, `save_run`, `export_zmx`, `export_screen`, `schema`, `version`) fail with `invalid_request` and a hint of similar ids (`open` became `doc.open` for designs, `run.open` for records and `study.open` for scan directories).
-
-- `raytrace-rs COMMAND field=text field:=JSON field:=@file.json`; dotted names reach nested fields (`overrides.rays_per_source:=1024`). `raytrace-rs COMMAND --help` lists that command's fields, types, defaults and descriptions, generated from the schema. Unknown fields fail with `invalid_request`.
-- `raytrace-rs run REQUEST.json` or `raytrace-rs run -` (stdin, several requests in a row) executes the same requests as JSON, `{"command": "<id>", ...parameters}`. `model` is `{"path": ...}`, `{"design": {...}}` or `{"scene": {...}}` (builds before the design document used `{"project": {...}}`); `include_record` returns the full calculation record in `result.record`.
-- A `run` stream is one session. `doc.open` opens a file as the session document; commands then run without `model`: `analysis.trace`, `doc.inspect`, `doc.export_zmx`, `study.scan`. Edit with `doc.set {"path": "/occurrences/@rod-4/pose/translation_mm/2", "value": 12.5}` (JSON Pointer into the design JSON; array elements by index or `@<id>`; read the ids and the structure with `doc.get {"path": "/occurrences"}`), `component.add` (`path`+`kind` source|optic|system, or `kind` rod|detector), `component.remove {"occurrence": "rod-4"}`, `component.duplicate`, `doc.replace`; `session.undo`/`session.redo` step through the history and `session.status` shows the revision. `doc.set`, `doc.replace` and `component.*` take an optional `group` string: changes with the same `group` in a row (nothing else in between) become one undo step, so related edits (add a rod, then place it) undo together. `session.log` returns `{base, entries}`, the `doc.open`/`doc.new` that started the document and the committed changes after it as `{command, params}` (undone changes are not listed); running them in a fresh session rebuilds the same document, and it shows what the GUI user did. The history keeps at most 64 undo steps (about 128 MiB). Every response has `revision`; pass `expected_revision` to a change to reject it if the document moved meanwhile (`error.code` `revision`). A failed change leaves the document alone. A single command line is a new session, so pass `model` there. `command.list` and `command.describe id=...` return the commands and their input/output schemas.
-- stdout carries exactly one JSON line per request: `{"ok": true, "command": ..., "revision": N, "result": {...}}` or `{"ok": false, "command": ..., "revision": N, "error": {"code": ..., "message": ...}}`. Exit code 1 on failure. Human text, warnings and scan progress go to stderr. Without `output`, `trace` and `replay` save nothing and return only the summary.
-- `raytrace-rs schema.get name=scene` returns a JSON Schema in `result.schema` (names: request, response, scene, design, run, scan_plan, scan, convergence_plan, convergence; builds before the design document call `design` `project`); `schema.get output=DIR` writes all of them. `request` and `response` list every command. The package's `schemas/` folder holds the same files. Prefer the schemas over source code when writing models, plans and requests.
-- Scan plans in builds with the design document name components by occurrence id and surfaces by name: `{"type": "component_position", "occurrence": "rod-4", "axis": 2}`, `{"type": "rod_size", "occurrence": "rod-4", "axis": 2}`, `{"type": "surface_position", "surface": "screen", "axis": 2}` (add `occurrence` to address a surface of a placed part). Read the ids from `doc.inspect ... include_design:=true` or the saved design JSON. Earlier builds used `component`/`surface` indices, and their scan records cannot be resumed.
-- `error.code` values are stable identifiers such as `io`, `invalid_json`, `invalid_request`, `usage`, `invalid_scene`, `invalid_ray`, `design` (newer builds), `zmx`, `agf`, `step`, `plan`, `limit`, `cases_failed`, `cancelled`, `revision`, `no_document` and `history`; `message` is Japanese.
-
-| v0.11.0 | Newer builds |
-|---|---|
-| `MODEL --output RUN.json` | `analysis.trace model.path=MODEL output=RUN.json` |
-| `--rays-per-source N`, `--sampling S`, `--mode M`, `--wavelength-um W`, `--ignore-coatings` | `overrides.rays_per_source:=N`, `overrides.sampling=S`, `overrides.mode=M`, `overrides.wavelength_um:=W`, `overrides.ignore_coatings:=true` |
-| `--rays-csv FILE`, `--terminals`, `--paths N`, `--threads N`, `--repeat N` | `rays.csv=FILE`, `terminals:=true`, `paths:=N`, `threads:=N`, `repeat:=N` (add `warmup:=true` to match the old benchmark timing) |
-| `MODEL --inspect --output P.json`, `--export-zmx Z` | `doc.inspect model.path=MODEL output=P.json`, `export_zmx=Z` |
-| `--replay RUN.json --output NEW.json` | `run.replay record.path=RUN.json output=NEW.json` |
-| `--scan MODEL --plan PLAN --output DIR`, `--resume-scan DIR` | `study.scan model.path=MODEL plan:=@PLAN output=DIR`, `study.resume directory=DIR` |
-| `--convergence MODEL --plan PLAN --output DIR` | `study.convergence model.path=MODEL plan:=@PLAN output=DIR` |
-
-- Analyses: `analysis.budget` and `analysis.screen` post-process a calculation record, so trace first and then call them instead of reading the large record. Without `run` they use the latest record of the session (from `analysis.trace`, `run.replay` or `run.open`; only one is kept) and fail with `no_run` if there is none; `run` takes `{"path": ...}` or `{"record": {...}}` for any other record. Every result has `run_revision` (the document revision it was traced from; null for a given `run`, `run.open`, `run.replay` or a `model`) and `stale` (true once the document changed after the trace, so re-trace before trusting the numbers). `analysis.screen` takes `detector` (index or name), `cursor_mm`, `roi` and `include_profiles`, and returns the peak, the slice FWHM (null when a crossing is missing), the ROI integral and, on request, the profile samples; `analysis.budget` returns the budget entries, closure error, unresolved percentage and received power per screen. `session.status` shows `run` (revision, stale) when a latest run exists.
+CLI equivalent in one session:
 
 ```bash
-raytrace-rs doc.inspect model.path=lens.zmx
-raytrace-rs analysis.trace model.path=examples/sequential_lens.json overrides.rays_per_source:=1024 overrides.sampling=sobol threads:=4 output=results/lens.json
-echo '{"command":"run.replay","record":{"path":"results/lens.json"},"output":"results/lens_replay.json"}' | raytrace-rs run -
-# One session: open, edit, calculate, undo
 cat <<'EOF' | raytrace-rs run -
-{"command":"doc.open","path":"examples/sequential_lens.json"}
-{"command":"doc.set","path":"/parts/@system-1/scene/surfaces/2/pose/translation_mm/2","value":70.0,"group":"move"}
-{"command":"analysis.trace","overrides":{"rays_per_source":1024},"output":"results/moved.json"}
+{"command":"doc.open","path":"examples/integrator_rod.json"}
+{"command":"analysis.trace","overrides":{"rays_per_source":4096},"output":"results/rod.json"}
 {"command":"analysis.budget"}
-{"command":"analysis.screen","cursor_mm":[0.0,0.0],"roi":{"minimum_mm":[-0.1,-0.1],"maximum_mm":[0.1,0.1]}}
-{"command":"session.log"}
-{"command":"session.undo"}
+{"command":"analysis.screen","include_profiles":true}
 EOF
-raytrace-rs analysis.screen run.path=results/moved.json include_profiles:=true
 ```
 
-## First run from an extracted Windows ZIP (v0.11.0 options)
+## Saved files and data
 
-Run these PowerShell commands from the extracted application folder; for newer builds convert the options with the table above. The examples include dispersive materials and explicitly set 1024 rays per source, Sobol sampling and four threads. Those are example parameters; omitted overrides retain model settings, and an omitted thread count uses the runtime's default. Set paths and options for the current task.
-
-```powershell
-$rtRoot = (Get-Location).Path
-$rtCli = (Resolve-Path -LiteralPath '.\raytrace-rs.exe').Path
-$rtWork = Join-Path $rtRoot 'results\optics'
-New-Item -ItemType Directory -Path $rtWork -Force | Out-Null
-& $rtCli --version
-& $rtCli --help
-& $rtCli (Join-Path $rtRoot 'examples\sequential_lens.json') --rays-per-source 1024 --sampling sobol --threads 4 --output (Join-Path $rtWork 'lens_run.json')
-& $rtCli --replay (Join-Path $rtWork 'lens_run.json') --threads 4 --output (Join-Path $rtWork 'lens_replay.json')
-& $rtCli (Join-Path $rtRoot 'examples\integrator_rod.json') --rays-per-source 1024 --sampling sobol --threads 4 --output (Join-Path $rtWork 'rod_run.json')
-```
-
-For a source checkout, resolve `target/release/raytrace-rs.exe` instead and keep `$rtRoot` at the checkout root. A CLI already on PATH accepts the same arguments using the shell's normal command syntax.
-
-## Import and assemble
-
-Inspect a supplied ZMX before tracing. Set `$rtInputZmx` to the actual input path:
-
-```powershell
-& $rtCli $rtInputZmx --inspect --output (Join-Path $rtWork 'imported_project.json')
-```
-
-Read the printed report and saved project. Import entries distinguish definitions used for calculation, preserved-only information, conditions requiring explicit settings and unsupported definitions. `--ignore-coatings` opts into an uncoated calculation and changes the physical model. Parsing/saving can succeed while tracing remains blocked.
-
-AGF catalogs are searched beside the input ZMX and, on Windows, under `%USERPROFILE%\Documents\Zemax\Glasscat`. The GUI can add catalog folders. Preserve resolvable STEP references; placing referenced STEP files beside the ZMX is supported. Check declared catalogs and resolved materials.
-
-For GUI assembly: new optical system → add source ZMX → add lens ZMX → add rod → add screen → place components → calculate → inspect screens. Save the design JSON (`doc.save`; the format `raytrace-design-v1` holds parts and occurrences with stable ids such as `rod-4`; the `raytrace-project-v1` to `v3` files of builds before the design document are not readable by current builds). v0.11.0 supports assembly JSON and individual-model ZMX editing/export; assembly-to-ZMX export is unavailable.
-
-CLI lengths are **mm**, wavelengths **μm**; GUI wavelengths are **nm**. `--wavelength-um 0.465` explicitly replaces the source spectrum with 465 nm. Omitting that override retains the model's spectrum.
-
-## Fixed rays, replay and parameter work
-
-Explicit rays (`--rays-csv`, or `rays.csv=` in newer builds) read:
-`id,x_mm,y_mm,z_mm,dx,dy,dz,weight,wavelength_um,medium`.
-Check medium indices against the effective scene. `--terminals` saves terminal rays; `--paths N` saves paths for the first N launch rays in input order. Large path collections increase output size.
-
-Replay freezes optical conditions. Output, threads, repeat and path/terminal recording settings can change; source, geometry, wavelength and mode overrides require a new calculation.
-
-Read the guide's plan schema before creating scan/convergence plans. With the actual model and plan paths assigned:
-
-```powershell
-& $rtCli --scan $rtModel --plan $rtScanPlan --output (Join-Path $rtWork 'scan')
-& $rtCli --resume-scan (Join-Path $rtWork 'scan')
-& $rtCli --convergence $rtModel --plan $rtConvergencePlan --output (Join-Path $rtWork 'convergence')
-```
-
-Initial STEP parsing/tessellation in v0.11.0 uses Rust. Supported inputs are single connected closed solids with supported surfaces and boundaries; see Features for exact restrictions. The default deflection is 0.02 mm. CAD convergence needs the original STEP-referencing ZMX because saved projects contain an already generated mesh. CAD normal fallbacks are recorded in trace diagnostics. Geometry tessellation and wavelength-dependent material physics are separate calculation steps.
-
-Windows settings/cache location is `%LOCALAPPDATA%\Raytrace`. Set process-local `RAYTRACE_DATA_DIR` to a task-owned folder when isolated runtime/cache storage is useful.
-
-## Interpret a saved run
-
-v0.11.0 CLI output uses `format: raytrace-run-v1`, `schema_version: 2`:
-
-| Field | Meaning |
-|---|---|
-| `reference_weight`, `scene.reference_plane` | Launch-weight sum and reference description. Establish a conversion if the requested physical baseline differs. |
-| `detector_percent_of_reference`, `budget_percent_of_reference` | Already percentages of that launch sum. |
-| `report.detectors[].weights` | Integrated power weights per pixel; divide by pixel area for density. |
-| `report.budget`, `relative_budget_closure_error` | Accounted powers and `(accounted - launched) / launched`. Inspect unresolved categories as well as closure. |
-| `surface_encounter_percent_of_reference` | Includes repeated encounters; derive physical stage budgets with that distinction in mind. |
-| `calculation` | Frozen effective model, source settings, software version and limits. CSV input rays are embedded for replay. |
-| `benchmark.timed_scope` | Actual measurement scope. Generated-source runs include ray generation, tracing and accumulation; explicit-ray runs include tracing and accumulation. `--repeat N` reports their median after a warmup, excluding scene preparation, file I/O and drawing. Older builds can exclude generation; use the saved field when comparing runs. |
-
-Prefer `analysis.budget` and `analysis.screen` (see the command forms above) to parsing the large record: they give the budget, closure error, unresolved percentages, peak, slice FWHM, ROI integral and profile samples. Use the GUI or `run.export_screen` for images and CSV files. Wave optics, full diffraction PSF/MTF and general automatic optimization are outside the v0.11.0 feature set; check newer documentation before repeating versioned limitations.
+- Design JSON (`doc.save`) and run records (`output`) can embed original ZMX definitions and geometry; do not commit or share a user's optical data. Records and scan files from builds before 0.12 cannot be read: rebuild the design and re-run.
+- Settings, CAD cache and GUI scan records live in `%LOCALAPPDATA%\Raytrace` (Windows), `~/Library/Application Support/Raytrace` (macOS) or `~/.local/share/raytrace` (Linux); `RAYTRACE_DATA_DIR` moves them.
+- The GUI (`raytrace-gui`) shows the same calculations; its wavelength fields are nm, everything else here is mm and µm.

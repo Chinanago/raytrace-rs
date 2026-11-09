@@ -1,40 +1,36 @@
 ---
 name: raytrace-rs
-description: "Operate raytrace-rs when the user requests this tool or is working with a raytrace-rs project. Documents ZMX/JSON import, CLI and GUI operations, sequential/non-sequential tracing, materials, screens, parameter scans, convergence and replay."
+description: "Run geometric-optics ray tracing with raytrace-rs 0.12+: open ZMX or JSON optical designs, check ZMX compatibility, edit components, trace sequential and non-sequential systems, then read screen distributions, FWHM and power budgets, or scan parameters. Use when the user mentions raytrace-rs, wants a ZMX or lens/rod/screen layout traced, or asks about screen irradiance, FWHM, coupling or power budget."
 license: MIT
 ---
 
-# raytrace-rs usage
+# raytrace-rs
 
-This skill describes raytrace-rs commands, inputs, outputs and limitations. Tool selection, physical assumptions, calculation settings and presentation requirements come from the current task.
+Geometric-optics ray tracer: sources, lenses, integrator rods and screens go in, the light distribution on the screens and a power budget come out. Lengths are mm and wavelengths are µm. Needs raytrace-rs **0.12 or newer** (`raytrace-rs --version`); v0.11 had a different CLI, so upgrade it. Install and AI-client setup (Windows, macOS, Linux): `docs/AI.md`, or run the one-line installer from the README.
 
-## Locate the application
+## Connect
 
-Read [workflows](references/workflows.md) for executable discovery, commands and output fields. Check the selected executable's `--version` and `--help`, then use matching documentation from the application package, source checkout or linked upstream copy. The skill can be installed separately from the application.
+1. **MCP first.** If the tools `list_commands`, `describe_command`, `execute` and `batch` exist, use them (the server is `raytrace-rs mcp`). The server keeps one session: the open design, its edit history and the latest calculation survive between calls. Call `list_commands` once, `describe_command` before any command you have not used (it returns the exact input and output schemas), then `execute {command, params}` or `batch {requests: [{command, params}]}`.
+2. **CLI fallback.** `raytrace-rs COMMAND a.b=text a.b:=JSON` (one session per call). For several steps in one session pipe JSON lines: `echo '{"command":"doc.open","path":"x.json"}' | raytrace-rs run -`. `raytrace-rs COMMAND --help` lists the fields. Stdout is one JSON line per request (`ok`, `command`, `revision`, `result` or `error.code`/`error.message`); the message is Japanese.
+3. Relative paths follow the server's or shell's working directory. Prefer absolute paths for files you write.
 
-The CLI runs models and writes calculation records. The GUI provides component placement, light-path viewing, screen displays and project editing. The Rust library exposes the calculation and export functions.
+## Workflow
 
-## Choose the interface
+1. `doc.open {path}`: a `.zmx`, a design JSON (`raytrace-design-v1`) or a scene JSON like `examples/*.json`.
+2. **ZMX: `doc.inspect` first.** Read `traceable` and `compatibility.components[].entries[]`. `computed` is used; `preserved_only` is kept but not calculated; `requires_override` and `unsupported` stop tracing, so tell the user what is needed (for example an uncoated Fresnel calculation changes the physics: ask before using `overrides.ignore_coatings`).
+3. `analysis.trace` (omit `model` to trace the session document). Start with `overrides.rays_per_source` around 1024 to 4096; Sobol sampling is best at powers of two. Pass `output` to save the record; leave it out for a quick look.
+4. Read results with the analyses, not the large record: `analysis.budget` (power budget) and `analysis.screen` (`detector`, `cursor_mm`, `roi`, `include_profiles`). They use the latest trace unless `run` is given.
+5. To change the design: `doc.set {path, value}` (JSON Pointer; array elements by index or `@<id>`, for example `/occurrences/@rod-4/pose/translation_mm/2`; look at the structure with `doc.get`), `component.add|remove|duplicate`. Give related edits the same `group` so one `session.undo` reverts them together; `session.log` lists the changes. Re-trace after every edit.
+6. Comparisons: `study.scan` (plan: `parameter`, `values`, optional `secondary`, `links`; parameters such as `component_position`, `rod_size`, `surface_position`, `wavelength`, addressed by occurrence id or surface name, axes 0/1/2 = X/Y/Z), `study.convergence` (ray counts, seeds, pixels), `run.replay` (same optical conditions from a saved record). Describe the command for the plan schema and read the ids with `doc.inspect include_design:=true`.
 
-When the MCP tools of raytrace-rs are available (`list_commands`, `describe_command`, `execute`, `batch`; the server is started by `raytrace-rs mcp`, and the Claude Code plugin registers it), prefer them to the CLI: the server keeps one session, so `execute doc.open`, edits with `doc.set`/`component.*`, `analysis.trace` without `model` and `session.undo` work on the same open design without reloading it. Call `list_commands` once, call `describe_command` before using a command you do not know, and send long calculations with `execute` (they can be cancelled and report progress). Otherwise use the CLI (`raytrace-rs COMMAND ...`, or `raytrace-rs run -` for a session). Both run the same commands, so the field names below apply to either.
+## Read the results
 
-## Load and calculate
+- Percentages are of the **reference**: the launched weight, which is the 100 % line (`reference_plane` says where it is measured). A screen's `received_percent_of_reference` is its share of that, not of everything the source emits.
+- Trust a calculation only after the budget closes: `relative_budget_closure_error` should be near zero (about 1e-9 or smaller) and `unresolved_percent_of_reference` (numerical failures, medium mismatches, branch cutoff, interaction limit) small. Large values mean the model or limits need attention; say so instead of reporting the screen numbers alone.
+- `stale: true` means the design changed after the trace. Trace again before quoting numbers.
+- `fwhm_mm` is `null` when the half-maximum crossing is missing; `multiple_lobes` marks a profile with several peaks. Distributions from few rays are noisy: check with more rays or `study.convergence` before comparing small differences.
+- Report the settings you used (rays per source, sampling, wavelength, mode) so the result can be reproduced.
 
-- Check `--help`. v0.11.0 takes options such as `--inspect` and `--replay`. Newer builds take command parameters instead (`raytrace-rs analysis.trace model.path=lens.zmx overrides.rays_per_source:=1024`; current builds accept only dotted ids, not the old short names such as `trace`), print one JSON response per request on stdout, accept JSON with `raytrace-rs run -` (one session per stream: `doc.open`, `doc.set`, `analysis.trace`, `session.undo` without `model`), and describe every command and field with `raytrace-rs --help`, `raytrace-rs COMMAND --help` and `raytrace-rs schema.get name=NAME`. The workflow reference maps the old options to fields.
-- Load `.zmx` or project JSON. `--inspect` imports and saves without tracing, and prints a compatibility report distinguishing used definitions, preserved-only data, required conditions and unsupported entries. Trace compatibility depends on those entries, even if parsing succeeds.
-- ZMX imports resolve AGF materials and referenced STEP geometry. The workflow reference describes their search locations. Import diagnostics identify missing dependencies and unsupported definitions.
-- Sequential mode follows the prescribed surface order, transmission and explicit mirrors; TIR terminates the ray. Non-sequential mode follows nearest hits and splits Fresnel reflection/transmission branches. Assembly projects use non-sequential tracing.
-- CLI lengths are mm and wavelengths are μm; GUI wavelength fields use nm. Options such as `--wavelength-um`, `--rays-per-source` and `--sampling` override the corresponding model settings. `--rays-csv` supplies explicit input rays.
-- The source generator's default sampling is Sobol; `--sampling pseudorandom` selects the alternative. Sobol's balance properties apply to power-of-two sample counts. Preserve the selected sampling settings or explicit rays for reproduction.
+## Limits
 
-## Save, compare and inspect
-
-- Save assemblies as design JSON (project JSON in builds before the design document; newer builds open both). For individual-model ZMX export, check the installed version's export restrictions.
-- `--replay` reruns recorded optical conditions. `--scan` and `--convergence` use the plan schemas documented in the guide; `--resume-scan` resumes a saved scan directory.
-- CLI percentage fields use the launch-weight sum as their denominator. `reference_weight` and `scene.reference_plane` describe that normalization. GUI peak normalization changes the display while retaining original detector powers.
-- Budget fields distinguish detected power, misses, absorption, untraced reflection and unresolved/cutoff weight. Closure includes accounted unresolved power, and surface totals include repeated encounters. See the workflow reference for exact field meanings and timing scope.
-- Saved project/run JSON can embed original ZMX definitions, geometry and explicit input rays. Screen export provides CSV/PNG, profiles, FWHM and ROI data.
-
-## Supported physics
-
-raytrace-rs v0.11.0 implements geometrical ray tracing. Wave optics, polarization and general automatic optimization are outside that version's feature set. STEP support is limited to the documented solids, surfaces and boundaries. Consult version-matched Features documentation for exact restrictions.
+Geometric optics only: no polarization or phase, diffraction or interference, MTF/PSF, automatic optimization or tolerancing. Supported ZMX surfaces, sources, coatings and STEP shapes are listed in `docs/FEATURES.md`; do not promise others. Details of every command, error code and output field are in [workflows](references/workflows.md); the full manual is `docs/GUIDE.md`.

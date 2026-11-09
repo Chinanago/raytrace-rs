@@ -17,7 +17,7 @@ v0.11.0からの主な変更です。ベータの間は後方互換性を保ち�
 - **Claude Desktop拡張（`.mcpb`）**：WindowsとmacOSのMCPB拡張を用意しました。ファイルを開くだけで、Claude Desktopから `raytrace-rs` のMCPサーバーを使えます。
 - **インストールスクリプト**：`install.sh`（macOS・Linux）と `install.ps1`（Windows）が、最新版（または `RAYTRACE_VERSION`・`-Version` で指定した版）を取得して `.sha256` を照合し、管理者権限なしでユーザーのフォルダーに入れます。最後に、Claude Code・Claude Desktop・Codexの設定を絶対パスで表示します。`--uninstall`・`-Uninstall` で削除できます。リリースの全資産に `.sha256` を添付します。
 - **AIから使う手引き**：Claude Code・Claude Desktop・Codexの設定、最初の頼み方、困ったときの対処を[docs/AI.md](docs/AI.md)にまとめました。
-- **Claude Codeプラグインとスキル**：`/plugin install raytrace-rs --marketplace Chinanago/raytrace-rs` でスキルとMCPサーバーを導入できます。CodexにもAgent Skillを使えます。
+- **Claude Codeプラグインとスキル**：`/plugin install raytrace-rs --marketplace Chinanago/raytrace-rs` でスキルとMCPサーバーを導入できます。CodexにもAgent Skillを使えます。スキルは0.12向けに書き直し、MCPを優先して、`doc.open`・`doc.inspect`・`analysis.trace`・`analysis.budget`・`analysis.screen` の流れと結果の読み方を示します。
 
 ### 改善
 
