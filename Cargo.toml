@@ -3,7 +3,7 @@ members = ["crates/raytrace-core", "crates/raytrace-formats", "crates/raytrace-d
 resolver = "2"
 
 [workspace.package]
-version = "0.11.0"
+version = "0.12.0"
 edition = "2024"
 license = "MIT"
 rust-version = "1.95"
@@ -22,12 +22,12 @@ egui = { version = "0.37", default-features = false }
 rfd = { version = "0.17", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
 schemars = "1.2"
-raytrace-core = { path = "crates/raytrace-core", version = "0.11.0" }
-raytrace-formats = { path = "crates/raytrace-formats", version = "0.11.0" }
-raytrace-doc = { path = "crates/raytrace-doc", version = "0.11.0" }
-raytrace-io = { path = "crates/raytrace-io", version = "0.11.0" }
-raytrace-engine = { path = "crates/raytrace-engine", version = "0.11.0" }
-raytrace-mcp = { path = "crates/raytrace-mcp", version = "0.11.0" }
+raytrace-core = { path = "crates/raytrace-core", version = "0.12.0" }
+raytrace-formats = { path = "crates/raytrace-formats", version = "0.12.0" }
+raytrace-doc = { path = "crates/raytrace-doc", version = "0.12.0" }
+raytrace-io = { path = "crates/raytrace-io", version = "0.12.0" }
+raytrace-engine = { path = "crates/raytrace-engine", version = "0.12.0" }
+raytrace-mcp = { path = "crates/raytrace-mcp", version = "0.12.0" }
 
 [package]
 name = "raytrace-rs"

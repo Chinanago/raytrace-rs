@@ -1,6 +1,6 @@
 # 機能と対応範囲
 
-v0.11.0の機能一覧です。光源・レンズ・ロッドを配置して光線追跡し、光路と受光分布を評価します。操作手順は[操作ガイド](GUIDE.md)、起動方法は[README](../README.md)にあります。
+v0.12.0（ベータ）の機能一覧です。光源・レンズ・ロッドを配置して光線追跡し、光路と受光分布を評価します。操作手順は[操作ガイド](GUIDE.md)、起動方法は[README](../README.md)にあります。
 
 ## 光線追跡と形状
 
@@ -136,7 +136,7 @@ POPによる波動伝搬、干渉、回折によるビーム拡がり、ファ�
 
 ## 検証状況
 
-v0.11.0では、次の確認を実施しています。[Windows自動検証](https://github.com/Chinanago/raytrace-rs/actions/workflows/windows.yml)
+v0.12.0では、次の確認を実施しています。[Windows自動検証](https://github.com/Chinanago/raytrace-rs/actions/workflows/windows.yml)
 
 | 確認 | 内容 |
 |---|---|
