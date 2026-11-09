@@ -1,4 +1,4 @@
-name: Windows checks
+name: Checks
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: windows-${{ github.ref }}
+  group: checks-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -54,13 +54,46 @@ jobs:
         run: |
           $package = Get-ChildItem -LiteralPath results/packages -Filter '*.zip' | Select-Object -First 1
           python scripts/check_portable.py $package.FullName
+      - name: Build the Claude Desktop extension
+        run: python scripts/package_mcpb.py windows target/release/raytrace-rs.exe results/packages --check-server
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-${{ github.sha }}
           path: |
             results/packages/*.zip
+            results/packages/*.mcpb
             results/validation/suite.json
             results/portable_summary.json
+          if-no-files-found: error
+          retention-days: 14
+
+  macos:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.12'
+      - name: Install Rust tools
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal --target aarch64-apple-darwin --target x86_64-apple-darwin
+          rustup default 1.95.0
+      # The GUI tests build egui contexts without a window, so no display is needed.
+      - name: Run all tests
+        run: cargo test --locked --workspace --all-features
+      - name: Build, package and smoke-test the universal macOS archive
+        run: python3 scripts/package_macos.py
+      - name: Build the Claude Desktop extension
+        run: python3 scripts/package_mcpb.py macos target/universal-apple-darwin/release/raytrace-rs results/packages --check-server
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: macos-${{ github.sha }}
+          path: |
+            results/packages/*.tar.gz
+            results/packages/*.mcpb
           if-no-files-found: error
           retention-days: 14
 
