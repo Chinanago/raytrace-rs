@@ -66,7 +66,10 @@ jobs:
           fi
           heading=$(grep -m1 "^## $version" CHANGELOG.md | sed 's/^## //')
           # A missing tag is created on the run's commit; an existing one must point at it.
-          tagged=$(gh api "repos/$GITHUB_REPOSITORY/commits/refs/tags/$TAG" --jq .sha 2>/dev/null || true)
+          # On a missing tag gh prints the error JSON to stdout and fails, so keep only a success.
+          if ! tagged=$(gh api "repos/$GITHUB_REPOSITORY/commits/refs/tags/$TAG" --jq .sha 2>/dev/null); then
+            tagged=""
+          fi
           if [ -n "$tagged" ] && [ "$tagged" != "$GITHUB_SHA" ]; then
             echo "Tag $TAG points at $tagged, not at $GITHUB_SHA; run the workflow from the tag" >&2
             exit 1
