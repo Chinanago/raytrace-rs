@@ -139,7 +139,7 @@ fn trace_mode<I: Iterator<Item = Result<Ray>>, const SEQUENTIAL: bool, const PAC
         .map(|chunk_index| -> Result<Option<Report>> {
             let start = chunk_index * chunk_size;
             let chunk = rays(start..start.saturating_add(chunk_size).min(len));
-            let mut report = Report::new(scene);
+            let mut report = Report::new(scene)?;
             let mut cache = OpticalCache::new(scene);
             let mut traversal = Traversal {
                 stack: WorkQueue::new(if SEQUENTIAL {
@@ -331,7 +331,7 @@ fn trace_mode<I: Iterator<Item = Result<Ray>>, const SEQUENTIAL: bool, const PAC
             Ok(Some(report))
         })
         .collect();
-    let mut report = Some(Report::new(scene));
+    let mut report = Some(Report::new(scene)?);
     // Inspect every chunk in launch order so the earliest generation error wins.
     for next in reports {
         let next = next?;

@@ -68,28 +68,30 @@ fn pose(p: [f64; 3], r: [f64; 3]) -> Pose {
         rotation_deg: V3(r),
     }
 }
-fn without_absorption(material: Material) -> Material {
+fn without_absorption(mut material: Material) -> Material {
     match material {
         Material::WithAbsorption { dispersion, .. } => without_absorption(*dispersion),
-        mut material => {
-            match &mut material {
-                Material::Catalog {
-                    absorption_per_mm, ..
-                }
-                | Material::Constant {
-                    absorption_per_mm, ..
-                }
-                | Material::Sellmeier {
-                    absorption_per_mm, ..
-                }
-                | Material::Schott {
-                    absorption_per_mm, ..
-                }
-                | Material::Tabulated {
-                    absorption_per_mm, ..
-                } => *absorption_per_mm = 0.,
-                Material::WithAbsorption { .. } => unreachable!(),
-            }
+        Material::Catalog {
+            ref mut absorption_per_mm,
+            ..
+        }
+        | Material::Constant {
+            ref mut absorption_per_mm,
+            ..
+        }
+        | Material::Sellmeier {
+            ref mut absorption_per_mm,
+            ..
+        }
+        | Material::Schott {
+            ref mut absorption_per_mm,
+            ..
+        }
+        | Material::Tabulated {
+            ref mut absorption_per_mm,
+            ..
+        } => {
+            *absorption_per_mm = 0.;
             material
         }
     }

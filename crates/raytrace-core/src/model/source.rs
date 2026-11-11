@@ -236,11 +236,14 @@ impl RayGenerator<'_> {
     }
 
     /// Source preparation errors are yielded in launch order along with ray errors.
+    /// An invalid range yields one error and no rays.
     pub fn rays(&self, range: Range<usize>) -> impl Iterator<Item = Result<Ray>> + '_ {
-        assert!(range.start <= range.end && range.end <= self.len());
+        let error = (range.start > range.end || range.end > self.len())
+            .then(|| crate::Error::InvalidScene("光線の生成範囲が不正です".into()));
+        let range = if error.is_some() { 0..0 } else { range };
         let first = self.offsets[1..].partition_point(|&end| end <= range.start);
         let last = self.offsets[..self.sources.len()].partition_point(|&start| start < range.end);
-        (first..last).flat_map(move |source_index| {
+        let rays = (first..last).flat_map(move |source_index| {
             let source = &self.sources[source_index];
             let offset = self.offsets[source_index];
             let start = range.start.max(offset) - offset;
@@ -249,16 +252,18 @@ impl RayGenerator<'_> {
                 .as_ref()
                 .ok()
                 .filter(|s| s.source.sampling == Sampling::Sobol && start < end)
-                .map(|source| {
-                    let mut s = Sobol::new(source.source.seed);
-                    s.seek(start as u64);
-                    s
-                });
-            (start..end).map(move |j| match source {
-                Ok(source) => source.ray(self.scene, source_index, j, offset + j, &mut sobol),
-                Err(error) => Err(error.clone()),
-            })
-        })
+                .map(|source| Sobol::new(source.source.seed));
+            let error = sobol.as_mut().and_then(|s| s.seek(start as u64).err());
+            let end = if error.is_some() { start } else { end };
+            error
+                .into_iter()
+                .map(Err)
+                .chain((start..end).map(move |j| match source {
+                    Ok(source) => source.ray(self.scene, source_index, j, offset + j, &mut sobol),
+                    Err(error) => Err(error.clone()),
+                }))
+        });
+        error.into_iter().map(Err).chain(rays)
     }
 }
 
@@ -349,7 +354,7 @@ impl<'a> PreparedSource<'a> {
             .seed
             .wrapping_add((j as u64).wrapping_mul(0xd1342543de82ef95));
         let sample = match sobol {
-            Some(s) => s.next(),
+            Some(s) => s.next()?,
             None => [
                 uniform(&mut state),
                 uniform(&mut state),

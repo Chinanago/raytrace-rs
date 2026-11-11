@@ -123,6 +123,8 @@ jobs:
         run: cargo fmt --all --check
       - name: Check layers and core purity
         run: cargo xtask layers
+      - name: Reject assertions in product code
+        run: cargo xtask no-panic
       - name: Check the WebAssembly build of L0-L4
         run: |
           rustup target add wasm32-unknown-unknown

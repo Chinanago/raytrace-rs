@@ -12,11 +12,11 @@ use std::{env, fs, path::Path, time::Instant};
 #[path = "../tests/support/step.rs"]
 mod owned;
 
-fn bounds(shape: &Shape) -> [V3; 2] {
+fn bounds(shape: &Shape) -> Result<[V3; 2], Box<dyn std::error::Error>> {
     let Shape::TriangleMesh { vertices, .. } = shape else {
-        unreachable!()
+        return Err("三角形メッシュが必要です".into());
     };
-    [
+    Ok([
         V3(std::array::from_fn(|a| {
             vertices
                 .iter()
@@ -29,7 +29,7 @@ fn bounds(shape: &Shape) -> [V3; 2] {
                 .map(|p| p.0[a])
                 .fold(f64::NEG_INFINITY, f64::max)
         })),
-    ]
+    ])
 }
 fn optical_scene(mesh: Shape, reference_bounds: [V3; 2]) -> Scene {
     let [lo, hi] = reference_bounds;
@@ -123,7 +123,7 @@ fn compare_optics(
     rays: &[Ray],
     output: &Path,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let reference_bounds = bounds(old);
+    let reference_bounds = bounds(old)?;
     let a = optical_report(optical_scene(old.clone(), reference_bounds), rays)?;
     let b = optical_report(optical_scene(new.clone(), reference_bounds), rays)?;
     let n = a.budget.launched;
@@ -232,16 +232,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..
     } = &mesh
     else {
-        unreachable!()
+        return Err("三角形メッシュが必要です".into());
     };
     let output = Path::new(&args[1]);
     fs::write(output, serde_json::to_vec(&mesh)?)?;
-    let mut result = serde_json::json!({"load_seconds":elapsed,"input_kind":if reference_json {"reference_json"}else{"native_step"},"vertices":vertices.len(),"triangles":triangles.len(),"deflection_mm":tolerance,"native_bounds":bounds(&mesh)});
+    let mut result = serde_json::json!({"load_seconds":elapsed,"input_kind":if reference_json {"reference_json"}else{"native_step"},"vertices":vertices.len(),"triangles":triangles.len(),"deflection_mm":tolerance,"native_bounds":bounds(&mesh)?});
     if let Some(reference) = args.get(2) {
         let old: Shape = serde_json::from_slice(&fs::read(reference)?)?;
         let a = MeshAccel::from_shape(&old).ok_or("Reference must be a triangle mesh")?;
         let b = MeshAccel::from_shape(&mesh).unwrap();
-        let [lo, hi] = bounds(&old);
+        let [lo, hi] = bounds(&old)?;
         let span = hi - lo;
         let margin = span.norm() + 1.;
         let (mut same_hit, mut only_old, mut only_new, mut neither) = (0, 0, 0, 0);

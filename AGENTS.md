@@ -35,6 +35,7 @@ cargo fmt --all --check
 cargo clippy --locked -p raytrace-core -p raytrace-formats -p raytrace-doc -p raytrace-io -p raytrace-engine -p raytrace-mcp -p raytrace-cli -p raytrace-rs -p xtask --all-features --all-targets -- -D warnings
 cargo test --locked -p raytrace-core -p raytrace-formats -p raytrace-doc -p raytrace-io -p raytrace-engine -p raytrace-mcp -p raytrace-cli -p raytrace-rs -p xtask --all-features
 cargo xtask layers   # 層の順序、GUI依存の隔離、計算核の純粋さ（docs/DESIGN.md 4章）
+cargo xtask no-panic # 製品コードのassert系マクロを構文解析で検査（テストを除く）
 cargo xtask wasm     # L0〜L4のWASMビルド（要 rustup target add wasm32-unknown-unknown）
 ```
 
@@ -59,7 +60,7 @@ echo '{"command":"app.version"}' | cargo run -q --locked -p raytrace-cli -- run 
 
 ## 変更時の決まり
 
-- **製品コードで `unwrap`・`expect`・`panic!` を使いません。** workspaceのClippy lint（`unwrap_used`・`expect_used`・`panic` をdeny）が `-D warnings` なしでも失敗させます。エラーは各クレートの `Error` で返し（不変条件の破れは `raytrace_core::Error::Internal`）、または `unwrap_or`・`let … else`・`get(..)` などで書き換えます。テスト（`#[cfg(test)]`・`#[test]`）は `clippy.toml` で許可済みです。`tests/`・`examples/` のファイルは先頭に `#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]` を置きます。製品コードで型が保証する不変条件に限り、式または関数に狭く `#[allow(clippy::expect_used)]` と `// Reason: …` を付けられます（まれにし、増やすときはDESIGN.mdに理由を残します）。
+- **製品コードで `unwrap`・`expect`・`panic!` を使いません。** workspaceのClippy lint（`unwrap_used`・`expect_used`・`panic`・`unreachable` をdeny）が `-D warnings` なしでも失敗させます。`assert!`・`assert_eq!`・`assert_ne!` とdebug版も製品コードで使いません（`cargo xtask no-panic` が検査）。エラーは各クレートの `Error` で返し（不変条件の破れは `raytrace_core::Error::Internal`）、または `unwrap_or`・`let … else`・`get(..)` などで書き換えます。テスト（`#[cfg(test)]`・`#[test]`）は `clippy.toml` で許可済みです。`tests/`・`examples/` のファイルは先頭に `#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]` を置きます。製品コードで型が保証する不変条件に限り、式または関数に狭く `#[allow(clippy::expect_used)]` と `// Reason: …` を付けられます（まれにし、増やすときはDESIGN.mdに理由を残します）。
 - **CIはRust 1.95.0** です。ローカルのツールチェーンが新しくても、1.95より新しい標準ライブラリAPIは使いません。
 - `cargo fmt` と `clippy -D warnings` を通します。workspace lintで `unsafe_code` はdeny、`unused_qualifications` はwarnです。
 - `unsafe` は `crates/raytrace-core/src/packet.rs` のAVX2カーネルだけに許可し、各ブロックに `// SAFETY:` を書きます。

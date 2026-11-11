@@ -29,6 +29,51 @@ fn scene() -> Scene {
     }
 }
 
+#[test]
+fn corrupted_prepared_detector_metadata_returns_internal_errors() {
+    use raytrace_core::trace::{TraceOptions, trace};
+    let prepared = scene().prepare().unwrap();
+    let mut invalid = prepared.clone();
+    invalid.detector_surfaces[0] = usize::MAX;
+    assert!(matches!(
+        trace(&invalid, &[], TraceOptions::default()),
+        Err(Error::Internal(_))
+    ));
+    let mut invalid = prepared.clone();
+    invalid.surfaces[0].spec.interaction = Interaction::Mirror { reflectance: 1. };
+    assert!(matches!(
+        trace(&invalid, &[], TraceOptions::default()),
+        Err(Error::Internal(_))
+    ));
+    for pixels in [[0, 1], [usize::MAX, 2], [1001, 1000]] {
+        let mut invalid = prepared.clone();
+        invalid.surfaces[0].spec.interaction = Interaction::Detector { pixels };
+        assert!(matches!(
+            trace(&invalid, &[], TraceOptions::default()),
+            Err(Error::Internal(_))
+        ));
+    }
+    assert!(trace(&prepared, &[], TraceOptions::default()).is_ok());
+}
+
+#[test]
+fn missing_prepared_mesh_returns_a_numerical_miss() {
+    let mut prepared = scene().prepare().unwrap();
+    prepared.surfaces[0].spec.shape = Shape::TriangleMesh {
+        vertices: vec![],
+        triangles: vec![],
+        normals: vec![],
+    };
+    assert!(matches!(
+        raytrace_core::geometry::intersect(
+            &prepared.surfaces[0],
+            V3([0., 0., -1.]),
+            V3([0., 0., 1.])
+        ),
+        Err(raytrace_core::geometry::Miss::Numerical)
+    ));
+}
+
 fn ray() -> Ray {
     Ray {
         id: 42,

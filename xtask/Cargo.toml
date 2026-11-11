@@ -5,10 +5,11 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish = false
-description = "Development checks for raytrace-rs (layers, WASM build)"
+description = "Development checks for raytrace-rs (layers, WASM build, assertion checks)"
 
 [dependencies]
 serde_json = { workspace = true }
+syn = { version = "2", features = ["full", "visit"] }
 
 [lints]
 workspace = true

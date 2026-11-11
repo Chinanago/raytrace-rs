@@ -348,3 +348,9 @@ OS標準ダイアログのフォーカス表示は対象外です。
 raytrace-rsはデジタル庁と提携しておらず、デジタル庁の公式製品ではありません。
 トークンのMITライセンスとNotoのSIL OFL 1.1はWindows配布物の
 `THIRD_PARTY_LICENSES.txt` に収録します。
+
+## panicの防止とパーサのファジング
+
+`cargo xtask no-panic` は製品のモジュールを構文解析し、assert系マクロ（debug版を含む）を拒否します。テスト専用モジュールと `#[test]` 関数は対象外です。`unwrap`・`expect`・`panic!`・`unreachable!` はworkspaceのClippy lintでもdenyします。これらは添字アクセスやメモリ枯渇を含むすべてのpanicを静的に保証するものではないため、不正入力の回帰テストとファジングも併用します。
+
+[パーサのファジング](../fuzz/README.md)は独立workspaceで、ZMX・AGF・STEPの実際の読込APIを検査します。専用CIは正常に読める自作の種を確認し、AddressSanitizer付きで各ターゲットを30秒実行します。失敗入力はCIのartifactに保存します。長時間実行と再現の手順も同文書にあります。

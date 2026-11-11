@@ -3,8 +3,10 @@
 //! - `cargo xtask layers`: workspace crates depend only on the same or lower layers, GUI
 //!   libraries stay in L5, and the computation core uses no files, clocks, environment,
 //!   network or processes.
+//! - `cargo xtask no-panic`: product code contains no assertion macros.
 //! - `cargo xtask wasm`: every crate of L0-L4 builds for `wasm32-unknown-unknown`.
 use serde_json::Value;
+mod no_panic;
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -56,8 +58,9 @@ fn main() -> ExitCode {
     let result = match task.as_deref() {
         Some("layers") => layers(),
         Some("wasm") => wasm(),
+        Some("no-panic") => no_panic::check(&root()),
         _ => Err(vec![
-            "usage: cargo xtask layers | cargo xtask wasm (see docs/DESIGN.md)".into(),
+            "usage: cargo xtask layers | wasm | no-panic (see docs/DESIGN.md)".into(),
         ]),
     };
     match result {

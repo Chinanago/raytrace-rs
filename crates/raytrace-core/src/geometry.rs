@@ -50,7 +50,7 @@ pub fn bounds(shape: &Shape, aperture: &Aperture) -> Option<([V3; 2], f64)> {
     }
     let (hx, hy) = aperture.bounds();
     let (radius, conic, coefficients): (f64, f64, &[f64]) = match shape {
-        Shape::TriangleMesh { .. } | Shape::ConicalSide { .. } => unreachable!(),
+        Shape::TriangleMesh { .. } | Shape::ConicalSide { .. } => return None,
         Shape::Plane => return Some(([V3([-hx, -hy, 0.0]), V3([hx, hy, 0.0])], 0.0)),
         Shape::Sphere { radius_mm } => (*radius_mm, 0.0, &[]),
         Shape::FlatEvenAsphere { coefficients } => (f64::INFINITY, 0.0, coefficients),
@@ -296,8 +296,9 @@ fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss>
         });
     }
     let t = match &surface.spec.shape {
-        Shape::TriangleMesh { .. } | Shape::ConicalSide { .. } => unreachable!(),
-        Shape::Plane => unreachable!(),
+        Shape::TriangleMesh { .. } | Shape::ConicalSide { .. } | Shape::Plane => {
+            return Err(Miss::Numerical);
+        }
         Shape::Sphere { radius_mm } => {
             let q = p - V3([0.0, 0.0, *radius_mm]);
             let a = d.dot(d);
@@ -400,7 +401,7 @@ fn intersect_local(surface: &PreparedSurface, p: V3, d: V3) -> Result<Hit, Miss>
 
 // Bound the spectral norm of the sag Hessian over the aperture. Together with
 // the derivative at an interval midpoint this certifies monotonicity locally.
-fn sag_curvature_bound(shape: &Shape, r2: f64) -> f64 {
+fn sag_curvature_bound(shape: &Shape, r2: f64) -> Option<f64> {
     let (c, conic, coefficients) = match shape {
         Shape::EvenAsphere {
             radius_mm,
@@ -408,7 +409,7 @@ fn sag_curvature_bound(shape: &Shape, r2: f64) -> f64 {
             coefficients,
         } => (1. / radius_mm, *conic, coefficients),
         Shape::FlatEvenAsphere { coefficients } => (0., 0., coefficients),
-        _ => unreachable!(),
+        _ => return None,
     };
     let q = (1. - (1. + conic) * c * c * r2).min(1.);
     let mut bound = c.abs() / q.sqrt() + (1. + conic).abs() * c.abs().powi(3) * r2 / q.powf(1.5);
@@ -418,7 +419,7 @@ fn sag_curvature_bound(shape: &Shape, r2: f64) -> f64 {
         bound += 2. * m * (2. * m - 1.) * a.abs() * power;
         power *= r2;
     }
-    bound
+    Some(bound)
 }
 
 /// Search near to far. A second-derivative bound excludes empty intervals and
@@ -456,7 +457,8 @@ fn oblique_asphere_hit(
             })
             .fold(0., f64::max)
             .min(surface.spec.aperture.max_radius2());
-        let curvature = sag_curvature_bound(&surface.spec.shape, radius2) * transverse2;
+        let curvature =
+            sag_curvature_bound(&surface.spec.shape, radius2).ok_or(Miss::Numerical)? * transverse2;
         let mid = a + (b - a) * 0.5;
         let (fm, df) = value(mid).ok_or(Miss::Numerical)?;
         let half = (b - a) * 0.5;

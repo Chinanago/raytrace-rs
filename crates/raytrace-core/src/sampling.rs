@@ -92,8 +92,10 @@ impl Sobol {
         }
     }
 
-    pub(crate) fn seek(&mut self, index: u64) {
-        assert!(index < 1 << BITS, "Sobol sequence exhausted");
+    pub(crate) fn seek(&mut self, index: u64) -> crate::Result<()> {
+        if index >= 1 << BITS {
+            return Err(crate::Error::Internal("Sobol列の範囲を超えています".into()));
+        }
         self.state = self.shift;
         let gray = index ^ (index >> 1);
         for b in 0..BITS {
@@ -104,10 +106,13 @@ impl Sobol {
             }
         }
         self.index = index;
+        Ok(())
     }
 
-    pub(crate) fn next(&mut self) -> [f64; DIMS] {
-        assert!(self.index < 1 << BITS, "Sobol sequence exhausted");
+    pub(crate) fn next(&mut self) -> crate::Result<[f64; DIMS]> {
+        if self.index >= 1 << BITS {
+            return Err(crate::Error::Internal("Sobol列を使い切りました".into()));
+        }
         // Midpoints of the 52-bit intervals keep inverse CDF inputs strictly in (0,1).
         let point = std::array::from_fn(|d| ((self.state[d] >> (64 - BITS)) as f64 + 0.5) * SCALE);
         self.index += 1;
@@ -117,7 +122,7 @@ impl Sobol {
                 self.state[d] ^= self.directions[d][column];
             }
         }
-        point
+        Ok(point)
     }
 }
 
@@ -334,6 +339,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn exhausted_sobol_returns_errors_and_can_seek_again() {
+        let mut s = Sobol::new(42);
+        let mut expected = Sobol::new(42);
+        assert!(matches!(s.seek(1 << BITS), Err(crate::Error::Internal(_))));
+        assert_eq!(s.next().unwrap(), expected.next().unwrap());
+        s.seek((1 << BITS) - 1).unwrap();
+        assert!(s.next().is_ok());
+        assert!(matches!(s.next(), Err(crate::Error::Internal(_))));
+        assert!(s.next().is_err());
+        s.seek(0).unwrap();
+        expected.seek(0).unwrap();
+        assert_eq!(s.next().unwrap(), expected.next().unwrap());
+    }
+
+    #[test]
     fn seek_matches_sequential_points() {
         for seed in [0, 1, 42, u64::MAX] {
             for n in [
@@ -349,21 +369,25 @@ mod tests {
                 (1 << BITS) - 1,
             ] {
                 let mut sought = Sobol::new(seed);
-                sought.seek(n);
+                sought.seek(n).unwrap();
                 let mut sequential = Sobol::new(seed);
                 if n > 123_457 {
-                    sequential.seek(n - 1);
-                    sequential.next();
+                    sequential.seek(n - 1).unwrap();
+                    sequential.next().unwrap();
                 } else {
                     for _ in 0..n {
-                        sequential.next();
+                        sequential.next().unwrap();
                     }
                 }
-                assert_eq!(sought.next(), sequential.next(), "seed={seed}, n={n}");
-                sought.seek(3);
-                sequential.seek(2);
-                sequential.next();
-                assert_eq!(sought.next(), sequential.next());
+                assert_eq!(
+                    sought.next().unwrap(),
+                    sequential.next().unwrap(),
+                    "seed={seed}, n={n}"
+                );
+                sought.seek(3).unwrap();
+                sequential.seek(2).unwrap();
+                sequential.next().unwrap();
+                assert_eq!(sought.next().unwrap(), sequential.next().unwrap());
             }
         }
     }

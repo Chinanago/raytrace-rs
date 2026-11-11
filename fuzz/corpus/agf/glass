@@ -1,0 +1,6 @@
+CC Hand-authored constant-index test glass
+NM FUZZ 1 0 1.5 50 0 0
+CD 2.25 0 0 0 0 0
+LD 0.4 0.7
+IT 0.4 0.99 10
+IT 0.7 0.98 10

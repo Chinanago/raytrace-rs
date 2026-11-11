@@ -143,8 +143,8 @@ pub struct Report {
     pub diagnostic_overflow: DiagnosticOverflow,
 }
 impl Report {
-    pub(super) fn new(scene: &PreparedScene) -> Self {
-        Self {
+    pub(super) fn new(scene: &PreparedScene) -> crate::Result<Self> {
+        Ok(Self {
             budget: Budget::default(),
             surfaces: scene
                 .surfaces
@@ -158,26 +158,34 @@ impl Report {
                 .detector_surfaces
                 .iter()
                 .map(|&i| {
-                    let s = &scene.surfaces[i].spec;
+                    let s = &scene
+                        .surfaces
+                        .get(i)
+                        .ok_or_else(|| crate::Error::Internal("検出器の面番号が不正です".into()))?
+                        .spec;
                     let Interaction::Detector { pixels } = s.interaction else {
-                        unreachable!()
+                        return Err(crate::Error::Internal("検出器の面定義が不正です".into()));
                     };
+                    let count = pixels[0]
+                        .checked_mul(pixels[1])
+                        .filter(|&n| n > 0 && n <= 1_000_000)
+                        .ok_or_else(|| crate::Error::Internal("検出器の画素数が不正です".into()))?;
                     let (hx, hy) = s.aperture.bounds();
-                    DetectorMap {
+                    Ok(DetectorMap {
                         name: s.name.clone(),
                         pixels,
                         half_extent_mm: [hx, hy],
-                        weights: vec![0.0; pixels[0] * pixels[1]],
-                    }
+                        weights: vec![0.0; count],
+                    })
                 })
-                .collect(),
+                .collect::<crate::Result<_>>()?,
             terminals: Vec::new(),
             paths: Vec::new(),
             surface_intersections: 0,
             total_internal_reflections: 0,
             diagnostics: Vec::new(),
             diagnostic_overflow: DiagnosticOverflow::default(),
-        }
+        })
     }
     pub(super) fn merge(mut self, other: Self) -> Self {
         self.budget.merge(&other.budget);

@@ -35,7 +35,7 @@ pub(super) fn trace_one<const SEQUENTIAL: bool, const CACHED: bool>(
         ray: launch,
         next_surface: 0,
         depth: 0,
-    });
+    })?;
     let mut events = 0;
     let mut path_events = 0;
     while let Some(work) = stack.pop() {
@@ -220,7 +220,7 @@ pub(super) fn trace_one<const SEQUENTIAL: bool, const CACHED: bool>(
                     ray,
                     next_surface: index + 1,
                     depth: depth + 1,
-                });
+                })?;
             }
             Interaction::Dielectric {
                 minus_medium,
@@ -345,7 +345,7 @@ pub(super) fn trace_one<const SEQUENTIAL: bool, const CACHED: bool>(
                             },
                             next_surface: index + 1,
                             depth: depth + 1,
-                        });
+                        })?;
                     }
                 } else {
                     report.budget.sequential_reflection_not_followed += reflected_weight;
@@ -362,7 +362,7 @@ pub(super) fn trace_one<const SEQUENTIAL: bool, const CACHED: bool>(
                         },
                         next_surface: index + 1,
                         depth: depth + 1,
-                    });
+                    })?;
                 }
             }
         }

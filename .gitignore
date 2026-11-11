@@ -1,4 +1,11 @@
 /target/
+/fuzz/target/
+/fuzz/artifacts/
+# Retain only the hand-authored seeds; mutations may contain imported data.
+/fuzz/corpus/*/*
+!/fuzz/corpus/zmx/plane
+!/fuzz/corpus/agf/glass
+!/fuzz/corpus/step/box
 /results/
 /TODO.md
 __pycache__/

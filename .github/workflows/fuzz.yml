@@ -1,0 +1,46 @@
+name: Parser fuzzing
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parsers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      FUZZ_TOOLCHAIN: nightly-2026-11-11
+      CARGO_BUILD_JOBS: 4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install fuzz tools
+        run: |
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup toolchain install "$FUZZ_TOOLCHAIN" --profile minimal
+          cargo +1.95.0 install cargo-fuzz --version 0.13.1 --locked
+      - name: Verify owned corpus seeds
+        run: cargo +1.95.0 test --manifest-path fuzz/Cargo.toml --locked --test seeds
+      - name: Build all parser targets with AddressSanitizer
+        run: cargo +"$FUZZ_TOOLCHAIN" fuzz build
+      - name: Exercise ZMX, AGF and STEP
+        run: |
+          for target in zmx agf step; do
+            cargo +"$FUZZ_TOOLCHAIN" fuzz run "$target" -- \
+              -max_total_time=30 -timeout=10 -rss_limit_mb=2048 -max_len=16384
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: failure()
+        with:
+          name: parser-fuzz-artifacts
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

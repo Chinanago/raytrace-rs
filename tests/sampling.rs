@@ -4,6 +4,26 @@ use raytrace_rs::{math::V3, model::*};
 use serde_json::json;
 use std::f64::consts::TAU;
 
+#[test]
+fn invalid_generation_ranges_yield_one_error_without_poisoning_the_generator() {
+    let scene = specification(8).prepare().unwrap();
+    let generator = scene.ray_generator().unwrap();
+    for (start, end) in [(0, 9), (4, 3), (9, 9), (0, usize::MAX)] {
+        let results: Vec<_> = generator.rays(std::ops::Range { start, end }).collect();
+        assert_eq!(results.len(), 1);
+        assert!(matches!(
+            results[0],
+            Err(raytrace_rs::error::CoreError::InvalidScene(_))
+        ));
+    }
+    assert_eq!(generator.rays(8..8).count(), 0);
+    let generated: Vec<_> = generator.rays(0..8).collect::<Result<_, _>>().unwrap();
+    assert_eq!(
+        serde_json::to_value(generated).unwrap(),
+        serde_json::to_value(scene.generate_rays().unwrap()).unwrap()
+    );
+}
+
 fn specification(count: usize) -> Scene {
     serde_json::from_value(json!({
         "name":"Sampling check", "reference_plane":"Launch", "mode":"non_sequential",

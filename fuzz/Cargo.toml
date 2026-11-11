@@ -1,0 +1,38 @@
+[package]
+name = "raytrace-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tempfile = "3"
+raytrace-formats = { path = "../crates/raytrace-formats" }
+
+# Fuzz tooling stays outside the product workspace and its MSRV/GUI checks.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "zmx"
+path = "fuzz_targets/zmx.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "agf"
+path = "fuzz_targets/agf.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "step"
+path = "fuzz_targets/step.rs"
+test = false
+doc = false
+bench = false

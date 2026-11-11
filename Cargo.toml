@@ -97,6 +97,7 @@ todo = "warn"
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+unreachable = "deny"
 
 [lints]
 workspace = true
