@@ -63,7 +63,11 @@ fn analysis_trace(
         model.path,
         context.control,
     )?;
-    session.set_latest_run(Arc::new(traced.record), revision);
+    session.set_latest_run_view(
+        Arc::new(traced.record),
+        revision,
+        Arc::new(traced.viewer_paths),
+    );
     Ok(traced.result)
 }
 
@@ -82,13 +86,20 @@ fn run_open(
     r: RunOpenRequest,
     _: &mut Context<'_>,
 ) -> Result<RunOpened, EngineError> {
-    let mut record = RunRecord::open(&r.path)?;
-    if r.viewer_paths {
-        record.report.paths = run::viewer_paths(&record)?;
-    }
-    session.set_latest_run(Arc::new(record.clone()), None);
+    let record = RunRecord::open(&r.path)?;
+    let viewer_paths = if r.viewer_paths {
+        run::viewer_paths(&record)?
+    } else {
+        Vec::new()
+    };
+    session.set_latest_run_view(
+        Arc::new(record.clone()),
+        None,
+        Arc::new(viewer_paths.clone()),
+    );
     Ok(RunOpened {
         record: Box::new(record),
+        viewer_paths,
     })
 }
 

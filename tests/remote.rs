@@ -207,38 +207,49 @@ fn independent_cli_and_mcp_processes_edit_and_trace_the_same_session() {
     let status = host.cli(&["session.status"], None);
     assert_eq!(status[0]["result"]["dirty"], false);
     assert_eq!(status[0]["result"]["run"]["stale"], false);
-    let record = host.path.with_file_name("run.json");
-    // The owner retains the latest run across CLI and MCP process boundaries.
-    let trace = host.cli(
-        &[
-            "analysis.trace",
-            "overrides.rays_per_source:=256",
-            "threads:=2",
-            &format!("output={}", record.display()),
-        ],
-        None,
-    );
-    assert_eq!(trace[0]["result"]["launched_rays"], 512);
-    let original = serde_json::from_slice::<Value>(&fs::read(&record).unwrap()).unwrap();
-    let replay = host.path.with_file_name("replay.json");
-    let output = Command::new(cli::executable())
-        .args([
-            "run.replay",
-            &format!("record.path={}", record.display()),
-            "threads:=2",
-            &format!("output={}", replay.display()),
-        ])
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(
-        serde_json::from_slice::<Value>(&fs::read(replay).unwrap()).unwrap()["report"],
-        original["report"]
-    );
+    for paths in [0, 8] {
+        let paths_arg = format!("paths:={paths}");
+        let record = host.path.with_file_name("run.json");
+        // The owner retains the latest run across CLI and MCP process boundaries.
+        let trace = host.cli(
+            &[
+                "analysis.trace",
+                "overrides.rays_per_source:=256",
+                "threads:=2",
+                &paths_arg,
+                "preview_paths:=16",
+                &format!("output={}", record.display()),
+            ],
+            None,
+        );
+        assert_eq!(trace[0]["result"]["launched_rays"], 512);
+        assert!(
+            !trace[0]["result"]["viewer_paths"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        let original = serde_json::from_slice::<Value>(&fs::read(&record).unwrap()).unwrap();
+        let replay = host.path.with_file_name("replay.json");
+        let output = Command::new(cli::executable())
+            .args([
+                "run.replay",
+                &format!("record.path={}", record.display()),
+                "threads:=2",
+                &format!("output={}", replay.display()),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&fs::read(replay).unwrap()).unwrap()["report"],
+            original["report"]
+        );
+    }
     assert!(
         fs::read_to_string(Path::new(&saved))
             .unwrap()

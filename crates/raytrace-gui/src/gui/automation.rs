@@ -83,6 +83,7 @@ impl App {
                     preview_limit: None,
                     scene: latest.record.calculation.scene.clone(),
                     record: latest.record.clone(),
+                    viewer_paths: latest.viewer_paths.clone(),
                     texture: None,
                     screen: None,
                     roi_cache: None,
@@ -167,7 +168,8 @@ mod tests {
         );
         assert_eq!(traced["ok"], true, "{traced}");
         let result = app.result.as_ref().unwrap();
-        assert!(!result.record.report.paths.is_empty());
+        assert!(!result.viewer_paths.is_empty());
+        assert!(result.record.report.paths.is_empty());
         assert!(Arc::ptr_eq(
             &result.record,
             &app.session.latest_run().unwrap().record

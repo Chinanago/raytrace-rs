@@ -360,7 +360,7 @@ impl App {
                         viewer_paths: true,
                     };
                     match session.call(commands::RUN_OPEN, request, context) {
-                        Ok(opened) => Job::LoadedRun(Ok(opened.record)),
+                        Ok(opened) => Job::LoadedRun(Ok(Box::new(opened))),
                         Err(e) => Job::LoadedRun(Err(e.message)),
                     }
                 }

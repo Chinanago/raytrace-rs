@@ -111,6 +111,8 @@ struct ResultView {
     /// The calculation record: frozen calculation, trace time and report. It is shared with
     /// the analyses, which take it as their `run`.
     record: Arc<RunRecord>,
+    /// Display-only sampling, separate from the calculation record's actual ray IDs.
+    viewer_paths: Arc<Vec<raytrace_core::trace::PathEvent>>,
     /// The effective scene of `record`.
     scene: Scene,
     texture: Option<egui::TextureHandle>,
@@ -126,7 +128,7 @@ enum Job {
     Compared(Result<Vec<study::Comparison>, String>),
     Cancelled,
     Scanned(Result<Box<raytrace_engine::scan::ScanManifest>, String>),
-    LoadedRun(Result<Box<RunRecord>, String>),
+    LoadedRun(Result<Box<raytrace_engine::engine::RunOpened>, String>),
     /// A copy of the session with the part added, and the group of the edit that adds it.
     Added(PartKind, String, Result<Box<Session>, String>),
     /// A session that opened the file.

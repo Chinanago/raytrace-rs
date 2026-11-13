@@ -45,7 +45,10 @@ impl Backend {
                     return Response::failure(
                         command,
                         0,
-                        EngineError::invalid("command はコマンドのパラメーターではありません"),
+                        EngineError::new(
+                            "invalid_request",
+                            "command はコマンドのパラメーターではありません",
+                        ),
                     );
                 }
                 let mut request = params.as_object().cloned().unwrap_or_default();

@@ -353,6 +353,8 @@ execute  {"command": "session.undo"}
 
 ### 開いているGUIへ接続する
 
+`analysis.trace` の `preview_paths` は、表示用に光源ごとの先頭から光路を間引き、応答の `viewer_paths` に返します。計算記録の `report.paths` は `paths` で指定した実際の発射光線の記録で、表示用の間引きでは上書きしません。`run.open viewer_paths:=true` も表示用の光路を記録とは別に返します。保存したレポートは同じ条件の `run.replay` で再現できます。
+
 GUIとエージェントが同じ光学系を操作するときは、GUIを明示的に接続可能にして起動します。自分だけが使える既存のフォルダーに、まだ存在しない接続ファイルのパスを指定してください。
 
 ```powershell

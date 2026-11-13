@@ -347,7 +347,11 @@ impl App {
             )
         });
     }
-    pub(super) fn adopt_record(&mut self, record: RunRecord) {
+    pub(super) fn adopt_record(
+        &mut self,
+        record: RunRecord,
+        viewer_paths: Arc<Vec<raytrace_core::trace::PathEvent>>,
+    ) {
         self.end_gesture();
         let mut design = record.calculation.design.clone();
         let mut sources = record.calculation.scene.sources.iter();
@@ -397,8 +401,15 @@ impl App {
             return;
         };
         self.result = Some(ResultView::of_record(design, None, record));
+        if let Some(result) = &mut self.result {
+            result.viewer_paths = viewer_paths;
+        }
         if let Some(result) = &self.result {
-            self.session.set_latest_run(result.record.clone(), None);
+            self.session.set_latest_run_view(
+                result.record.clone(),
+                None,
+                result.viewer_paths.clone(),
+            );
         }
         self.view = View::Screen;
         self.status = "保存された計算結果を表示しています".into();
@@ -499,7 +510,7 @@ mod tests {
             serde_json::to_value(&r.record.report.budget).unwrap(),
             stored_budget
         );
-        assert!(!r.record.report.paths.is_empty());
+        assert!(!r.viewer_paths.is_empty());
         assert_eq!(r.record.calculation.input_count(), 64);
         assert_eq!(app.design().occurrences[2].pose.translation_mm.0[2], 68.0);
         assert!(!app.is_stale());

@@ -84,6 +84,8 @@ pub struct LatestRun {
     /// record does not come from the session document: a record opened from a file, a replay,
     /// or a trace of a `model` given to the command.
     pub revision: Option<u64>,
+    /// Derived viewer samples, kept apart from the reproducible calculation report.
+    pub viewer_paths: Arc<Vec<raytrace_core::trace::PathEvent>>,
 }
 
 /// A document under edit. Create one per front end (the CLI makes one per process, or per
@@ -179,8 +181,21 @@ impl Session {
     /// Keep `record` as the latest calculation record, replacing the previous one.
     /// `revision` is the revision of the document it was computed from, if any.
     pub fn set_latest_run(&mut self, record: Arc<RunRecord>, revision: Option<u64>) {
+        self.set_latest_run_view(record, revision, Arc::default());
+    }
+    /// Keep display samples alongside a run without changing its calculation report.
+    pub fn set_latest_run_view(
+        &mut self,
+        record: Arc<RunRecord>,
+        revision: Option<u64>,
+        viewer_paths: Arc<Vec<raytrace_core::trace::PathEvent>>,
+    ) {
         self.generation += 1;
-        self.run = Some(LatestRun { record, revision });
+        self.run = Some(LatestRun {
+            record,
+            revision,
+            viewer_paths,
+        });
     }
     /// The latest record was computed from a document that has changed since.
     pub fn run_is_stale(&self) -> bool {

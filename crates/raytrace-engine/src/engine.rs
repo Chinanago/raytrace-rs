@@ -569,7 +569,8 @@ pub struct TraceRequest {
     /// Save every path segment of the first N launch rays in input order.
     #[serde(default)]
     pub paths: u64,
-    /// Replace `report.paths` with up to N sample rays spread over all sources (GUI preview).
+    /// Return up to N display-only sample rays spread over all sources in `viewer_paths`.
+    /// The saved calculation report and its recorded path sampling stay unchanged.
     #[serde(default)]
     pub preview_paths: usize,
     /// Reject generated runs with more launch rays than this.
@@ -625,6 +626,8 @@ pub struct TraceResult {
     pub worker_threads: usize,
     /// Unresolved weight and other conditions worth checking in the record.
     pub warnings: Vec<String>,
+    /// Display samples from `preview_paths`, separate from the reproducible record.
+    pub viewer_paths: Vec<raytrace_core::trace::PathEvent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub record: Option<Box<RunOutput>>,
 }
@@ -642,6 +645,8 @@ pub struct RunOpenRequest {
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct RunOpened {
     pub record: Box<RunRecord>,
+    /// Display-only sampling, separate from the persisted record.
+    pub viewer_paths: Vec<raytrace_core::trace::PathEvent>,
 }
 
 /// `run.save`.

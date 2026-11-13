@@ -8,7 +8,7 @@ use crate::pipeline::{
 use raytrace_core::{
     math::V3,
     model::{Interaction, Mode, PreparedScene, Ray, Scene},
-    trace::{Report, TraceControl, TraceOptions},
+    trace::{PathEvent, Report, TraceControl, TraceOptions},
 };
 use raytrace_io::{
     design::Design,
@@ -93,6 +93,9 @@ pub struct RunOutput {
     pub benchmark: Benchmark,
     /// Raw trace report: budget, detector pixel weights, surface totals and diagnostics.
     pub report: Report,
+    /// Display samples derived from the scene, never part of a saved calculation report.
+    #[serde(skip)]
+    pub viewer_paths: Vec<PathEvent>,
 }
 
 struct Calculation {
@@ -110,6 +113,7 @@ struct Calculation {
 pub(crate) struct Traced {
     pub result: TraceResult,
     pub record: RunRecord,
+    pub viewer_paths: Vec<PathEvent>,
 }
 
 /// Trace `design`, the model of the request (or the session document). `model_path` is the file
@@ -246,7 +250,7 @@ fn run(c: Calculation, control: &TraceControl) -> Result<RunOutput, EngineError>
     let launch = pipeline::resolve_launch(&scene, c.launch)?;
     let timed =
         pipeline::run_timed(&pool, &scene, &launch, c.options, control, schedule)?.into_result()?;
-    let mut report = timed.report;
+    let report = timed.report;
     let timings = timed.timings;
     let input_count = launch.count();
     let reference = pipeline::launched_power(&report).ok_or_else(|| {
@@ -277,9 +281,11 @@ fn run(c: Calculation, control: &TraceControl) -> Result<RunOutput, EngineError>
         },
     };
     let calculation = pipeline::capture(&c.design, &scene.spec, &launch, threads, c.options);
-    if c.preview_paths > 0 && launch.rays().is_none() {
-        report.paths = pool.install(|| preview_paths(&scene, c.preview_paths))?;
-    }
+    let viewer_paths = if c.preview_paths > 0 && launch.rays().is_none() {
+        pool.install(|| preview_paths(&scene, c.preview_paths))?
+    } else {
+        Vec::new()
+    };
     let budget_percent_of_reference = pipeline::budget_percent(&report, reference)?;
     let detector_percent_of_reference = pipeline::detector_percents(&report, reference);
     let surface_encounter_percent_of_reference = SurfacePercent::of_report(&report, reference);
@@ -296,6 +302,7 @@ fn run(c: Calculation, control: &TraceControl) -> Result<RunOutput, EngineError>
         relative_budget_closure_error: pipeline::closure_error(&report, reference),
         benchmark,
         report,
+        viewer_paths,
     })
 }
 
@@ -305,6 +312,7 @@ fn finish(
     exported_zmx: Option<PathBuf>,
     include_record: bool,
 ) -> Result<Traced, EngineError> {
+    let viewer_paths = record.viewer_paths.clone();
     if let Some(path) = &output {
         create_parent(path)?;
         let bytes = serde_json::to_vec_pretty(&record)
@@ -338,6 +346,7 @@ fn finish(
         median_seconds: record.trace_seconds,
         worker_threads: record.benchmark.worker_threads,
         warnings,
+        viewer_paths: viewer_paths.clone(),
         record: None,
     };
     // The session keeps the record for the analyses. Only a caller that asked for the full
@@ -362,15 +371,13 @@ fn finish(
     Ok(Traced {
         result,
         record: kept,
+        viewer_paths,
     })
 }
 
 /// Up to `count` sample rays taken as prefixes of every source in turn.
 /// Striding a Sobol sequence would destroy its balance, so each source contributes a prefix.
-fn preview_paths(
-    scene: &PreparedScene,
-    count: usize,
-) -> Result<Vec<raytrace_core::trace::PathEvent>, EngineError> {
+fn preview_paths(scene: &PreparedScene, count: usize) -> Result<Vec<PathEvent>, EngineError> {
     let generator = scene.ray_generator()?;
     let n = generator.len().min(count);
     let mut preview = Vec::with_capacity(n);
@@ -411,9 +418,7 @@ fn preview_paths(
 }
 
 /// Light paths of up to 64 sample rays of a saved record, for drawing.
-pub(crate) fn viewer_paths(
-    record: &RunRecord,
-) -> Result<Vec<raytrace_core::trace::PathEvent>, EngineError> {
+pub(crate) fn viewer_paths(record: &RunRecord) -> Result<Vec<PathEvent>, EngineError> {
     let scene = &record.calculation.scene;
     let rays = match &record.calculation.input {
         LaunchInput::Explicit { rays } => rays

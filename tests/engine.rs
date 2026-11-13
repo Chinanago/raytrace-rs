@@ -225,7 +225,11 @@ fn in_process_requests_match_the_cli_and_round_trip_as_json() {
 
     let result = call_once(commands::ANALYSIS_TRACE, request).unwrap();
     let record = result.record.unwrap();
-    assert!(!record.report.paths.is_empty(), "preview paths are traced");
+    assert!(!result.viewer_paths.is_empty(), "preview paths are traced");
+    assert!(
+        record.report.paths.is_empty(),
+        "display samples do not change the reproducible report"
+    );
 
     // The typed call and the JSON call run the same command and give the same result.
     let mut session = Session::new();
@@ -236,6 +240,10 @@ fn in_process_requests_match_the_cli_and_round_trip_as_json() {
         &mut command::Context::new(&control),
     );
     assert!(response.ok, "{response:?}");
+    assert_eq!(
+        response.result_value()["viewer_paths"],
+        serde_json::to_value(&result.viewer_paths).unwrap()
+    );
     assert_eq!(
         response.result_value()["budget_percent_of_reference"],
         serde_json::to_value(&record.budget_percent_of_reference).unwrap()
