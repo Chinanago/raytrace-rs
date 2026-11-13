@@ -14,6 +14,7 @@ pub mod engine;
 pub mod footprint;
 pub mod nsc_reference;
 pub mod pipeline;
+pub mod remote;
 pub mod scan;
 pub mod session;
 pub mod validation;

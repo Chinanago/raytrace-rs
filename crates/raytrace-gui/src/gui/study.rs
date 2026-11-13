@@ -397,6 +397,9 @@ impl App {
             return;
         };
         self.result = Some(ResultView::of_record(design, None, record));
+        if let Some(result) = &self.result {
+            self.session.set_latest_run(result.record.clone(), None);
+        }
         self.view = View::Screen;
         self.status = "保存された計算結果を表示しています".into();
         self.remember_path();

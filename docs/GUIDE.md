@@ -174,7 +174,7 @@ CAD分割精度を比較する場合はSTEP参照を持つ元のZMXを指定し�
 
 ## コマンドライン
 
-CLIの本体は、コマンドの登録表とセッションを持つエンジンです。GUIも同じコマンドを呼んで計算・読込・保存を行います。CLIに独自のオプションはなく、コマンド名は `<領域>.<動作>` 形式のID、引数はそのコマンドのパラメーター（リクエストJSONのフィールド）をそのまま指定します。
+CLIの本体は、コマンドの登録表とセッションを持つエンジンです。GUIも同じコマンドを呼んで計算・読込・保存を行います。`--connect 接続ファイル` はGUIの共有セッションを選ぶ指定です。操作ごとの独自のオプションはなく、コマンド名は `<領域>.<動作>` 形式のID、引数はそのコマンドのパラメーター（リクエストJSONのフィールド）をそのまま指定します。
 
 ```powershell
 ./raytrace-rs.exe analysis.trace model.path=examples/sequential_lens.json threads:=4 output=results/lens.json
@@ -305,6 +305,7 @@ EOF
 | `run` | 計算記録（`analysis.trace`・`run.replay` の出力） |
 | `scan_plan` / `scan` | 走査の計画と `scan.json` |
 | `convergence_plan` / `convergence` | 収束確認の計画と `convergence.json` |
+| `connection` | GUIのローカル接続先と認証トークンを持つ接続ファイル |
 
 処理時間は、モデルの光源を使う場合は光線生成・追跡・集計を含みます。CSVや明示入力光線を保存した記録を使う場合は、追跡・集計を含みます。モデルの読込・準備、ファイル入出力、描画は計測から除きます。`warmup:=true` で計測前にウォームアップを1回行います。結果の `benchmark.timed_scope` に実際の計測範囲を保存します。
 
@@ -349,6 +350,25 @@ execute  {"command": "session.undo"}
 ```
 
 長い計算（種類が `job` のコマンド）は作業スレッドで実行するため、実行中も `ping`、`list_commands`、`describe_command` と中止の通知に応答します。依頼の `_meta.progressToken` を指定すると、走査は終えたケース数、単独の追跡は処理した光線数を `notifications/progress` で通知します（光線数は約250 msごと）。`notifications/cancelled` で `requestId` を指定すると、実行中の計算を止め、その呼び出しの結果は `error.code` が `cancelled` の失敗になります。まだ始まっていない呼び出しは実行しません。`batch` の途中で中止すると、残りは実行せず `cancelled` の応答になります。標準入力が閉じると、受け取った呼び出しを終えてから終了コード0で終了します。
+
+### 開いているGUIへ接続する
+
+GUIとエージェントが同じ光学系を操作するときは、GUIを明示的に接続可能にして起動します。自分だけが使える既存のフォルダーに、まだ存在しない接続ファイルのパスを指定してください。
+
+```powershell
+raytrace-gui --automation-session C:/Users/me/Documents/raytrace/gui-session.json
+raytrace-rs --connect C:/Users/me/Documents/raytrace/gui-session.json session.status
+raytrace-rs --connect C:/Users/me/Documents/raytrace/gui-session.json doc.set path=/occurrences/@optic-2/pose/translation_mm/2 value:=25 expected_revision:=1
+raytrace-rs --connect C:/Users/me/Documents/raytrace/gui-session.json analysis.trace overrides.rays_per_source:=1024 threads:=4 preview_paths:=64
+```
+
+最初の `session.status` が返した `revision` と、`doc.get` で確認したIDを使って編集します。上の `optic-2` と `1` は例です。文書を変えるすべてのコマンド（`doc.open`・`doc.new`・Undo/Redoを含む）に `expected_revision` が必要です。`run -` にも `--connect` を付けられます。
+
+MCPは `raytrace-rs mcp --connect 接続ファイルの絶対パス` で起動します。クライアント設定の `args` を `["mcp", "--connect", "C:/Users/me/Documents/raytrace/gui-session.json"]` にすると、4つのツールの `execute`・`batch` がGUIのセッションを使います。コマンドや入力形式は単独起動と同じです。
+
+外部から行った編集はGUIに表示され、GUIのUndo/Redoで戻せます。外部の追跡結果も光路・スクリーン表示と直近の解析結果に反映されます。問い合わせは文書の版を進めません。読込・計算の処理中もGUIの描画と文書の編集・保存・Undo/Redoは応答しますが、GUIから別の重い読込・計算は開始できません。処理中にセッションが変わった場合、古い状態の確定を `revision` エラーで拒否します。状態を読み直して次の操作を決めてください。確定前に検知した中止・切断でも文書を確定しません。すでに作成した出力ファイルは残ることがあります。
+
+接続ファイルには認証トークンが入ります。共有・コミットせず、利用者専用のフォルダーに置いてください。接続はループバックTCPだけを使い、通常のGUI終了でファイルを削除します。同じパスのファイルがあれば起動時に上書きしません。異常終了で残った場合は、元のGUIが終了していることを確認してから削除します。GUIとCLI/MCPは同じソフトの版を使います。相対パスはGUIを起動した場所が基準になるため、入出力には絶対パスを使うと確実です。接続ファイルのスキーマは `schema.get name=connection` で確認できます。
 
 ## カタログとSTEPの読込
 

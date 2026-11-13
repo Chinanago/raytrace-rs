@@ -6,7 +6,7 @@ Claude Code・Claude Desktop・Codexに、raytrace-rsで光学計算をしても
 
 ## できること
 
-`raytrace-rs mcp` はMCPサーバーです。AIはこのサーバー経由で、GUIやCLIと同じコマンドを使えます。
+`raytrace-rs mcp` はMCPサーバーです。AIはこのサーバー経由で、GUIやCLIと同じコマンドを使えます。起動中のGUIの光学系を操作する場合は、GUIを `--automation-session 接続ファイル` 付きで起動し、MCPの起動引数を `mcp --connect 接続ファイルの絶対パス` にします。[GUIへの接続](GUIDE.md#開いているguiへ接続する)に設定例と競合時の扱いがあります。
 
 - ZMXや設計JSONを開き、計算できるか（互換性）を確認する
 - 光源・レンズ・ロッド・スクリーンを追加し、位置や寸法を変える（取り消しできる）

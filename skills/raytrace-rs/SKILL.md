@@ -12,7 +12,8 @@ Geometric-optics ray tracer: sources, lenses, integrator rods and screens go in,
 
 1. **MCP first.** If the tools `list_commands`, `describe_command`, `execute` and `batch` exist, use them (the server is `raytrace-rs mcp`). The server keeps one session: the open design, its edit history and the latest calculation survive between calls. Call `list_commands` once, `describe_command` before any command you have not used (it returns the exact input and output schemas), then `execute {command, params}` or `batch {requests: [{command, params}]}`.
 2. **CLI fallback.** `raytrace-rs COMMAND a.b=text a.b:=JSON` (one session per call). For several steps in one session pipe JSON lines: `echo '{"command":"doc.open","path":"x.json"}' | raytrace-rs run -`. `raytrace-rs COMMAND --help` lists the fields. Stdout is one JSON line per request (`ok`, `command`, `revision`, `result` or `error.code`/`error.message`); the message is Japanese.
-3. Relative paths follow the server's or shell's working directory. Prefer absolute paths for files you write.
+3. **An open GUI:** start it with `raytrace-gui --automation-session /abs/private/session.json`, then use MCP `raytrace-rs mcp --connect /abs/private/session.json` or CLI `raytrace-rs --connect /abs/private/session.json COMMAND ...`. This shares the GUI's document, undo history and latest run. Read `session.status` first and give its `revision` as `expected_revision` on every mutation; after a `revision` error, read the state and decide again. Keep the token-bearing file private. GUI and client versions must match.
+4. Relative paths follow the server's or shell's working directory; connected calls use the GUI's working directory. Prefer absolute paths for files you write.
 
 ## Workflow
 

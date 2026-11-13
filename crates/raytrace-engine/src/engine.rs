@@ -131,10 +131,12 @@ pub enum SchemaName {
     ConvergencePlan,
     /// `convergence.json` in a convergence directory.
     Convergence,
+    /// Native GUI session connection file (contains a secret token).
+    Connection,
 }
 
 impl SchemaName {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Request,
         Self::Response,
         Self::Scene,
@@ -144,6 +146,7 @@ impl SchemaName {
         Self::Scan,
         Self::ConvergencePlan,
         Self::Convergence,
+        Self::Connection,
     ];
     pub fn as_str(self) -> &'static str {
         match self {
@@ -156,6 +159,7 @@ impl SchemaName {
             Self::Scan => "scan",
             Self::ConvergencePlan => "convergence_plan",
             Self::Convergence => "convergence",
+            Self::Connection => "connection",
         }
     }
 }
@@ -764,7 +768,8 @@ fn default_display() -> DisplaySettings {
 
 /// CLI output envelope: `ok`, the request `command`, the session `revision`, then `error`
 /// and/or `result`.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Response {
     pub ok: bool,
     /// The command id as written in the request.
@@ -835,7 +840,8 @@ impl std::fmt::Debug for Response {
     }
 }
 
-#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ErrorInfo {
     /// Stable snake_case identifier, e.g. `io`, `invalid_json`, `invalid_request`,
     /// `invalid_scene`, `design`, `zmx`, `plan`, `cases_failed`, `cancelled`, `revision`,
@@ -903,6 +909,8 @@ coded_error!(
 pub enum Progress<'a> {
     /// The scan manifest after each case changes state.
     Scan(&'a scan::ScanManifest),
+    /// Transported progress without repeating a potentially large scan manifest.
+    Counters { completed: usize, total: usize },
 }
 
 // ---- helpers shared by the commands -----------------------------------------------------

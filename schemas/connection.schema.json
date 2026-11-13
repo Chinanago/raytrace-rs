@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ConnectionInfo",
+  "description": "Connection capabilities for one running GUI. Keep this file private: its token grants\nthe same file and command access as the GUI process. Never publish it or log its token.",
+  "type": "object",
+  "properties": {
+    "address": {
+      "type": "string"
+    },
+    "format": {
+      "type": "string"
+    },
+    "software_version": {
+      "type": "string"
+    },
+    "token": {
+      "type": "string"
+    },
+    "working_directory": {
+      "description": "Relative command paths are resolved in the GUI's working directory.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "software_version",
+    "address",
+    "token",
+    "working_directory"
+  ]
+}

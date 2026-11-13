@@ -26,7 +26,7 @@ FILES = {
     "examples/folded_mirror.json": "examples/folded_mirror.json",
     **{f"schemas/{name}.schema.json": f"schemas/{name}.schema.json" for name in (
         "request", "response", "scene", "design", "run", "scan_plan", "scan",
-        "convergence_plan", "convergence",
+        "convergence_plan", "convergence", "connection",
     )},
 }
 

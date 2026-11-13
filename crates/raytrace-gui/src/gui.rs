@@ -27,6 +27,7 @@ use std::{
 mod theme;
 use theme::{viz, *};
 
+mod automation;
 mod camera;
 mod components;
 mod controls;
@@ -130,7 +131,7 @@ enum Job {
     Added(PartKind, String, Result<Box<Session>, String>),
     /// A session that opened the file.
     Loaded(Result<Box<Session>, String>),
-    Traced(Result<Box<ResultView>, String>),
+    Traced(u64, Result<Box<ResultView>, String>),
 }
 struct App {
     viewing_explicit_record: bool,
@@ -155,6 +156,8 @@ struct App {
     loading_path: Option<PathBuf>,
     result: Option<ResultView>,
     job: Option<Receiver<Job>>,
+    automation: Option<raytrace_engine::remote::Server>,
+    automation_work: Option<Receiver<raytrace_engine::remote::Prepared>>,
     selected: usize,
     component: usize,
     source: usize,
@@ -193,6 +196,20 @@ impl App {
         while i < args.len() {
             match args[i].as_str() {
                 "--assembly-demo" => (),
+                "--automation-session" => {
+                    i += 1;
+                    match args.get(i) {
+                        Some(path) => {
+                            app.start_automation(std::path::Path::new(path), &cc.egui_ctx)
+                        }
+                        None => {
+                            app.error = Some(
+                                "--automation-session に接続ファイルの保存先を指定してください"
+                                    .into(),
+                            )
+                        }
+                    }
+                }
                 "--study" | "--compare-study" => {
                     app.study.auto_compare = args[i] == "--compare-study";
                     i += 1;
@@ -307,6 +324,8 @@ impl App {
             loading_path: None,
             result: None,
             job: None,
+            automation: None,
+            automation_work: None,
             selected: 0,
             component: 2,
             source: 0,
@@ -532,7 +551,7 @@ impl eframe::App for App {
                 self.error = None;
             }
         }
-        if self.job.is_some() {
+        if self.job.is_some() || self.automation_work.is_some() {
             ctx.request_repaint_after(Duration::from_millis(100));
         }
         self.finish_frame(ctx);

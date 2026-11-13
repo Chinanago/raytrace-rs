@@ -3626,6 +3626,11 @@
           "description": "`convergence.json` in a convergence directory.",
           "type": "string",
           "const": "convergence"
+        },
+        {
+          "description": "Native GUI session connection file (contains a secret token).",
+          "type": "string",
+          "const": "connection"
         }
       ]
     },

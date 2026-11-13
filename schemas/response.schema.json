@@ -3287,6 +3287,7 @@
           "type": "string"
         }
       },
+      "additionalProperties": false,
       "required": [
         "code",
         "message"
