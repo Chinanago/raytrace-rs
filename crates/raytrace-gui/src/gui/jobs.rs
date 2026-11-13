@@ -12,6 +12,7 @@ impl ResultView {
             design,
             preview_limit,
             scene: record.scene,
+            viewer_paths: Arc::new(record.viewer_paths),
             record: Arc::new(RunRecord {
                 format: RUN_FORMAT.into(),
                 calculation: record.calculation,
@@ -33,6 +34,7 @@ impl ResultView {
             design,
             preview_limit,
             scene: record.calculation.scene.clone(),
+            viewer_paths: Arc::default(),
             record: Arc::new(record),
             texture: None,
             screen: None,
@@ -43,8 +45,8 @@ impl ResultView {
     pub(super) fn record(&self, keep_paths: bool) -> RunRecord {
         let mut record = RunRecord::clone(&self.record);
         if !keep_paths {
-            // Viewer paths use reindexed sample IDs; archive the actual calculation.
             record.report.paths.clear();
+            record.calculation.trace_options.path_launch_count = 0;
         }
         record
     }
@@ -71,6 +73,13 @@ impl App {
         progress: Option<mpsc::Sender<Box<ScanManifest>>>,
         work: impl FnOnce(&mut Session, &mut EngineContext<'_>) -> Job + Send + 'static,
     ) {
+        if self.automation_work.is_some() {
+            self.loading_path = None;
+            self.error = Some(
+                "外部コマンドの完了か中止を待ってから、次の読込・計算を開始してください".into(),
+            );
+            return;
+        }
         let (tx, rx) = mpsc::channel();
         self.job = Some(rx);
         let control = Arc::new(TraceControl::default());
@@ -100,6 +109,7 @@ impl App {
             return;
         };
         let preview_limit = self.preview_limit;
+        let revision = self.session.revision();
         self.status = "光線を追跡中…".into();
         let request = TraceRequest {
             model: Some(ModelInput::Design(Box::new(Design::clone(&design)))),
@@ -123,15 +133,14 @@ impl App {
         self.submit(ctx, true, None, move |session, context| {
             match session.call(commands::ANALYSIS_TRACE, request, context) {
                 Ok(t) => match t.record {
-                    Some(record) => Job::Traced(Ok(Box::new(ResultView::new(
-                        design,
-                        preview_limit,
-                        *record,
-                    )))),
-                    None => Job::Traced(Err("計算記録が返されませんでした".into())),
+                    Some(record) => Job::Traced(
+                        revision,
+                        Ok(Box::new(ResultView::new(design, preview_limit, *record))),
+                    ),
+                    None => Job::Traced(revision, Err("計算記録が返されませんでした".into())),
                 },
                 Err(e) if e.code == "cancelled" => Job::Cancelled,
-                Err(e) => Job::Traced(Err(e.message)),
+                Err(e) => Job::Traced(revision, Err(e.message)),
             }
         });
     }
@@ -172,7 +181,9 @@ impl App {
                         self.load_comparison(ctx);
                     }
                 }
-                Job::LoadedRun(Ok(record)) => self.adopt_record(*record),
+                Job::LoadedRun(Ok(opened)) => {
+                    self.adopt_record(*opened.record, Arc::new(opened.viewer_paths))
+                }
                 Job::Added(kind, group, Ok(added)) => {
                     // The position comes from the scene before the part was added.
                     let z = self.next_z();
@@ -235,12 +246,17 @@ impl App {
                         self.status = "読込レポートで計算条件を確認してください".into();
                     }
                 }
-                Job::Traced(Ok(r)) => {
+                Job::Traced(revision, Ok(r)) => {
                     self.status = "計算完了".into();
+                    self.session.set_latest_run_view(
+                        r.record.clone(),
+                        Some(revision),
+                        r.viewer_paths.clone(),
+                    );
                     self.result = Some(*r);
                 }
                 Job::Loaded(Err(e))
-                | Job::Traced(Err(e))
+                | Job::Traced(_, Err(e))
                 | Job::Scanned(Err(e))
                 | Job::LoadedRun(Err(e))
                 | Job::Compared(Err(e)) => {
@@ -250,5 +266,6 @@ impl App {
                 Job::Exported(Err(e)) => self.error = Some(e.to_string()),
             }
         }
+        self.poll_automation(ctx);
     }
 }

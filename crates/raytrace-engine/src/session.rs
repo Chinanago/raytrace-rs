@@ -17,7 +17,10 @@ use raytrace_io::{
     design::{self, Design},
     record::RunRecord,
 };
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Weak},
+};
 
 /// How much undo history a session keeps. The oldest steps are dropped first; the newest
 /// step is always kept.
@@ -84,6 +87,10 @@ pub struct LatestRun {
     /// record does not come from the session document: a record opened from a file, a replay,
     /// or a trace of a `model` given to the command.
     pub revision: Option<u64>,
+    /// Derived viewer samples, kept apart from the reproducible calculation report.
+    pub viewer_paths: Arc<Vec<raytrace_core::trace::PathEvent>>,
+    /// Identity of the traced document, without retaining another history snapshot.
+    document: Option<Weak<Design>>,
 }
 
 /// A document under edit. Create one per front end (the CLI makes one per process, or per
@@ -93,6 +100,8 @@ pub struct Session {
     design: Option<Arc<Design>>,
     path: Option<PathBuf>,
     revision: u64,
+    /// Changes of any session state, including saves and results (not just document edits).
+    generation: u64,
     /// The document as it was opened or last saved.
     saved: Option<Arc<Design>>,
     dirty: bool,
@@ -134,6 +143,26 @@ impl Session {
     pub fn revision(&self) -> u64 {
         self.revision
     }
+    /// Lease for preparing a command on a clone without blocking the session's owner.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+    /// Commit prepared state only if nothing changed since its snapshot was taken.
+    /// Unlike `adopt`, this preserves the command's revision, even for a read-only query.
+    pub fn accept_prepared(
+        &mut self,
+        generation: u64,
+        prepared: Session,
+    ) -> Result<(), EngineError> {
+        if self.generation != generation {
+            return Err(EngineError::new(
+                "revision",
+                "処理中にセッションが変わりました。状態を読み直して再実行してください",
+            ));
+        }
+        *self = prepared;
+        Ok(())
+    }
     /// The document differs from the saved file.
     pub fn is_dirty(&self) -> bool {
         self.dirty
@@ -157,14 +186,43 @@ impl Session {
     /// Keep `record` as the latest calculation record, replacing the previous one.
     /// `revision` is the revision of the document it was computed from, if any.
     pub fn set_latest_run(&mut self, record: Arc<RunRecord>, revision: Option<u64>) {
-        self.run = Some(LatestRun { record, revision });
+        self.set_latest_run_view(record, revision, Arc::default());
+    }
+    /// Keep display samples alongside a run without changing its calculation report.
+    pub fn set_latest_run_view(
+        &mut self,
+        record: Arc<RunRecord>,
+        revision: Option<u64>,
+        viewer_paths: Arc<Vec<raytrace_core::trace::PathEvent>>,
+    ) {
+        self.generation += 1;
+        let document = if revision == Some(self.revision) {
+            self.design.as_ref().map(Arc::downgrade)
+        } else {
+            None
+        };
+        self.run = Some(LatestRun {
+            record,
+            revision,
+            viewer_paths,
+            document,
+        });
     }
     /// The latest record was computed from a document that has changed since.
     pub fn run_is_stale(&self) -> bool {
-        self.run
-            .as_ref()
-            .and_then(|run| run.revision)
-            .is_some_and(|revision| revision != self.revision)
+        let Some(run) = &self.run else {
+            return false;
+        };
+        if run.revision.is_none() {
+            return false;
+        }
+        match (
+            run.document.as_ref().and_then(Weak::upgrade),
+            self.design.as_ref(),
+        ) {
+            (Some(traced), Some(current)) => !Arc::ptr_eq(&traced, current),
+            _ => true,
+        }
     }
 
     /// Reject a command that was prepared for another revision.
@@ -187,6 +245,7 @@ impl Session {
     }
     /// Change the limits of the undo history; steps over the new limits are dropped now.
     pub fn set_history_limits(&mut self, limits: HistoryLimits) {
+        self.generation += 1;
         self.limits = limits;
         self.trim();
     }
@@ -242,6 +301,7 @@ impl Session {
         self.base = self.pending.take().map(|p| p.entry);
         self.open_group = None;
         self.revision += 1;
+        self.generation += 1;
         Ok(())
     }
 
@@ -249,10 +309,12 @@ impl Session {
     /// document, or edited a copy of this one ([`Clone`]), on another thread. The revision
     /// keeps rising; the latest calculation record of `other` comes along.
     pub fn adopt(&mut self, other: Session) {
+        let generation = (self.generation + 1).max(other.generation);
         let revision = (self.revision + 1).max(other.revision);
         let catalogs = std::mem::take(&mut self.catalogs);
         let other_revision = other.revision;
         *self = other;
+        self.generation = generation;
         if self.catalogs.is_empty() {
             self.catalogs = catalogs;
         }
@@ -312,6 +374,7 @@ impl Session {
         self.design = Some(Arc::new(next));
         self.update_dirty();
         self.revision += 1;
+        self.generation += 1;
         Ok(())
     }
 
@@ -366,6 +429,7 @@ impl Session {
         self.open_group = None;
         self.update_dirty();
         self.revision += 1;
+        self.generation += 1;
     }
 
     /// The document differs from the saved one unless it is the very same value.
@@ -379,6 +443,7 @@ impl Session {
 
     /// The document was written to `path`.
     pub fn mark_saved(&mut self, path: PathBuf) {
+        self.generation += 1;
         self.path = Some(path);
         self.saved = self.design.clone();
         self.update_dirty();

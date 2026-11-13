@@ -1,6 +1,7 @@
 //! Command-line front end of the command registry.
 //!
-//! The CLI has no options of its own. Every argument sets one field of a command's
+//! Apart from `--connect FILE` selecting a GUI session, every argument sets a command field.
+//! Command parameters are defined by the registry, so
 //! parameters, so the command schemas (`raytrace-rs command.describe id=COMMAND`) are the
 //! complete interface and `raytrace-rs COMMAND --help` is generated from them:
 //!
@@ -12,6 +13,7 @@
 //! stdout carries one JSON response per request; people read stderr. `run` keeps one session
 //! for the whole stream, so a later request can work on the document an earlier one opened.
 use raytrace_core::trace::TraceControl;
+use raytrace_engine::remote::Client;
 use raytrace_engine::{
     Context, Progress, Response, Session, commands,
     engine::{
@@ -175,7 +177,12 @@ fn fail(stdout: &mut impl Write, command: &str, error: EngineError) -> bool {
 }
 
 /// Run one request value in the session and print its response line. Returns success.
-fn perform(session: &mut Session, request: Value, stdout: &mut impl Write) -> bool {
+fn perform(
+    session: &mut Session,
+    remote: Option<&Client>,
+    request: Value,
+    stdout: &mut impl Write,
+) -> bool {
     let control = TraceControl::default();
     let mut progress = |p: Progress<'_>| {
         if let Progress::Scan(m) = p {
@@ -187,10 +194,11 @@ fn perform(session: &mut Session, request: Value, stdout: &mut impl Write) -> bo
             eprintln!("走査: {done}/{}ケース", m.cases.len());
         }
     };
-    let response = session.execute_request(
-        request,
-        &mut Context::with_progress(&control, &mut progress),
-    );
+    let mut context = Context::with_progress(&control, &mut progress);
+    let response = match remote {
+        Some(remote) => remote.execute(request, &mut context),
+        None => session.execute_request(request, &mut context),
+    };
     for line in describe(&response) {
         eprintln!("{line}");
     }
@@ -202,7 +210,7 @@ fn perform(session: &mut Session, request: Value, stdout: &mut impl Write) -> bo
 }
 
 /// `run FILE|-`: a stream of JSON requests in one session, one response line each.
-fn run_requests(source: Option<&String>, stdout: &mut impl Write) -> bool {
+fn run_requests(source: Option<&String>, remote: Option<&Client>, stdout: &mut impl Write) -> bool {
     let text = match source.map(String::as_str) {
         None => {
             return fail(
@@ -229,7 +237,7 @@ fn run_requests(source: Option<&String>, stdout: &mut impl Write) -> bool {
     for value in serde_json::Deserializer::from_str(&text).into_iter::<Value>() {
         any = true;
         ok &= match value {
-            Ok(value) => perform(&mut session, value, stdout),
+            Ok(value) => perform(&mut session, remote, value, stdout),
             Err(e) => fail(
                 stdout,
                 "unknown",
@@ -409,6 +417,7 @@ fn overview(list: &CommandList) -> String {
     let mut out = String::from(
         "raytrace-rs COMMAND [FIELD=文字列 | FIELD:=JSON | FIELD:=@FILE.json]...\n\
          raytrace-rs run REQUEST.json|-\n\
+         raytrace-rs --connect SESSION.json COMMAND [FIELD=文字列 | FIELD:=JSON]...\n\
          raytrace-rs COMMAND --help\n\
          raytrace-rs --version\n\n\
          mcp はAIエージェント向けのMCPサーバーを標準入出力で起動します（raytrace-rs mcp --help）。\n\
@@ -427,9 +436,12 @@ fn overview(list: &CommandList) -> String {
 
 /// `mcp`: serve the MCP protocol on stdin and stdout. The server writes to stdout from its own
 /// threads, so `main` must not hold the stdout lock in this mode.
-fn mcp(args: &[String]) -> i32 {
+fn mcp(args: &[String], remote: Option<Client>) -> i32 {
     match args {
-        [] => match raytrace_mcp::serve_stdio() {
+        [] => match remote.map_or_else(
+            raytrace_mcp::serve_stdio,
+            raytrace_mcp::serve_stdio_connected,
+        ) {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("エラー: MCPサーバーの入出力に失敗しました: {e}");
@@ -440,17 +452,51 @@ fn mcp(args: &[String]) -> i32 {
             println!("{}", raytrace_mcp::USAGE);
             0
         }
+        [flag, path] if flag == "--connect" && remote.is_none() => {
+            match Client::open(std::path::Path::new(path)) {
+                Ok(client) => mcp(&[], Some(client)),
+                Err(e) => {
+                    eprintln!("エラー: GUIの接続ファイルを開けません: {e}");
+                    1
+                }
+            }
+        }
         _ => {
-            eprintln!("エラー: mcp は引数を取りません（raytrace-rs mcp --help）");
+            eprintln!(
+                "エラー: raytrace-rs mcp [--connect 接続ファイル] の形で指定してください（raytrace-rs mcp --help）"
+            );
             1
         }
     }
 }
 
 fn main() {
-    let args: Vec<String> = env::args().skip(1).collect();
+    let mut args: Vec<String> = env::args().skip(1).collect();
+    let remote = if args.first().map(String::as_str) == Some("--connect") {
+        let result = args
+            .get(1)
+            .filter(|_| args.len() > 2)
+            .ok_or_else(|| usage("--connect 接続ファイル COMMAND の形で指定してください"))
+            .and_then(|path| {
+                Client::open(std::path::Path::new(path)).map_err(|e| {
+                    EngineError::new("connection", format!("GUIの接続ファイルを開けません: {e}"))
+                })
+            });
+        match result {
+            Ok(client) => {
+                args.drain(..2);
+                Some(client)
+            }
+            Err(error) => {
+                fail(&mut std::io::stdout().lock(), "usage", error);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None
+    };
     if args.first().map(String::as_str) == Some("mcp") {
-        std::process::exit(mcp(&args[1..]));
+        std::process::exit(mcp(&args[1..], remote));
     }
     let mut stdout = std::io::stdout().lock();
     let ok = match args.first().map(String::as_str) {
@@ -466,7 +512,7 @@ fn main() {
             let _ = writeln!(stdout, "raytrace-rs {}", env!("CARGO_PKG_VERSION"));
             true
         }
-        Some("run") => run_requests(args.get(1), &mut stdout),
+        Some("run") => run_requests(args.get(1), remote.as_ref(), &mut stdout),
         Some(command) => match registry().get(command) {
             None => {
                 let known = registry()
@@ -490,7 +536,7 @@ fn main() {
                 }
             }
             Some(_) => match build(command, &args[1..]) {
-                Ok(value) => perform(&mut Session::new(), value, &mut stdout),
+                Ok(value) => perform(&mut Session::new(), remote.as_ref(), value, &mut stdout),
                 Err(error) => fail(&mut stdout, command, error),
             },
         },

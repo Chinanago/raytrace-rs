@@ -25,6 +25,40 @@ const MAX_LINE_BYTES: usize = 64 * 1024 * 1024;
 /// How often the ray progress of a single trace is sampled.
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 
+enum Backend {
+    Local(Box<Session>),
+    Connected(raytrace_engine::remote::Client),
+}
+
+impl Backend {
+    fn revision(&self) -> u64 {
+        match self {
+            Self::Local(s) => s.revision(),
+            Self::Connected(_) => 0,
+        }
+    }
+    fn execute(&mut self, command: &str, params: Value, context: &mut Context<'_>) -> Response {
+        match self {
+            Self::Local(session) => session.execute(command, params, context),
+            Self::Connected(client) => {
+                if params.get("command").is_some() {
+                    return Response::failure(
+                        command,
+                        0,
+                        EngineError::new(
+                            "invalid_request",
+                            "command はコマンドのパラメーターではありません",
+                        ),
+                    );
+                }
+                let mut request = params.as_object().cloned().unwrap_or_default();
+                request.insert("command".into(), Value::String(command.into()));
+                client.execute(Value::Object(request), context)
+            }
+        }
+    }
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -133,7 +167,7 @@ fn poll_progress(control: &TraceControl, sink: &ProgressSink<'_>, stopped: mpsc:
 
 /// Run one command. A cancelled call does not start further commands.
 fn run_request(
-    session: &mut Session,
+    session: &mut Backend,
     request: &Request,
     control: &TraceControl,
     sink: Option<&ProgressSink<'_>>,
@@ -146,13 +180,19 @@ fn run_request(
         );
     }
     let mut on_progress = |progress: Progress<'_>| {
-        if let (Some(sink), Progress::Scan(manifest)) = (sink, progress) {
-            let done = manifest
-                .cases
-                .iter()
-                .filter(|c| c.state == "completed" || c.state == "failed")
-                .count();
-            sink.report(done, manifest.cases.len());
+        if let Some(sink) = sink {
+            match progress {
+                Progress::Scan(manifest) => {
+                    let done = manifest
+                        .cases
+                        .iter()
+                        .filter(|c| c.state == "completed" || c.state == "failed")
+                        .count();
+                    sink.report(done, manifest.cases.len());
+                }
+                Progress::Counters { completed, total } => sink.report(completed, total),
+                _ => {}
+            }
         }
     };
     // A scan reports through the callback; a single trace is sampled from its control.
@@ -173,7 +213,7 @@ fn run_request(
 }
 
 /// Run a queued tool call and build its result object.
-fn run_job(session: &mut Session, job: &Job, output: &Output) -> Value {
+fn run_job(session: &mut Backend, job: &Job, output: &Output) -> Value {
     let sink = |index: usize, count: usize| {
         job.progress_token.as_ref().map(|token| ProgressSink {
             output,
@@ -218,8 +258,7 @@ fn run_job(session: &mut Session, job: &Job, output: &Output) -> Value {
 }
 
 /// The worker: runs the queued calls in order until the queue closes.
-fn worker(jobs: mpsc::Receiver<Job>, output: &Output, inflight: &InFlight) {
-    let mut session = Session::new();
+fn worker(jobs: mpsc::Receiver<Job>, output: &Output, inflight: &InFlight, mut session: Backend) {
     for job in jobs {
         let result = panic::catch_unwind(AssertUnwindSafe(|| run_job(&mut session, &job, output)))
             .unwrap_or_else(|_| {
@@ -395,6 +434,23 @@ where
     R: BufRead,
     W: Write + Send + 'static,
 {
+    serve_backend(&mut input, output, Backend::Local(Box::new(Session::new())))
+}
+
+/// Serve the same four tools against an already running GUI's session.
+pub fn serve_connected<R: BufRead, W: Write + Send + 'static>(
+    input: R,
+    output: W,
+    client: raytrace_engine::remote::Client,
+) -> io::Result<()> {
+    serve_backend(input, output, Backend::Connected(client))
+}
+
+fn serve_backend<R: BufRead, W: Write + Send + 'static>(
+    mut input: R,
+    output: W,
+    backend: Backend,
+) -> io::Result<()> {
     let output = Output {
         writer: Mutex::new(Box::new(output)),
     };
@@ -403,7 +459,7 @@ where
     thread::scope(|scope| {
         let worker_thread = thread::Builder::new()
             .name("mcp-worker".into())
-            .spawn_scoped(scope, || worker(jobs, &output, &inflight))?;
+            .spawn_scoped(scope, || worker(jobs, &output, &inflight, backend))?;
         let mut dispatcher = Dispatcher {
             output: &output,
             inflight: &inflight,
@@ -441,6 +497,10 @@ where
 /// [`serve`] on the standard input and output.
 pub fn serve_stdio() -> io::Result<()> {
     serve(io::stdin().lock(), io::stdout())
+}
+
+pub fn serve_stdio_connected(client: raytrace_engine::remote::Client) -> io::Result<()> {
+    serve_connected(io::stdin().lock(), io::stdout(), client)
 }
 
 #[cfg(test)]

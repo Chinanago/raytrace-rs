@@ -671,7 +671,7 @@
           "minimum": 0
         },
         "preview_paths": {
-          "description": "Replace `report.paths` with up to N sample rays spread over all sources (GUI preview).",
+          "description": "Return up to N display-only sample rays spread over all sources in `viewer_paths`.\nThe saved calculation report and its recorded path sampling stay unchanged.",
           "type": "integer",
           "format": "uint",
           "default": 0,
@@ -3626,6 +3626,11 @@
           "description": "`convergence.json` in a convergence directory.",
           "type": "string",
           "const": "convergence"
+        },
+        {
+          "description": "Native GUI session connection file (contains a secret token).",
+          "type": "string",
+          "const": "connection"
         }
       ]
     },

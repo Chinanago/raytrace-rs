@@ -38,7 +38,7 @@ DEMOS = {
 }
 FIXTURES = {"tests/fixtures/step_legacy_hits.json"}
 SCHEMAS = {f"schemas/{name}.schema.json" for name in (
-    "request", "response", "scene", "design", "run", "scan_plan", "scan", "convergence_plan", "convergence",
+    "request", "response", "scene", "design", "run", "scan_plan", "scan", "convergence_plan", "convergence", "connection",
 )}
 FONT_ASSETS = {"crates/raytrace-gui/assets/fonts/" + name for name in (
     "NotoSansJP-Regular.otf", "NotoSansJP-Bold.otf", "NotoSansMono-Regular.ttf",

@@ -131,10 +131,12 @@ pub enum SchemaName {
     ConvergencePlan,
     /// `convergence.json` in a convergence directory.
     Convergence,
+    /// Native GUI session connection file (contains a secret token).
+    Connection,
 }
 
 impl SchemaName {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Request,
         Self::Response,
         Self::Scene,
@@ -144,6 +146,7 @@ impl SchemaName {
         Self::Scan,
         Self::ConvergencePlan,
         Self::Convergence,
+        Self::Connection,
     ];
     pub fn as_str(self) -> &'static str {
         match self {
@@ -156,6 +159,7 @@ impl SchemaName {
             Self::Scan => "scan",
             Self::ConvergencePlan => "convergence_plan",
             Self::Convergence => "convergence",
+            Self::Connection => "connection",
         }
     }
 }
@@ -565,7 +569,8 @@ pub struct TraceRequest {
     /// Save every path segment of the first N launch rays in input order.
     #[serde(default)]
     pub paths: u64,
-    /// Replace `report.paths` with up to N sample rays spread over all sources (GUI preview).
+    /// Return up to N display-only sample rays spread over all sources in `viewer_paths`.
+    /// The saved calculation report and its recorded path sampling stay unchanged.
     #[serde(default)]
     pub preview_paths: usize,
     /// Reject generated runs with more launch rays than this.
@@ -621,6 +626,8 @@ pub struct TraceResult {
     pub worker_threads: usize,
     /// Unresolved weight and other conditions worth checking in the record.
     pub warnings: Vec<String>,
+    /// Display samples from `preview_paths`, separate from the reproducible record.
+    pub viewer_paths: Vec<raytrace_core::trace::PathEvent>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub record: Option<Box<RunOutput>>,
 }
@@ -638,6 +645,8 @@ pub struct RunOpenRequest {
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub struct RunOpened {
     pub record: Box<RunRecord>,
+    /// Display-only sampling, separate from the persisted record.
+    pub viewer_paths: Vec<raytrace_core::trace::PathEvent>,
 }
 
 /// `run.save`.
@@ -764,7 +773,8 @@ fn default_display() -> DisplaySettings {
 
 /// CLI output envelope: `ok`, the request `command`, the session `revision`, then `error`
 /// and/or `result`.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Response {
     pub ok: bool,
     /// The command id as written in the request.
@@ -835,7 +845,8 @@ impl std::fmt::Debug for Response {
     }
 }
 
-#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ErrorInfo {
     /// Stable snake_case identifier, e.g. `io`, `invalid_json`, `invalid_request`,
     /// `invalid_scene`, `design`, `zmx`, `plan`, `cases_failed`, `cancelled`, `revision`,
@@ -903,6 +914,8 @@ coded_error!(
 pub enum Progress<'a> {
     /// The scan manifest after each case changes state.
     Scan(&'a scan::ScanManifest),
+    /// Transported progress without repeating a potentially large scan manifest.
+    Counters { completed: usize, total: usize },
 }
 
 // ---- helpers shared by the commands -----------------------------------------------------

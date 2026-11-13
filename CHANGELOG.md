@@ -12,6 +12,7 @@ v0.11.0からの主な変更です。ベータの間は後方互換性を保ち�
 - **設計文書 `raytrace-design-v1`**：部品（`Part`）と配置（`Occurrence`）、安定したIDで光学系を表します。`doc.*` と `component.*` のコマンドで追加、複製、削除、配置の編集ができます。ZMXの互換性レポートも設計文書に付きます。
 - **セッション、取り消し、変更履歴**：`doc.set` で文書の一部を書き換え、`session.undo` で戻せます。`group` で連続した編集を取り消しの1単位にまとめ、`session.log` で確定した変更を確認できます。GUIの編集も同じ経路です。
 - **MCPサーバー**：`raytrace-rs mcp` が標準入出力でMCPサーバーを起動します。ツールは `list_commands`・`describe_command`・`execute`・`batch` の4つで、コマンドを足しても自動で `execute` から使えます。進捗通知と中止にも対応しています。
+- **GUIへの接続**：`raytrace-gui --automation-session 接続ファイル` で起動したGUIへ、CLIの `--connect`・MCPの `mcp --connect` から接続できます。同じ文書・Undo/Redo・保存状態・計算結果を共有し、処理中のGUIの変更は競合として検出します。
 - **解析コマンド**：計算記録の後処理を `analysis.budget`（光量収支）と `analysis.screen`（スクリーンの分布、半値幅、断面、ROI）として呼べます。GUIのスクリーンタブも同じ解析の結果を表示します。
 - **Linux・macOSの配布物**：依存ライブラリなしで動く静的リンクのLinux版CLI、CLIとGUIを含むmacOS版（Apple SiliconとIntelの両対応）を用意しました。リリースの資産には、版なしの固定名（`raytrace-rs-windows-x64.zip`・`raytrace-rs-macos.tar.gz`・`raytrace-rs-linux-x64.tar.gz`）も添付します。
 - **Claude Desktop拡張（`.mcpb`）**：WindowsとmacOSのMCPB拡張を用意しました。ファイルを開くだけで、Claude Desktopから `raytrace-rs` のMCPサーバーを使えます。

@@ -30,11 +30,11 @@ pub mod protocol;
 mod server;
 pub mod tools;
 
-pub use server::{serve, serve_stdio};
+pub use server::{serve, serve_connected, serve_stdio, serve_stdio_connected};
 
 /// What `raytrace-rs mcp --help` prints.
 pub const USAGE: &str = "\
-raytrace-rs mcp
+raytrace-rs mcp [--connect SESSION.json]
 
 Starts an MCP (Model Context Protocol) server on the standard input and output: JSON-RPC 2.0,
 one message per line. Register it in an MCP client, for example:
@@ -44,4 +44,8 @@ one message per line. Register it in an MCP client, for example:
 The server keeps one session with an open design and offers four tools: list_commands,
 describe_command, execute and batch. Every command of the CLI is available through execute.
 Only protocol messages are written to stdout; logs go to stderr. The server ends when the
-input closes, after the calls already received have finished.";
+input closes, after the calls already received have finished.
+
+With --connect, execute and batch operate on a GUI started with --automation-session
+SESSION.json. Use session.status first and pass expected_revision to every mutation.
+Relative paths are resolved in the GUI's working directory. Keep the session file private.";

@@ -342,6 +342,35 @@ fn stale_flips_when_the_document_changes() {
 }
 
 #[test]
+fn undo_restores_result_freshness_without_rewinding_the_revision() {
+    let (mut session, _) = traced();
+    ok(
+        &mut session,
+        "doc.set",
+        json!({"path": MOVE_SCREEN, "value":70.0}),
+    );
+    assert_eq!(
+        ok(&mut session, "analysis.budget", json!({}))["stale"],
+        true
+    );
+    ok(&mut session, "session.undo", json!({}));
+    assert_eq!(session.revision(), 3);
+    let original = ok(&mut session, "analysis.budget", json!({}));
+    assert_eq!(original["stale"], false);
+    assert_eq!(original["run_revision"], 1);
+    ok(&mut session, "session.redo", json!({}));
+    assert_eq!(
+        ok(&mut session, "analysis.budget", json!({}))["stale"],
+        true
+    );
+    ok(&mut session, "session.undo", json!({}));
+    assert_eq!(
+        ok(&mut session, "analysis.budget", json!({}))["stale"],
+        false
+    );
+}
+
+#[test]
 fn without_a_run_the_analyses_report_no_run() {
     let mut session = Session::new();
     for command in ["analysis.budget", "analysis.screen"] {

@@ -224,5 +224,6 @@ fn schema(name: SchemaName) -> schemars::Schema {
         SchemaName::Scan => schema_for!(scan::ScanManifest),
         SchemaName::ConvergencePlan => schema_for!(convergence::ConvergencePlan),
         SchemaName::Convergence => schema_for!(convergence::ConvergenceReport),
+        SchemaName::Connection => schema_for!(crate::remote::ConnectionInfo),
     }
 }

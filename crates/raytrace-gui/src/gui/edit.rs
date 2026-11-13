@@ -211,7 +211,7 @@ impl App {
             source_selected: self.source_selected,
         }
     }
-    fn remember_selection(&mut self) {
+    pub(super) fn remember_selection(&mut self) {
         let Some(design) = self.session.design() else {
             return;
         };

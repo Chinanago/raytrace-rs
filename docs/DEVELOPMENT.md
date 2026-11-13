@@ -303,7 +303,7 @@ Cargo workspaceとして、`crates/` 以下の8クレートに分けています
 
 文書を使うコマンドは `model`（`path`・`design`・`scene`）を省略でき、省略するとセッションの文書、指定するとそのモデルだけを扱います（セッションは変わりません）。`Context` は中止と光線進捗の `TraceControl`、走査の進捗の `Progress` のコールバックを運びます。コマンドはドット区切りのIDだけで呼べ、前の短い名前（別名）は持ちません。
 
-CLIに独自のオプションはありません。`raytrace-rs COMMAND a.b=文字列 a.b:=JSON` の引数をコマンドのパラメーターとして組み立て、`raytrace-rs run` はリクエストJSONを1つのセッションで続けて実行します。どちらも同じ検証を通り、`--help` と `COMMAND --help` は `command.list`・`command.describe` のスキーマから生成します。そのため、CLIで使える操作とフィールドはコマンドの入力型だけで決まり、引数の処理を個別に保守する必要がありません。GUIは段階3では自分の `Design` を持ち続け、作業スレッドで新しい `Session` を作って、`model` に渡して型付きのコマンドを呼びます（編集のコマンド化は段階4）。
+CLIの `--connect 接続ファイル` は共有するGUIセッションの選択です。操作ごとの独自のオプションはありません。`raytrace-rs COMMAND a.b=文字列 a.b:=JSON` の引数をコマンドのパラメーターとして組み立て、`raytrace-rs run` はリクエストJSONを1つのセッションで続けて実行します。どちらも同じ検証を通り、`--help` と `COMMAND --help` は `command.list`・`command.describe` のスキーマから生成します。そのため、CLIで使える操作とフィールドはコマンドの入力型だけで決まり、引数の処理を個別に保守する必要がありません。GUIはUIスレッドの `Session` で編集します。外部接続の輸送は `raytrace_engine::remote` のネイティブ専用部分にあり、`Pending::prepare` を作業スレッドで実行し、`Prepared::commit` をUIスレッドで確定します。`Session::generation` は文書の版だけでなく保存・計算結果の変更も検出し、競合・中止では準備した状態を受け取りません。GUIから行った計算も同じセッションの直近の計算記録になります。
 
 モデル・計算記録・計画・応答の型は `schemars` でJSON Schemaを導出します。下位クレートでは `schema` 機能で有効にし、`raytrace-engine` は常に有効です。スキーマは `schemas/` にコミットし、型を変えたら次のコマンドで更新します。`tests/engine.rs` が古いスキーマを検出します。各クレートの `Error::code()` は応答の `error.code` に使う固定の識別子です。
 

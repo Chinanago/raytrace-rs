@@ -911,6 +911,13 @@
               "type": "number",
               "format": "double"
             },
+            "viewer_paths": {
+              "description": "Display samples from `preview_paths`, separate from the reproducible record.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PathEvent"
+              }
+            },
             "warnings": {
               "description": "Unresolved weight and other conditions worth checking in the record.",
               "type": "array",
@@ -933,7 +940,8 @@
             "relative_budget_closure_error",
             "median_seconds",
             "worker_threads",
-            "warnings"
+            "warnings",
+            "viewer_paths"
           ]
         },
         "revision": {
@@ -1024,6 +1032,13 @@
               "type": "number",
               "format": "double"
             },
+            "viewer_paths": {
+              "description": "Display samples from `preview_paths`, separate from the reproducible record.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PathEvent"
+              }
+            },
             "warnings": {
               "description": "Unresolved weight and other conditions worth checking in the record.",
               "type": "array",
@@ -1046,7 +1061,8 @@
             "relative_budget_closure_error",
             "median_seconds",
             "worker_threads",
-            "warnings"
+            "warnings",
+            "viewer_paths"
           ]
         },
         "revision": {
@@ -1082,10 +1098,18 @@
           "properties": {
             "record": {
               "$ref": "#/$defs/RunRecord"
+            },
+            "viewer_paths": {
+              "description": "Display-only sampling, separate from the persisted record.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/PathEvent"
+              }
             }
           },
           "required": [
-            "record"
+            "record",
+            "viewer_paths"
           ]
         },
         "revision": {
@@ -3287,6 +3311,7 @@
           "type": "string"
         }
       },
+      "additionalProperties": false,
       "required": [
         "code",
         "message"

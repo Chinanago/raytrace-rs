@@ -1,6 +1,6 @@
 # raytrace-rs reference (0.12+)
 
-Commands, fields and result meanings. The schemas are the source of truth: `describe_command` over MCP, `raytrace-rs COMMAND --help` or `raytrace-rs command.describe id=COMMAND` on the CLI, `raytrace-rs schema.get name=NAME` (`request`, `response`, `scene`, `design`, `run`, `scan_plan`, `scan`, `convergence_plan`, `convergence`) for file formats. v0.11 used a different CLI (options such as `--inspect`); upgrade instead of mapping its options.
+Commands, fields and result meanings. The schemas are the source of truth: `describe_command` over MCP, `raytrace-rs COMMAND --help` or `raytrace-rs command.describe id=COMMAND` on the CLI, `raytrace-rs schema.get name=NAME` (`request`, `response`, `scene`, `design`, `run`, `scan_plan`, `scan`, `convergence_plan`, `convergence`, `connection`) for file formats. v0.11 used a different CLI (options such as `--inspect`); upgrade instead of mapping its options.
 
 ## Locate the application
 
@@ -85,3 +85,7 @@ EOF
 - Design JSON (`doc.save`) and run records (`output`) can embed original ZMX definitions and geometry; do not commit or share a user's optical data. Records and scan files from builds before 0.12 cannot be read: rebuild the design and re-run.
 - Settings, CAD cache and GUI scan records live in `%LOCALAPPDATA%\Raytrace` (Windows), `~/Library/Application Support/Raytrace` (macOS) or `~/.local/share/raytrace` (Linux); `RAYTRACE_DATA_DIR` moves them.
 - The GUI (`raytrace-gui`) shows the same calculations; its wavelength fields are nm, everything else here is mm and µm.
+
+## Connect to an open GUI
+
+Start the GUI with `raytrace-gui --automation-session /abs/private/session.json` (an existing private directory; the file must not exist). Use `raytrace-rs --connect /abs/private/session.json COMMAND ...` or MCP `raytrace-rs mcp --connect /abs/private/session.json`. The GUI, CLI and MCP then use one session. Read `session.status` first; every mutation must include `expected_revision` from that response. Relative paths are resolved in the GUI working directory, so use absolute paths. A `revision` error means GUI activity changed the snapshot: read the state and decide again, never silently retry a mutation. External trace results appear in the GUI and its latest-run analyses. Edits, saved state and undo history are shared; queries do not increment the revision. Keep the token-bearing session file private; it is removed on normal GUI shutdown. Client and GUI versions must match.
