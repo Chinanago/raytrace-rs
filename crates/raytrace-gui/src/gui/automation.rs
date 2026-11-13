@@ -170,8 +170,30 @@ mod tests {
         let result = app.result.as_ref().unwrap();
         assert!(!result.viewer_paths.is_empty());
         assert!(result.record.report.paths.is_empty());
+        app.undo();
+        assert!(app.is_stale());
+        assert_eq!(
+            call(
+                &mut app,
+                &client,
+                json!({"command":"analysis.budget"}),
+                &ctx
+            )["result"]["stale"],
+            true
+        );
+        app.redo();
+        assert!(!app.is_stale());
+        assert_eq!(
+            call(
+                &mut app,
+                &client,
+                json!({"command":"analysis.budget"}),
+                &ctx
+            )["result"]["stale"],
+            false
+        );
         assert!(Arc::ptr_eq(
-            &result.record,
+            &app.result.as_ref().unwrap().record,
             &app.session.latest_run().unwrap().record
         ));
         assert!(!app.is_stale());

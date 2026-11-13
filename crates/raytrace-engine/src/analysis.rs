@@ -223,15 +223,18 @@ fn execute<A: Analysis>(
     _: &mut Context<'_>,
 ) -> Result<AnalysisResponse<A::Output>, EngineError> {
     let AnalysisRequest { run, settings } = request;
-    let (record, revision) = match run {
+    let (record, revision, stale) = match run {
         // A record given to the command is not the one the session computed.
-        Some(input) => (load_shared_record(input)?.0, None),
+        Some(input) => (load_shared_record(input)?.0, None, false),
         None => {
             let latest = session.latest_run().ok_or_else(no_run)?;
-            (Arc::clone(&latest.record), latest.revision)
+            (
+                Arc::clone(&latest.record),
+                latest.revision,
+                session.run_is_stale(),
+            )
         }
     };
-    let stale = revision.is_some_and(|revision| revision != session.revision());
     let view = RunView::new(&record, revision, stale)?;
     let result = A::run(&view, settings)?;
     Ok(AnalysisResponse {

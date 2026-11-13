@@ -17,7 +17,10 @@ use raytrace_io::{
     design::{self, Design},
     record::RunRecord,
 };
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Weak},
+};
 
 /// How much undo history a session keeps. The oldest steps are dropped first; the newest
 /// step is always kept.
@@ -86,6 +89,8 @@ pub struct LatestRun {
     pub revision: Option<u64>,
     /// Derived viewer samples, kept apart from the reproducible calculation report.
     pub viewer_paths: Arc<Vec<raytrace_core::trace::PathEvent>>,
+    /// Identity of the traced document, without retaining another history snapshot.
+    document: Option<Weak<Design>>,
 }
 
 /// A document under edit. Create one per front end (the CLI makes one per process, or per
@@ -191,18 +196,33 @@ impl Session {
         viewer_paths: Arc<Vec<raytrace_core::trace::PathEvent>>,
     ) {
         self.generation += 1;
+        let document = if revision == Some(self.revision) {
+            self.design.as_ref().map(Arc::downgrade)
+        } else {
+            None
+        };
         self.run = Some(LatestRun {
             record,
             revision,
             viewer_paths,
+            document,
         });
     }
     /// The latest record was computed from a document that has changed since.
     pub fn run_is_stale(&self) -> bool {
-        self.run
-            .as_ref()
-            .and_then(|run| run.revision)
-            .is_some_and(|revision| revision != self.revision)
+        let Some(run) = &self.run else {
+            return false;
+        };
+        if run.revision.is_none() {
+            return false;
+        }
+        match (
+            run.document.as_ref().and_then(Weak::upgrade),
+            self.design.as_ref(),
+        ) {
+            (Some(traced), Some(current)) => !Arc::ptr_eq(&traced, current),
+            _ => true,
+        }
     }
 
     /// Reject a command that was prepared for another revision.

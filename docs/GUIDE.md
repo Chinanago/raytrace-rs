@@ -230,7 +230,7 @@ CLIの本体は、コマンドの登録表とセッションを持つエンジ�
 | `analysis.budget` | なし | 発射光量（`reference_weight`）、収支の各項目の光量と基準光量比（`entries`）、収支誤差（`relative_budget_closure_error`）、未解決分（`unresolved_percent_of_reference` = 数値失敗＋媒質不整合＋分岐打切り＋相互作用上限。収束確認の `unresolved_percent` と同じ定義）、スクリーンごとの受光（`detectors`）、面ごとの到達（`surfaces`） |
 | `analysis.screen` | `detector`（添字か名前。省略は先頭）、`cursor_mm:=[x,y]`（断面の位置）、`roi:={"minimum_mm":[x,y],"maximum_mm":[x,y]}`、`include_profiles:=true` | 画素数・画素寸法・半サイズ、受光光量比、ピーク（光量・画素・位置）、X/Y断面の位置と半値幅（`x_slice`・`y_slice` の `fwhm_mm`。交点が見つからなければ `null`。下側・上側の交点、複数の山の印を含む）、ROIの積分（基準光量比・光量・面積・平均）、`include_profiles` で断面の画素値 |
 
-どの解析も `run`（計算記録のパス `run.path=...` かインライン `run.record:=@...`）を受け取ります。省略すると、セッションが直近に保持している計算結果、つまり `analysis.trace`・`run.replay`・`run.open` の結果を使います。まだ計算していなければ `no_run` エラーです。セッションが保持するのは直近の1件だけです。結果には `run_revision`（その計算に使った文書の版番号。`run` で渡した記録、`run.open`・`run.replay`、`model` を渡した追跡では `null`）と `stale`（計算のあとに文書が変わっていれば `true`）が付きます。`stale: true` の数値は、変更前の設計のものです。`session.status` の `run` にも直近の計算結果の有無と `stale` が出ます。解析の数値は、GUIのスクリーン画面と同じ関数（画面は `analysis.screen` の結果を描きます）で求めます。
+どの解析も `run`（計算記録のパス `run.path=...` かインライン `run.record:=@...`）を受け取ります。省略すると、セッションが直近に保持している計算結果、つまり `analysis.trace`・`run.replay`・`run.open` の結果を使います。まだ計算していなければ `no_run` エラーです。セッションが保持するのは直近の1件だけです。結果には `run_revision`（その計算に使った文書の版番号。`run` で渡した記録、`run.open`・`run.replay`、`model` を渡した追跡では `null`）と `stale`（計算のあとに文書が変わっていれば `true`）が付きます。`stale: true` の数値は、変更前の設計のものです。GUIと外部解析は計算時の文書の同一性で鮮度を判定し、Undo/Redoで同じ文書に戻ると `stale: false` に戻ります。版番号自体は増え続け、`run_revision` は計算時の値を保ちます。`session.status` の `run` にも直近の計算結果の有無と `stale` が出ます。解析の数値は、GUIのスクリーン画面と同じ関数（画面は `analysis.screen` の結果を描きます）で求めます。
 
 ```bash
 cat <<'EOF' | ./raytrace-rs run -
