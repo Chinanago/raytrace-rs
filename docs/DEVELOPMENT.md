@@ -58,7 +58,7 @@ cargo deny --workspace check
 
 ```powershell
 python scripts/package_windows.py
-python scripts/check_portable.py results/packages/raytrace-rs-0.12.0-windows-x64.zip
+python scripts/check_portable.py results/packages/raytrace-rs-0.12.1-windows-x64.zip
 ```
 
 ### macOS版
@@ -82,8 +82,8 @@ python3 scripts/package_macos.py
 
 | スクリプト | 対象 | 動作 |
 |---|---|---|
-| `install.sh` | macOS・Linux x86_64（POSIX sh） | `uname` で資産を選び（`raytrace-rs-macos.tar.gz`・`raytrace-rs-linux-x64.tar.gz`）、`releases/latest/download/` から取得する。`RAYTRACE_VERSION=v0.12.0` なら `releases/download/<タグ>/` の版付きファイルを取得する。`.sha256` が取得できれば照合し、不一致なら何も入れずに失敗する。実行ファイルを `RAYTRACE_INSTALL_DIR`（既定 `~/.local/bin`）へ（macOSはGUIも）、サンプル・スキーマ・文書を `RAYTRACE_SHARE_DIR`（既定 `~/.local/share/raytrace-rs`）へ置き換えて入れる。macOSでは隔離属性を外す。`RAYTRACE_INSTALL_FROM=アーカイブ` はダウンロードを省く。シェルの設定ファイルは書き換えず、PATHに足す1行を表示する。`--uninstall`・`--help` に対応 |
-| `install.ps1` | Windows PowerShell 5.1・PowerShell 7 | `raytrace-rs-windows-x64.zip`（`-Version v0.12.0` なら版付き）を取得して `.sha256` を照合し、`%LOCALAPPDATA%\Programs\raytrace-rs` へ置き換えて入れ、ユーザーのPATH（HKCU）に足す。`-From zip` はダウンロードを省き、`-Uninstall` でフォルダーとPATHの項目を消す。`Invoke-WebRequest`・`Expand-Archive`・`Get-FileHash` だけを使う |
+| `install.sh` | macOS・Linux x86_64（POSIX sh） | `uname` で資産を選び（`raytrace-rs-macos.tar.gz`・`raytrace-rs-linux-x64.tar.gz`）、`releases/latest/download/` から取得する。`RAYTRACE_VERSION=v0.12.1` なら `releases/download/<タグ>/` の版付きファイルを取得する。`.sha256` が取得できれば照合し、不一致なら何も入れずに失敗する。実行ファイルを `RAYTRACE_INSTALL_DIR`（既定 `~/.local/bin`）へ（macOSはGUIも）、サンプル・スキーマ・文書を `RAYTRACE_SHARE_DIR`（既定 `~/.local/share/raytrace-rs`）へ置き換えて入れる。macOSでは隔離属性を外す。`RAYTRACE_INSTALL_FROM=アーカイブ` はダウンロードを省く。シェルの設定ファイルは書き換えず、PATHに足す1行を表示する。`--uninstall`・`--help` に対応 |
+| `install.ps1` | Windows PowerShell 5.1・PowerShell 7 | `raytrace-rs-windows-x64.zip`（`-Version v0.12.1` なら版付き）を取得して `.sha256` を照合し、`%LOCALAPPDATA%\Programs\raytrace-rs` へ置き換えて入れ、ユーザーのPATH（HKCU）に足す。`-From zip` はダウンロードを省き、`-Uninstall` でフォルダーとPATHの項目を消す。`Invoke-WebRequest`・`Expand-Archive`・`Get-FileHash` だけを使う |
 
 どちらも最後に `raytrace-rs --version` を実行し、Claude Code・Claude Desktop・Codexの設定を絶対パスで表示します。メッセージは、PowerShell 5.1がBOMなしのファイルをANSIとして読むため、ASCIIの英語にしています。`install.sh` は `RAYTRACE_RELEASES_URL`、`install.ps1` は `-BaseUrl` で取得元を差し替えられます（テストとミラー用）。
 
@@ -91,7 +91,7 @@ python3 scripts/package_macos.py
 
 ```bash
 python3 scripts/package_linux.py
-python3 scripts/check_install.py results/packages/raytrace-rs-0.12.0-linux-x64.tar.gz
+python3 scripts/check_install.py results/packages/raytrace-rs-0.12.1-linux-x64.tar.gz
 ```
 
 リリースの資産には、版付き・固定名の両方に、同名の `.sha256`（`<16進数>  <ファイル名>`）を添付します（`.github/workflows/release.yml`）。
