@@ -21,7 +21,7 @@ Install raytrace-rs (CLI, MCP server and, on macOS, the GUI) into your home dire
 Usage: install.sh [--uninstall] [--help]
 
 Environment variables:
-  RAYTRACE_VERSION       Release tag to install, for example v0.12.0 (default: the latest release)
+  RAYTRACE_VERSION       Release tag to install, for example v0.13.0 (default: the latest release)
   RAYTRACE_INSTALL_DIR   Where the binaries go (default: $HOME/.local/bin)
   RAYTRACE_SHARE_DIR     Where examples, schemas and docs go (default: $HOME/.local/share/raytrace-rs)
   RAYTRACE_INSTALL_FROM  Install from this local .tar.gz instead of downloading it

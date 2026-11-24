@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "raytrace-core"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "libm",
  "rayon",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "raytrace-formats"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "encoding_rs",
  "raytrace-core",

@@ -58,7 +58,7 @@ cargo deny --workspace check
 
 ```powershell
 python scripts/package_windows.py
-python scripts/check_portable.py results/packages/raytrace-rs-0.12.0-windows-x64.zip
+python scripts/check_portable.py results/packages/raytrace-rs-0.13.0-windows-x64.zip
 ```
 
 ### macOS版
@@ -82,8 +82,8 @@ python3 scripts/package_macos.py
 
 | スクリプト | 対象 | 動作 |
 |---|---|---|
-| `install.sh` | macOS・Linux x86_64（POSIX sh） | `uname` で資産を選び（`raytrace-rs-macos.tar.gz`・`raytrace-rs-linux-x64.tar.gz`）、`releases/latest/download/` から取得する。`RAYTRACE_VERSION=v0.12.0` なら `releases/download/<タグ>/` の版付きファイルを取得する。`.sha256` が取得できれば照合し、不一致なら何も入れずに失敗する。実行ファイルを `RAYTRACE_INSTALL_DIR`（既定 `~/.local/bin`）へ（macOSはGUIも）、サンプル・スキーマ・文書を `RAYTRACE_SHARE_DIR`（既定 `~/.local/share/raytrace-rs`）へ置き換えて入れる。macOSでは隔離属性を外す。`RAYTRACE_INSTALL_FROM=アーカイブ` はダウンロードを省く。シェルの設定ファイルは書き換えず、PATHに足す1行を表示する。`--uninstall`・`--help` に対応 |
-| `install.ps1` | Windows PowerShell 5.1・PowerShell 7 | `raytrace-rs-windows-x64.zip`（`-Version v0.12.0` なら版付き）を取得して `.sha256` を照合し、`%LOCALAPPDATA%\Programs\raytrace-rs` へ置き換えて入れ、ユーザーのPATH（HKCU）に足す。`-From zip` はダウンロードを省き、`-Uninstall` でフォルダーとPATHの項目を消す。`Invoke-WebRequest`・`Expand-Archive`・`Get-FileHash` だけを使う |
+| `install.sh` | macOS・Linux x86_64（POSIX sh） | `uname` で資産を選び（`raytrace-rs-macos.tar.gz`・`raytrace-rs-linux-x64.tar.gz`）、`releases/latest/download/` から取得する。`RAYTRACE_VERSION=v0.13.0` なら `releases/download/<タグ>/` の版付きファイルを取得する。`.sha256` が取得できれば照合し、不一致なら何も入れずに失敗する。実行ファイルを `RAYTRACE_INSTALL_DIR`（既定 `~/.local/bin`）へ（macOSはGUIも）、サンプル・スキーマ・文書を `RAYTRACE_SHARE_DIR`（既定 `~/.local/share/raytrace-rs`）へ置き換えて入れる。macOSでは隔離属性を外す。`RAYTRACE_INSTALL_FROM=アーカイブ` はダウンロードを省く。シェルの設定ファイルは書き換えず、PATHに足す1行を表示する。`--uninstall`・`--help` に対応 |
+| `install.ps1` | Windows PowerShell 5.1・PowerShell 7 | `raytrace-rs-windows-x64.zip`（`-Version v0.13.0` なら版付き）を取得して `.sha256` を照合し、`%LOCALAPPDATA%\Programs\raytrace-rs` へ置き換えて入れ、ユーザーのPATH（HKCU）に足す。`-From zip` はダウンロードを省き、`-Uninstall` でフォルダーとPATHの項目を消す。`Invoke-WebRequest`・`Expand-Archive`・`Get-FileHash` だけを使う |
 
 どちらも最後に `raytrace-rs --version` を実行し、Claude Code・Claude Desktop・Codexの設定を絶対パスで表示します。メッセージは、PowerShell 5.1がBOMなしのファイルをANSIとして読むため、ASCIIの英語にしています。`install.sh` は `RAYTRACE_RELEASES_URL`、`install.ps1` は `-BaseUrl` で取得元を差し替えられます（テストとミラー用）。
 
@@ -91,7 +91,7 @@ python3 scripts/package_macos.py
 
 ```bash
 python3 scripts/package_linux.py
-python3 scripts/check_install.py results/packages/raytrace-rs-0.12.0-linux-x64.tar.gz
+python3 scripts/check_install.py results/packages/raytrace-rs-0.13.0-linux-x64.tar.gz
 ```
 
 リリースの資産には、版付き・固定名の両方に、同名の `.sha256`（`<16進数>  <ファイル名>`）を添付します（`.github/workflows/release.yml`）。
@@ -111,7 +111,7 @@ muslの静的リンク版は、2026-11-08の計測でglibc版と同じ結果を�
 
 `.github/workflows/windows.yml`（表示名 Checks）は、pushごとにWindowsの `test-and-package`（整形・Clippy・全テスト・Windows ZIPとMCPBの作成と確認）、macOSの `macos`（全テスト、macOS版とMCPBの作成と確認）、Linuxの `linux-core`（層の検査、WASM、Linux版の作成と確認）を実行します。Windows・macOS・Linuxのジョブはそれぞれ、パッケージの作成と確認の後にインストールスクリプトの確認（`check_install.py`）も行い、成果物を14日間保存します。GUIのテストは `egui::Context` をウィンドウなしで作るため、ディスプレイのないmacOSランナーでも動きます。
 
-リリースを公開すると `.github/workflows/release.yml` が動きます（タグ名を指定した手動実行もできます。リリースがなければ、最初のジョブが `CHANGELOG.md` の該当版の節を本文にしてリリースを公開します。タグがなければ、実行したブランチの先頭に作ります）。WindowsとmacOSとLinuxのジョブが、タグと `Cargo.toml` の版の一致を確かめてからビルドと確認を行い、次のファイルと、それぞれの `.sha256` を `gh release upload --clobber` で添付します。版なしの固定名は `releases/latest/download/<固定名>` で最新版を取得するためのものです。リリースノートは `CHANGELOG.md` から作るか、手作業で用意します。ファイルの追加は、書き込み権限（`contents: write`）を持つこれらのジョブだけが行います。
+`.github/workflows/release.yml` はタグ名を指定して手動実行します。最初のジョブが、存在しないタグを実行したコミットに作り、`CHANGELOG.md` の該当版の節を本文にしたリリースの下書きを用意します。WindowsとmacOSとLinuxのジョブが、タグと `Cargo.toml` の版の一致を確かめてからビルドと確認を行い、次のファイルと、それぞれの `.sha256` を `gh release upload --clobber` で添付します。版なしの固定名は `releases/latest/download/<固定名>` で最新版を取得するためのものです。リリースノートは `CHANGELOG.md` から作るか、手作業で用意します。ファイルの追加は、書き込み権限（`contents: write`）を持つこれらのジョブだけが行います。最後のジョブが全20ファイルのアップロードを確認してから、下書きを最新版として公開します。公開済みリリースでの再実行もでき、その場合は公開状態を変えずに添付ファイルを作り直します。リリースを手作業で公開した場合も同じビルドが動きますが、配布が揃うまで最新版へ切り替わらない手動実行を推奨します。
 
 | 版付き | 固定名 |
 |---|---|
@@ -121,7 +121,7 @@ muslの静的リンク版は、2026-11-08の計測でglibc版と同じ結果を�
 | `raytrace-rs-<版>-macos.mcpb` | `raytrace-rs-macos.mcpb` |
 | `raytrace-rs-<版>-linux-x64.tar.gz` | `raytrace-rs-linux-x64.tar.gz` |
 
-版を上げるときは、`Cargo.toml` の `[workspace.package]` と `[workspace.dependencies]` の内部クレートの版を揃え、`cargo update -w` で `Cargo.lock` を更新し、`CHANGELOG.md` を書いてから、`v<版>` のタグでリリースを公開します（`Release assets` をmainでタグ名を指定して手動実行すると、タグとリリースを作って公開します）。
+版を上げるときは、`Cargo.toml` の `[workspace.package]` と `[workspace.dependencies]` の内部クレートの版を揃え、`cargo update -w` で `Cargo.lock` を更新し、`CHANGELOG.md` を書いてから、`v<版>` のタグでリリースを公開します（`Release assets` をmainでタグ名を指定して手動実行すると、タグと下書きを作り、全OSの配布確認後に公開します）。
 
 ## 自動テストと配布確認
 
