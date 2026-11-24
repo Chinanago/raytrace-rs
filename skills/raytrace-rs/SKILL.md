@@ -1,12 +1,12 @@
 ---
 name: raytrace-rs
-description: "Run geometric-optics ray tracing with raytrace-rs 0.12+: open ZMX or JSON optical designs, check ZMX compatibility, edit components, trace sequential and non-sequential systems, then read screen distributions, FWHM and power budgets, or scan parameters. Use when the user mentions raytrace-rs, wants a ZMX or lens/rod/screen layout traced, or asks about screen irradiance, FWHM, coupling or power budget."
+description: "Run geometric-optics ray tracing with raytrace-rs 0.13+: open ZMX or JSON optical designs, check ZMX compatibility, edit components, trace sequential and non-sequential systems, then read screen distributions, FWHM and power budgets, or scan parameters. Use when the user mentions raytrace-rs, wants a ZMX or lens/rod/screen layout traced, or asks about screen irradiance, FWHM, coupling or power budget."
 license: MIT
 ---
 
 # raytrace-rs
 
-Geometric-optics ray tracer: sources, lenses, integrator rods and screens go in, the light distribution on the screens and a power budget come out. Lengths are mm and wavelengths are µm. Needs raytrace-rs **0.12 or newer** (`raytrace-rs --version`); v0.11 had a different CLI, so upgrade it. Install and AI-client setup (Windows, macOS, Linux): `docs/AI.md`, or run the one-line installer from the README.
+Geometric-optics ray tracer: sources, lenses, integrator rods and screens go in, the light distribution on the screens and a power budget come out. Lengths are mm and wavelengths are µm. Needs raytrace-rs **0.13 or newer** (`raytrace-rs --version`); v0.11 had a different CLI, so upgrade it. Install and AI-client setup (Windows, macOS, Linux): `docs/AI.md`, or run the one-line installer from the README.
 
 ## Connect
 

@@ -3,7 +3,7 @@
 #   irm https://raw.githubusercontent.com/Chinanago/raytrace-rs/main/install.ps1 | iex
 #
 # Options (when the file is saved and run as a script):
-#   -Version v0.12.0   install this release instead of the latest one
+#   -Version v0.13.0   install this release instead of the latest one
 #   -From C:\path\raytrace-rs-windows-x64.zip   install from a local zip (no download)
 #   -Uninstall         remove the install folder and its PATH entry
 # Through `irm | iex` set $env:RAYTRACE_VERSION first to pick a release.

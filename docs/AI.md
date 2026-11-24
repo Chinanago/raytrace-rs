@@ -2,7 +2,7 @@
 
 Claude Code・Claude Desktop・Codexに、raytrace-rsで光学計算をしてもらうための手順です。日本語で頼むだけで、AIが光学系を開き、編集し、光線を追跡して、結果を説明します。操作の詳細は[操作ガイド](GUIDE.md)、できること・できないことは[機能と対応範囲](FEATURES.md)にあります。
 
-> ベータ版（0.12.0）です。コマンドやファイル形式は予告なく変わることがあります。
+> ベータ版（0.13.0）です。コマンドやファイル形式は予告なく変わることがあります。
 
 ## できること
 
@@ -51,7 +51,7 @@ irm https://raw.githubusercontent.com/Chinanago/raytrace-rs/main/install.ps1 | i
 
 **macOSで開けないとき**：署名・公証をしていないため、ブラウザーで取得したファイルは隔離属性が付き、開けないことがあります。`xattr -dr com.apple.quarantine <展開したフォルダー>` で外します。インストールスクリプトは自動で外します。
 
-**更新**：同じコマンドをもう一度実行すると、最新版に置き換わります。版を指定するときは、macOSは `curl -fsSL <URL> | RAYTRACE_VERSION=v0.12.0 sh`、Windowsは `$env:RAYTRACE_VERSION='v0.12.0'` を先に実行します。Windowsでは、Claude Desktop・Claude Code・Codexなどを終了してから更新してください（使用中のファイルは置き換えられません）。
+**更新**：同じコマンドをもう一度実行すると、最新版に置き換わります。版を指定するときは、macOSは `curl -fsSL <URL> | RAYTRACE_VERSION=v0.13.0 sh`、Windowsは `$env:RAYTRACE_VERSION='v0.13.0'` を先に実行します。Windowsでは、Claude Desktop・Claude Code・Codexなどを終了してから更新してください（使用中のファイルは置き換えられません）。
 
 **削除**：macOSは `curl -fsSL <URL> | sh -s -- --uninstall`、Windowsは `& ([scriptblock]::Create((irm <URL>))) -Uninstall` を実行します。AI側の登録は、Claude Codeなら `claude mcp remove raytrace-rs`、ほかは設定を消します。
 
