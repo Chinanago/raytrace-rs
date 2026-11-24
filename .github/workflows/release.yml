@@ -240,8 +240,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          release_id=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json databaseId --jq .databaseId)
-          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > release.json
+          release_api=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json apiUrl --jq .apiUrl)
+          gh api "$release_api" > release.json
           python3 - <<'PY'
           import json
           import os
